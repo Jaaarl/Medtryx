@@ -292,9 +292,9 @@ describe("checkout, sales, and cashier shifts", () => {
       sku: "SYN-SALE-001",
       quantity: 2,
       unitPrice: "112.00",
-      cogs: "80.00",
       taxPolicyVersion: "SYNTHETIC-ACCOUNTANT-12-UP-1",
     });
+    expect(first.body.sale.lines[0].cogs).toBeUndefined();
 
     const replay = await postSale(cashier, {
       productId: product.id,
@@ -340,6 +340,11 @@ describe("checkout, sales, and cashier shifts", () => {
       taxClass: "VATABLE",
       cogs: "80.00",
     });
+    const cashierSnapshot = await cashier.get(
+      `/api/sales/${first.body.sale.transactionId}`,
+    );
+    expect(cashierSnapshot.status).toBe(200);
+    expect(cashierSnapshot.body.sale.lines[0].cogs).toBeUndefined();
     expect(
       (
         db.prepare("SELECT COUNT(*) AS count FROM sales").get() as {

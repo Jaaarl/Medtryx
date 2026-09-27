@@ -495,7 +495,7 @@ type SaleRow = {
   created_at: string;
 };
 
-function getSale(db: Database.Database, id: string) {
+function getSale(db: Database.Database, id: string, includeCogs = true) {
   const sale = db
     .prepare(
       `SELECT s.*, u.email AS cashier_email FROM sales s
@@ -561,7 +561,7 @@ function getSale(db: Database.Database, id: string) {
       vatRemoved: money(line.vat_removed_centavos),
       discount: money(line.discount_centavos),
       amountDue: money(line.amount_due_centavos),
-      cogs: money(line.allocated_cogs_centavos),
+      ...(includeCogs ? { cogs: money(line.allocated_cogs_centavos) } : {}),
       taxPolicyVersion: line.tax_policy_version,
     })),
   };
@@ -998,7 +998,7 @@ export function registerSalesRoutes(
         });
         return { id: saleId, replayed: false };
       })();
-      const sale = getSale(db, outcome.id);
+      const sale = getSale(db, outcome.id, req.user?.role === "owner");
       res.status(outcome.replayed ? 200 : 201).json({
         sale,
         replayed: outcome.replayed,
@@ -1023,7 +1023,9 @@ export function registerSalesRoutes(
     if (req.user.role !== "owner" && saleRow.cashier_user_id !== req.user.id) {
       return res.status(403).json({ error: "forbidden" });
     }
-    res.json({ sale: getSale(db, saleRow.id) });
+    res.json({
+      sale: getSale(db, saleRow.id, req.user.role === "owner"),
+    });
   });
 
   router.get(
