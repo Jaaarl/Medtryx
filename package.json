@@ -1,0 +1,51 @@
+{
+  "name": "medtryx",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "apps/server",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run build:server && concurrently -k -n server,types,web -c blue,yellow,green \"npm:dev:server\" \"npm:dev:server:types\" \"npm:dev:web\"",
+    "dev:server": "node --watch apps/server/dist/index.js",
+    "dev:server:types": "npm --workspace @medtryx/server run watch",
+    "dev:web": "npm --workspace @medtryx/web run dev",
+    "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build:shared && npm --workspace @medtryx/server run build",
+    "build:shared": "npm --workspace @medtryx/shared run build",
+    "typecheck": "npm run build:shared && npm run typecheck:workspaces && tsc --noEmit -p tsconfig.e2e.json",
+    "typecheck:workspaces": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build:shared && vitest run",
+    "test:watch": "npm run build:shared && vitest",
+    "test:e2e": "npm run build:server && node scripts/run-e2e.mjs",
+    "db:migrate": "npm run build:server && node apps/server/dist/cli/migrate.js",
+    "db:create-owner": "npm run build:server && node apps/server/dist/cli/create-owner.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.0",
+    "@types/node": "24.13.3",
+    "concurrently": "10.0.5",
+    "eslint": "10.11.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "prettier": "3.8.4",
+    "supertest": "7.1.4",
+    "@types/supertest": "7.2.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1",
+    "vitest": "4.1.11"
+  },
+  "allowScripts": {
+    "argon2@0.45.1": true,
+    "esbuild@0.28.2": true
+  }
+}

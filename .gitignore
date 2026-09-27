@@ -1,0 +1,40 @@
+# Dependencies and package-manager caches
+node_modules/
+.npm/
+.npm-cache/
+.tmp/
+.runtime/
+.pnpm-store/
+
+# Build and test output
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+
+# Application data, databases, journals, and backups
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+backups/
+*.backup
+*.bak
+
+# Secrets and local environment configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

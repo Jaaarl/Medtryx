@@ -1,0 +1,14 @@
+# Source-of-truth and legacy product documents are kept byte-for-byte.
+Medtryx_Simplified_Web_Product_and_Technical_Specification.md
+Medtryx_Web_Tech_Stack_and_Roadmap.md
+Medtryx_Product_and_Technical_Specification.md
+Medtryx_Long_Horizon_Implementation_Prompt.md
+
+# Generated artifacts and npm's local cache.
+node_modules/
+.npm-cache/
+data/
+dist/
+coverage/
+playwright-report/
+test-results/
