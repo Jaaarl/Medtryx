@@ -15,6 +15,7 @@ import {
   ArrowRight,
   Boxes,
   ClipboardList,
+  DatabaseBackup,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -30,6 +31,8 @@ import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
 import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
 import { SalesHistoryPage } from "./sales-history";
+import { ReportsPage } from "./reports-page";
+import { BackupsPage } from "./backups-page";
 import { TaxPolicySettings } from "./tax-policy-settings";
 
 const navigation = [
@@ -44,6 +47,12 @@ const navigation = [
     ownerOnly: true,
   },
   { to: "/reports", label: "Reports", icon: LayoutDashboard, ownerOnly: true },
+  {
+    to: "/backups",
+    label: "Backups",
+    icon: DatabaseBackup,
+    ownerOnly: true,
+  },
   { to: "/settings", label: "Settings", icon: ShieldCheck, ownerOnly: true },
 ];
 
@@ -311,39 +320,6 @@ function LoginPage() {
         </div>
       </section>
     </div>
-  );
-}
-
-function PlaceholderPage({
-  title,
-  description,
-  icon: Icon,
-}: {
-  title: string;
-  description: string;
-  icon: typeof Boxes;
-}) {
-  return (
-    <section className="page-section">
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">STORE WORKSPACE</div>
-          <h1>{title}</h1>
-          <p>{description}</p>
-        </div>
-      </div>
-      <div className="empty-state-card">
-        <div className="empty-icon">
-          <Icon size={23} strokeWidth={1.7} />
-        </div>
-        <span className="status-pill status-planned">FOUNDATION READY</span>
-        <h2>This workspace is ready for its feature bundle</h2>
-        <p>
-          Sign-in, secure sessions, roles, and audit history are active. This
-          screen will be completed as its roadmap bundle is built.
-        </p>
-      </div>
-    </section>
   );
 }
 
@@ -750,16 +726,8 @@ export function App() {
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
-            <Route
-              path="reports"
-              element={
-                <PlaceholderPage
-                  title="Reports"
-                  description="Review daily sales, cash declarations, stock, and estimated gross profit."
-                  icon={LayoutDashboard}
-                />
-              }
-            />
+            <Route path="reports" element={<ReportsPage />} />
+            <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Route>

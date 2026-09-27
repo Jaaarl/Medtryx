@@ -1,9 +1,19 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, resolve } from "node:path";
+import { join } from "node:path";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const backupRoot = mkdtempSync(join(tmpdir(), "medtryx-e2e-backups-"));
+const primaryBackupPath = join(backupRoot, "primary");
+const secondaryBackupPath = join(backupRoot, "secondary");
+mkdirSync(primaryBackupPath);
+mkdirSync(secondaryBackupPath);
+mkdirSync(join(primaryBackupPath, "test"));
+mkdirSync(join(secondaryBackupPath, "test"));
 const testEnvironment = {
   ...process.env,
   APP_ENV: "test",
@@ -12,6 +22,8 @@ const testEnvironment = {
   PORT: "3001",
   E2E_EXTERNAL_SERVERS: "1",
   CUSTOMER_ID_ENCRYPTION_KEY: "c3".repeat(32),
+  MEDTRYX_BACKUP_PRIMARY_DIR: primaryBackupPath,
+  MEDTRYX_BACKUP_SECONDARY_DIR: secondaryBackupPath,
 };
 const running = [];
 
@@ -106,6 +118,7 @@ try {
   );
 } finally {
   await Promise.all(running.map(({ child }) => stop(child)));
+  rmSync(backupRoot, { recursive: true, force: true });
 }
 
 process.exitCode = Number(resultCode);

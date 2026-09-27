@@ -28,7 +28,8 @@
     "test:watch": "npm run build:shared && vitest",
     "test:e2e": "npm run build:server && node scripts/run-e2e.mjs",
     "db:migrate": "npm run build:server && node apps/server/dist/cli/migrate.js",
-    "db:create-owner": "npm run build:server && node apps/server/dist/cli/create-owner.js"
+    "db:create-owner": "npm run build:server && node apps/server/dist/cli/create-owner.js",
+    "live:preflight": "npm run build:server && node apps/server/dist/cli/live-preflight.js"
   },
   "devDependencies": {
     "@playwright/test": "1.61.0",

@@ -1,12 +1,13 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { restrictDirectory, restrictFile } from "./secure-fs.js";
 
 export type AppEnvironment = "development" | "test" | "live";
 
-const repositoryRoot = resolve(
+export const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../../",
 );
@@ -30,14 +31,49 @@ export function selectedEnvironment(): AppEnvironment {
 
 export function openDatabase(
   environment: AppEnvironment = selectedEnvironment(),
-  baseDirectory = resolve(repositoryRoot, "data"),
+  baseDirectory?: string,
 ): Database.Database {
-  mkdirSync(baseDirectory, { recursive: true });
-  const db = new Database(resolve(baseDirectory, `${environment}.sqlite`));
+  const configuredDirectory = process.env.MEDTRYX_DATA_DIR;
+  if (configuredDirectory && !isAbsolute(configuredDirectory)) {
+    throw new Error("MEDTRYX_DATA_DIR must be an absolute local path.");
+  }
+  if (environment === "live" && !configuredDirectory) {
+    throw new Error("MEDTRYX_DATA_DIR is required for live data.");
+  }
+  if (
+    environment === "live" &&
+    baseDirectory &&
+    resolve(baseDirectory) !== resolve(configuredDirectory!)
+  ) {
+    throw new Error("Live data must use the configured MEDTRYX_DATA_DIR.");
+  }
+  const dataDirectory = resolve(
+    baseDirectory ?? configuredDirectory ?? resolve(repositoryRoot, "data"),
+  );
+  if (environment === "live") {
+    const relativeToRepo = relative(repositoryRoot, dataDirectory);
+    const repoRelativeToData = relative(dataDirectory, repositoryRoot);
+    if (
+      relativeToRepo === "" ||
+      (!relativeToRepo.startsWith(`..${sep}`) && relativeToRepo !== "..") ||
+      repoRelativeToData === "" ||
+      (!repoRelativeToData.startsWith(`..${sep}`) &&
+        repoRelativeToData !== "..")
+    ) {
+      throw new Error(
+        "Live data must use a dedicated path separate from the repository.",
+      );
+    }
+    restrictDirectory(dataDirectory);
+  } else {
+    mkdirSync(dataDirectory, { recursive: true });
+  }
+  const db = new Database(resolve(dataDirectory, `${environment}.sqlite`));
   db.pragma("foreign_keys = ON");
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   migrateDatabase(db);
+  if (environment === "live") restrictFile(db.name);
   return db;
 }
 

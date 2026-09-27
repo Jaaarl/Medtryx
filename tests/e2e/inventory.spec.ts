@@ -239,6 +239,61 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(restoredRow).toContainText("5");
   await expect(restoredRow).toContainText("₱27.00");
 
+  const cashierReportDenied =
+    await cashierContext.request.get("/api/reports/daily");
+  expect(cashierReportDenied.status()).toBe(403);
+  const cashierBackupDenied = await cashierContext.request.get(
+    "/api/backups/status",
+  );
+  expect(cashierBackupDenied.status()).toBe(403);
+  await ownerPage.goto("/reports");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Daily reports", exact: true }),
+  ).toBeVisible();
+  await expect(ownerPage.getByText("Current inventory value")).toBeVisible();
+  await expect(
+    ownerPage.getByText("Full reversals", { exact: true }),
+  ).toBeVisible();
+  const reportDownload = ownerPage.waitForEvent("download");
+  await ownerPage.getByRole("button", { name: "Export CSV" }).click();
+  expect((await reportDownload).suggestedFilename()).toMatch(
+    /^medtryx-daily-\d{4}-\d{2}-\d{2}\.csv$/,
+  );
+
+  await ownerPage.goto("/backups");
+  await expect(
+    ownerPage.getByRole("heading", {
+      name: "Backups and restore",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await ownerPage.getByLabel("Store name").fill("Synthetic E2E Pharmacy");
+  await ownerPage.getByRole("button", { name: "Save store identity" }).click();
+  await expect(ownerPage.getByText("Store identity saved.")).toBeVisible();
+  await expect(ownerPage.getByText("READY", { exact: true })).toBeVisible();
+  await ownerPage.getByRole("button", { name: "Create backup now" }).click();
+  await expect(
+    ownerPage.getByText(/was created and verified in both locations/),
+  ).toBeVisible();
+  const backupRow = ownerPage
+    .locator(".backup-row")
+    .filter({ hasText: "Synthetic E2E Pharmacy" });
+  await expect(backupRow).toContainText("primary verified");
+  await expect(backupRow).toContainText("secondary verified");
+  await backupRow.getByRole("radio").check();
+  await ownerPage.getByLabel("Verified copy").selectOption("secondary");
+  await ownerPage
+    .getByLabel("Type the store name above to confirm")
+    .fill("Synthetic E2E Pharmacy");
+  await ownerPage
+    .getByLabel("Current owner password")
+    .fill("SyntheticOwnerPassword-48!");
+  await ownerPage.getByRole("button", { name: "Restore and sign out" }).click();
+  await expect(
+    ownerPage.getByText(/Restore completed\. Safety backup/),
+  ).toBeVisible();
+  await expect(ownerPage).toHaveURL(/\/login$/);
+  await signIn(ownerPage, "owner@example.test", "SyntheticOwnerPassword-48!");
   await cashierContext.close();
   await ownerContext.close();
 });

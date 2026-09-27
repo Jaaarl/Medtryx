@@ -1,0 +1,24 @@
+[Unit]
+Description=Medtryx pharmacy operations server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=medtryx
+Group=medtryx
+WorkingDirectory=/opt/medtryx/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/medtryx/medtryx.env
+ExecStart=/usr/bin/node apps/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/medtryx /var/backups/medtryx-primary /mnt/medtryx-backups-secondary /etc/medtryx/secrets
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

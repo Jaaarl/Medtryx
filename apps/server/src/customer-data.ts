@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const ENVELOPE_VERSION = "v1";
 
@@ -8,12 +10,24 @@ export class CustomerDataError extends Error {
   }
 }
 
-function encryptionKey(): Buffer {
-  const configured = process.env.CUSTOMER_ID_ENCRYPTION_KEY;
+export function customerEncryptionKeyHex(): string {
+  const keyFile = process.env.CUSTOMER_ID_ENCRYPTION_KEY_FILE;
+  let configured = process.env.CUSTOMER_ID_ENCRYPTION_KEY;
+  if (keyFile) {
+    try {
+      configured = readFileSync(resolve(keyFile), "utf8").trim();
+    } catch {
+      throw new CustomerDataError("customer_encryption_unavailable");
+    }
+  }
   if (!configured || !/^[a-f0-9]{64}$/i.test(configured)) {
     throw new CustomerDataError("customer_encryption_unavailable");
   }
-  return Buffer.from(configured, "hex");
+  return configured.toLowerCase();
+}
+
+function encryptionKey(): Buffer {
+  return Buffer.from(customerEncryptionKeyHex(), "hex");
 }
 
 function additionalData(context: string): Buffer {
@@ -40,6 +54,14 @@ export function decryptCustomerField(
   envelope: string,
   context: string,
 ): string {
+  return decryptCustomerFieldWithKey(envelope, context, encryptionKey());
+}
+
+export function decryptCustomerFieldWithKey(
+  envelope: string,
+  context: string,
+  key: Buffer | string,
+): string {
   const [version, encodedIv, encodedTag, encodedValue, extra] =
     envelope.split(".");
   if (
@@ -53,7 +75,7 @@ export function decryptCustomerField(
   }
   const decipher = createDecipheriv(
     "aes-256-gcm",
-    encryptionKey(),
+    typeof key === "string" ? Buffer.from(key, "hex") : key,
     Buffer.from(encodedIv, "base64url"),
   );
   decipher.setAAD(additionalData(context));

@@ -1,0 +1,7 @@
+# Replace medtryx.example.lan with a stable private-network DNS name.
+# Install and trust Caddy's local root certificate on each planned browser device.
+medtryx.example.lan {
+	tls internal
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3001
+}

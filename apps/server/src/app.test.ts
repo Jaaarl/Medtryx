@@ -81,7 +81,12 @@ afterAll(() => {
 describe("account foundation", () => {
   it("keeps environment databases in separate files and applies migrations", () => {
     const development = openDatabase("development", dataDirectory);
-    const live = openDatabase("live", dataDirectory);
+    const previousDataDirectory = process.env.MEDTRYX_DATA_DIR;
+    process.env.MEDTRYX_DATA_DIR = dataDirectory;
+    const live = openDatabase("live");
+    if (previousDataDirectory === undefined)
+      delete process.env.MEDTRYX_DATA_DIR;
+    else process.env.MEDTRYX_DATA_DIR = previousDataDirectory;
     expect(readdirSync(dataDirectory)).toEqual(
       expect.arrayContaining([
         "development.sqlite",
