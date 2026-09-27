@@ -29,6 +29,7 @@ import type { User } from "@medtryx/shared";
 import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
 import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
+import { TaxPolicySettings } from "./tax-policy-settings";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -730,6 +731,7 @@ function SettingsPage() {
           <div className="table-loading">No account activity recorded yet.</div>
         )}
       </div>
+      <TaxPolicySettings />
     </section>
   );
 }

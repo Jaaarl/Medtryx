@@ -38,7 +38,7 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(productRow).toContainText("SYN-PILOT-001");
   await expect(productRow).toContainText("₱5.00");
   await expect(
-    ownerPage.getByText(/provisional 12% VAT assumption/i),
+    ownerPage.getByText(/approved SYNTHETIC-E2E-TAX-12-HALF-UP/i),
   ).toBeVisible();
 
   await productRow.getByRole("button", { name: "Edit" }).click();
@@ -107,11 +107,55 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await catalogRow.getByRole("button", { name: "Add to cart" }).click();
   await expect(cashierPage.getByText("₱11.99 × 2")).toBeVisible();
   await expect(cashierPage.getByText("₱23.98")).toBeVisible();
+  await cashierPage.getByLabel("Opening cash (₱)").fill("50.00");
+  await cashierPage.getByRole("button", { name: "Open shift" }).click();
+  await expect(cashierPage.getByText("Cashier shift opened.")).toBeVisible();
   await expect(
-    cashierPage.getByText(
-      "Sale calculation and finalization will be enabled with the checkout and tax bundle.",
-    ),
+    cashierPage.getByText(/Approved tax profile: SYNTHETIC-E2E-TAX-12-HALF-UP/),
   ).toBeVisible();
+  await cashierPage
+    .getByRole("button", { name: "Calculate line taxes and discounts" })
+    .click();
+  await expect(
+    cashierPage.getByRole("heading", { name: "Server calculation" }),
+  ).toBeVisible();
+  await expect(cashierPage.getByText("Amount due")).toBeVisible();
+  await cashierPage.getByRole("button", { name: "Confirm sale" }).click();
+  await expect(cashierPage.getByText("Sale saved.")).toBeVisible();
+  await expect(
+    cashierPage.getByText("INTERNAL SALES RECORD — NOT AN INVOICE"),
+  ).toBeVisible();
+  const transactionId = await cashierPage
+    .locator(".sale-saved-card span")
+    .first()
+    .innerText();
+  expect(transactionId).toMatch(/^MTX-\d{8}-\d{6}$/);
+  const saleResponse = await ownerContext.request.get(
+    `/api/sales/${transactionId}`,
+  );
+  expect(saleResponse.status()).toBe(200);
+  const savedSale = (await saleResponse.json()) as {
+    sale: {
+      amountDue: string;
+      lines: Array<{ cogs: string; quantity: number }>;
+    };
+  };
+  expect(savedSale.sale).toMatchObject({
+    amountDue: "23.98",
+    lines: [{ quantity: 2, cogs: "10.80" }],
+  });
+
+  await ownerPage.goto("/stock");
+  await expect(
+    ownerPage.locator(
+      ".stock-list-card .inventory-table tbody tr.inventory-row-selected",
+    ),
+  ).toContainText("3");
+  const saleStockEvent = ownerPage
+    .locator(".stock-history-card .inventory-table tbody tr")
+    .filter({ hasText: "SALE" });
+  await expect(saleStockEvent).toContainText("SALE");
+  await expect(saleStockEvent).toContainText("10.80");
 
   await cashierContext.close();
   await ownerContext.close();

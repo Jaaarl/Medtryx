@@ -11,6 +11,7 @@ const testEnvironment = {
   HOST: "127.0.0.1",
   PORT: "3001",
   E2E_EXTERNAL_SERVERS: "1",
+  CUSTOMER_ID_ENCRYPTION_KEY: "c3".repeat(32),
 };
 const running = [];
 

@@ -127,6 +127,42 @@ describe("owner catalog and stock operations", () => {
     });
   });
 
+  it("uses an approved tax and acquisition-cost policy for owner gross-profit estimates", async () => {
+    db.prepare(
+      "INSERT INTO settings (key, value_json, updated_at, updated_by) VALUES ('tax', ?, ?, ?)",
+    ).run(
+      JSON.stringify({
+        approved: true,
+        version: "SYNTHETIC-GROSS-PROFIT-POLICY",
+        vatRateBasisPoints: 1_200,
+        seniorDiscountBasisPoints: 2_000,
+        pwdDiscountBasisPoints: 2_000,
+        vatInclusivePrices: true,
+        allowZeroRated: false,
+        roundingMode: "HALF_UP",
+        approvalReference: "Synthetic test policy only",
+        costBasisDescription:
+          "Synthetic moving weighted-average acquisition cost",
+        approvedAt: new Date().toISOString(),
+        approvedBy: ownerId,
+      }),
+      new Date().toISOString(),
+      ownerId,
+    );
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sellingPrice: "112.00",
+      openingUnitCost: "40.00",
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body.product.estimatedUnitGrossProfit).toBe("60.00");
+    expect(created.body.product.grossProfitEstimateApproved).toBe(true);
+    expect(created.body.product.grossProfitEstimateNote).toContain(
+      "SYNTHETIC-GROSS-PROFIT-POLICY",
+    );
+  });
+
   it("rejects a zero selling price before it reaches the database constraint", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const response = await createOpeningProduct(owner, {

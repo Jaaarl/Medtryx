@@ -9,6 +9,7 @@ import { writeAuditEvent } from "./db.js";
 
 const MAX_QUANTITY = 1_000_000;
 const PROVISIONAL_VAT_RATE_BASIS_POINTS = 1_200;
+const policyRoundingSchema = z.enum(["HALF_UP", "HALF_EVEN", "DOWN"]);
 const moneySchema = z
   .string()
   .trim()
@@ -221,17 +222,78 @@ function roundedInteger(value: Decimal): number {
   return result;
 }
 
-function withBaseCost(row: ProductRow) {
+type GrossProfitPolicy = {
+  approved: boolean;
+  version: string | null;
+  vatRateBasisPoints: number;
+  vatInclusivePrices: boolean;
+  roundingMode: z.infer<typeof policyRoundingSchema>;
+  costBasisDescription: string | null;
+};
+
+function grossProfitPolicy(db: Database.Database): GrossProfitPolicy {
+  const row = db
+    .prepare("SELECT value_json FROM settings WHERE key = 'tax'")
+    .get() as { value_json: string } | undefined;
+  if (row) {
+    try {
+      const parsed = z
+        .object({
+          approved: z.literal(true),
+          version: z.string().min(3).max(64),
+          vatRateBasisPoints: z.number().int().min(0).max(5_000),
+          seniorDiscountBasisPoints: z.number().int().min(0).max(10_000),
+          pwdDiscountBasisPoints: z.number().int().min(0).max(10_000),
+          vatInclusivePrices: z.boolean(),
+          allowZeroRated: z.boolean(),
+          roundingMode: policyRoundingSchema,
+          approvalReference: z.string().min(3).max(160),
+          costBasisDescription: z.string().min(3).max(500),
+          approvedAt: z.string().min(1),
+          approvedBy: z.string().min(1),
+        })
+        .safeParse(JSON.parse(row.value_json));
+      if (parsed.success) {
+        return {
+          approved: true,
+          version: parsed.data.version,
+          vatRateBasisPoints: parsed.data.vatRateBasisPoints,
+          vatInclusivePrices: parsed.data.vatInclusivePrices,
+          roundingMode: parsed.data.roundingMode,
+          costBasisDescription: parsed.data.costBasisDescription,
+        };
+      }
+    } catch {
+      // Malformed or incomplete settings cannot approve accounting estimates.
+    }
+  }
+  return {
+    approved: false,
+    version: null,
+    vatRateBasisPoints: PROVISIONAL_VAT_RATE_BASIS_POINTS,
+    vatInclusivePrices: true,
+    roundingMode: "HALF_UP",
+    costBasisDescription: null,
+  };
+}
+
+function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
+  const roundingMode =
+    policy.roundingMode === "HALF_EVEN"
+      ? Decimal.ROUND_HALF_EVEN
+      : policy.roundingMode === "DOWN"
+        ? Decimal.ROUND_DOWN
+        : Decimal.ROUND_HALF_UP;
   const averageCostCents =
     row.quantity_on_hand === 0
       ? new Decimal(0)
       : new Decimal(row.inventory_value_centavos).div(row.quantity_on_hand);
   const netRegularRevenueCents =
-    row.tax_class === "VATABLE"
+    row.tax_class === "VATABLE" && policy.vatInclusivePrices
       ? new Decimal(row.selling_price_centavos)
           .mul(10_000)
-          .div(10_000 + PROVISIONAL_VAT_RATE_BASIS_POINTS)
-          .toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+          .div(10_000 + policy.vatRateBasisPoints)
+          .toDecimalPlaces(0, roundingMode)
       : new Decimal(row.selling_price_centavos);
   return {
     id: row.id,
@@ -258,12 +320,17 @@ function withBaseCost(row: ProductRow) {
     estimatedUnitGrossProfit: money(
       netRegularRevenueCents.minus(averageCostCents),
     ),
-    grossProfitEstimateApproved: false,
-    grossProfitEstimateNote:
-      "Provisional 12% VAT estimate; tax rate and acquisition-cost basis require approval.",
+    grossProfitEstimateApproved: policy.approved,
+    grossProfitEstimateNote: policy.approved
+      ? `Regular-sale estimate uses approved ${policy.version} tax settings and the configured acquisition-cost basis (${policy.costBasisDescription}); benefit discounts and operating expenses are excluded.`
+      : "Provisional 12% VAT-inclusive estimate; tax rate and acquisition-cost basis require approval.",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function presentProduct(db: Database.Database, row: ProductRow) {
+  return withBaseCost(row, grossProfitPolicy(db));
 }
 
 function baseProductSelect(): string {
@@ -325,13 +392,31 @@ function productFromBody(
         .object({
           approved: z.boolean().optional(),
           allowZeroRated: z.boolean().optional(),
+          version: z.string().min(3).optional(),
+          vatRateBasisPoints: z.number().int().nonnegative().optional(),
+          seniorDiscountBasisPoints: z.number().int().nonnegative().optional(),
+          pwdDiscountBasisPoints: z.number().int().nonnegative().optional(),
+          vatInclusivePrices: z.boolean().optional(),
+          roundingMode: z.enum(["HALF_UP", "HALF_EVEN", "DOWN"]).optional(),
+          approvalReference: z.string().min(3).optional(),
+          costBasisDescription: z.string().min(3).optional(),
+          approvedAt: z.string().min(1).optional(),
         })
         .passthrough()
         .safeParse(JSON.parse(setting.value_json));
       allowZeroRated =
         parsed.success &&
         parsed.data.approved === true &&
-        parsed.data.allowZeroRated === true;
+        parsed.data.allowZeroRated === true &&
+        parsed.data.version !== undefined &&
+        parsed.data.vatRateBasisPoints !== undefined &&
+        parsed.data.seniorDiscountBasisPoints !== undefined &&
+        parsed.data.pwdDiscountBasisPoints !== undefined &&
+        parsed.data.vatInclusivePrices !== undefined &&
+        parsed.data.roundingMode !== undefined &&
+        parsed.data.approvalReference !== undefined &&
+        parsed.data.costBasisDescription !== undefined &&
+        parsed.data.approvedAt !== undefined;
     } catch {
       allowZeroRated = false;
     }
@@ -474,7 +559,12 @@ export function registerInventoryRoutes(
       .max(120)
       .safeParse(req.query.q ?? "");
     if (!parsed.success) return bodyValidation(res);
-    res.json({ products: listProducts(db, parsed.data).map(withBaseCost) });
+    const policy = grossProfitPolicy(db);
+    res.json({
+      products: listProducts(db, parsed.data).map((product) =>
+        withBaseCost(product, policy),
+      ),
+    });
   });
 
   router.post("/products", requireAuth, requireOwner, csrf, (req, res) => {
@@ -568,7 +658,7 @@ export function registerInventoryRoutes(
       const product = findProduct(db, id);
       if (!product) throw new InventoryError(500, "product_create_failed");
       res.status(201).json({
-        product: withBaseCost(product),
+        product: presentProduct(db, product),
         generatedSku: !parsed.data.sku,
         sku,
       });
@@ -636,7 +726,7 @@ export function registerInventoryRoutes(
         changes.active = parsed.data.active;
       }
       if (Object.keys(changes).length === 0) {
-        res.json({ product: withBaseCost(current) });
+        res.json({ product: presentProduct(db, current) });
         return;
       }
       const assignments: string[] = [];
@@ -678,7 +768,7 @@ export function registerInventoryRoutes(
         });
       })();
       const updated = findProduct(db, current.id);
-      res.json({ product: updated ? withBaseCost(updated) : null });
+      res.json({ product: updated ? presentProduct(db, updated) : null });
     } catch (error) {
       if (!handleInventoryError(error, res)) throw error;
     }
@@ -696,8 +786,9 @@ export function registerInventoryRoutes(
         (row.reorder_level !== null &&
           row.quantity_on_hand <= row.reorder_level),
     );
+    const policy = grossProfitPolicy(db);
     res.json({
-      products: products.map(withBaseCost),
+      products: products.map((product) => withBaseCost(product, policy)),
       lowStockCount: products.filter(isLowStock).length,
     });
   });
@@ -792,7 +883,7 @@ export function registerInventoryRoutes(
         const product = findProduct(db, receipt);
         res
           .status(201)
-          .json({ product: product ? withBaseCost(product) : null });
+          .json({ product: product ? presentProduct(db, product) : null });
       } catch (error) {
         if (!handleInventoryError(error, res)) throw error;
       }
@@ -903,7 +994,7 @@ export function registerInventoryRoutes(
         const product = findProduct(db, adjustment);
         res
           .status(201)
-          .json({ product: product ? withBaseCost(product) : null });
+          .json({ product: product ? presentProduct(db, product) : null });
       } catch (error) {
         if (!handleInventoryError(error, res)) throw error;
       }

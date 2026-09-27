@@ -89,9 +89,22 @@ function errorMessage(error: unknown): string {
       "That product could not be found. Refresh and try again.",
     unit_locked_after_stock_history:
       "A product unit cannot change after stock history exists.",
-    insufficient_stock: "The adjustment would reduce stock below zero.",
     inventory_value_overflow:
       "The resulting stock value is outside the supported range.",
+    tax_policy_not_approved:
+      "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
+    open_shift_required: "Open a cashier shift before finalizing a sale.",
+    shift_already_open: "A cashier shift is already open for this account.",
+    insufficient_stock:
+      "The requested change exceeds available stock. Refresh and review the cart.",
+    customer_encryption_unavailable:
+      "Customer ID encryption is not configured for this environment.",
+    variance_reason_required:
+      "Enter a reason when the cash count differs from expected cash.",
+    idempotency_key_reused:
+      "This checkout request changed after submission. Calculate the total again.",
+    product_unavailable:
+      "A product in this cart is no longer active. Refresh and review the cart.",
   };
   return (
     messages[error.code] ?? "The request was rejected. Refresh and try again."
@@ -198,6 +211,25 @@ export function ProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [zeroRatedAllowed, setZeroRatedAllowed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void api
+      .get<{ policy: { approved: boolean; allowZeroRated: boolean } }>(
+        "/tax-policy",
+      )
+      .then(({ policy }) => {
+        if (active) {
+          setZeroRatedAllowed(policy.approved && policy.allowZeroRated);
+        }
+      })
+      .catch(() => {
+        if (active) setZeroRatedAllowed(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   const visibleProducts = products.filter((product) => {
     const text =
       `${product.name} ${product.sku} ${product.barcode ?? ""}`.toLowerCase();
@@ -412,9 +444,8 @@ export function ProductsPage() {
           <div className="inventory-estimate-note">
             <AlertTriangle size={14} />
             <span>
-              Gross-profit estimates use a provisional 12% VAT assumption and
-              are not approved accounting figures. Supplier-cost basis and tax
-              rules need owner/accountant approval.
+              {products[0]?.grossProfitEstimateNote ??
+                "Gross-profit estimates use a provisional 12% VAT-inclusive assumption until tax and acquisition-cost settings are approved."}
             </span>
           </div>
         </section>
@@ -515,8 +546,10 @@ export function ProductsPage() {
                 >
                   <option value="VATABLE">VATable</option>
                   <option value="VAT_EXEMPT">VAT exempt</option>
-                  <option value="ZERO_RATED" disabled>
-                    Zero rated (approval required)
+                  <option value="ZERO_RATED" disabled={!zeroRatedAllowed}>
+                    {zeroRatedAllowed
+                      ? "Zero rated"
+                      : "Zero rated (approval required)"}
                   </option>
                 </select>
               </Field>
@@ -1179,14 +1212,79 @@ export function StockPage() {
   );
 }
 
-type CartLine = { product: CatalogProduct; quantity: number };
+type CartLine = {
+  product: CatalogProduct;
+  quantity: number;
+  benefitApplied: boolean;
+};
+
+type CheckoutPreview = {
+  policy: { approved: boolean; version: string };
+  policyNotice: string | null;
+  lines: Array<{
+    productId: string;
+    name: string;
+    quantity: number;
+    gross: string;
+    taxBasis: string;
+    vat: string;
+    vatRemoved: string;
+    discount: string;
+    amountDue: string;
+  }>;
+  totals: {
+    subtotal: string;
+    vat: string;
+    vatRemoved: string;
+    seniorDiscount: string;
+    pwdDiscount: string;
+    amountDue: string;
+  };
+};
+
+type SaleRecord = {
+  id: string;
+  transactionId: string;
+  paymentMethod: "CASH" | "QR";
+  amountDue: string;
+  label: string;
+};
+
+type TaxPolicySummary = { approved: boolean; version: string };
+
+type CurrentShift = {
+  id: string;
+  openedAt: string;
+  openingCash: string;
+  expectedCash: string;
+};
 
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [benefitType, setBenefitType] = useState<
+    "REGULAR" | "SENIOR_CITIZEN" | "PWD"
+  >("REGULAR");
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "QR">("CASH");
+  const [customerName, setCustomerName] = useState("");
+  const [customerIdType, setCustomerIdType] = useState("");
+  const [customerIdNumber, setCustomerIdNumber] = useState("");
+  const [customerIdChecked, setCustomerIdChecked] = useState(false);
+  const [policy, setPolicy] = useState<TaxPolicySummary | null>(null);
+  const [shift, setShift] = useState<CurrentShift | null>(null);
+  const [openingCash, setOpeningCash] = useState("0.00");
+  const [closingCash, setClosingCash] = useState("0.00");
+  const [varianceReason, setVarianceReason] = useState("");
+  const [preview, setPreview] = useState<CheckoutPreview | null>(null);
+  const [requestKey, setRequestKey] = useState("");
+  const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [operationsLoading, setOperationsLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
@@ -1209,6 +1307,30 @@ export function CheckoutPage() {
       window.clearTimeout(timer);
     };
   }, [query]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      api.get<{ policy: TaxPolicySummary }>("/tax-policy"),
+      api.get<{ shift: CurrentShift | null }>("/shifts/current"),
+    ])
+      .then(([policyResult, shiftResult]) => {
+        if (!active) return;
+        setPolicy(policyResult.policy);
+        setShift(shiftResult.shift);
+        if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
+      })
+      .catch(() => {
+        if (active) setError("Unable to load checkout settings.");
+      })
+      .finally(() => {
+        if (active) setOperationsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const total = useMemo(
     () =>
       cart.reduce(
@@ -1219,8 +1341,18 @@ export function CheckoutPage() {
       ),
     [cart],
   );
+
+  function invalidatePreview() {
+    setPreview(null);
+    setRequestKey("");
+    setSaleRecord(null);
+    setError("");
+    setNotice("");
+  }
+
   function addProduct(product: CatalogProduct) {
     if (product.quantityAvailable <= 0) return;
+    invalidatePreview();
     setCart((current) => {
       const line = current.find((entry) => entry.product.id === product.id);
       if (line)
@@ -1235,10 +1367,11 @@ export function CheckoutPage() {
               }
             : entry,
         );
-      return [...current, { product, quantity: 1 }];
+      return [...current, { product, quantity: 1, benefitApplied: false }];
     });
   }
   function setQuantity(productId: string, quantity: number) {
+    invalidatePreview();
     setCart((current) =>
       current.flatMap((line) =>
         line.product.id !== productId
@@ -1255,6 +1388,130 @@ export function CheckoutPage() {
     );
   }
 
+  function setBenefitForLine(productId: string, benefitApplied: boolean) {
+    invalidatePreview();
+    setCart((current) =>
+      current.map((line) =>
+        line.product.id === productId ? { ...line, benefitApplied } : line,
+      ),
+    );
+  }
+
+  async function openCurrentShift(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.post<{ shift: CurrentShift }>("/shifts", {
+        openingCash,
+      });
+      setShift(result.shift);
+      setClosingCash(result.shift.expectedCash);
+      setNotice("Cashier shift opened.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function closeCurrentShift(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!shift) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post(`/shifts/${shift.id}/close`, {
+        actualCashCount: closingCash,
+        ...(varianceReason.trim()
+          ? { varianceReason: varianceReason.trim() }
+          : {}),
+      });
+      setShift(null);
+      setPreview(null);
+      setRequestKey("");
+      setNotice("Cashier shift closed.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function calculateCheckout(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!cart.length) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.post<CheckoutPreview>("/sales/preview", {
+        benefitType,
+        items: cart.map((line) => ({
+          productId: line.product.id,
+          quantity: line.quantity,
+          benefitApplied: line.benefitApplied,
+        })),
+      });
+      setPreview(result);
+      setRequestKey(window.crypto.randomUUID());
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function finalizeSale() {
+    if (!preview || !policy?.approved || !shift || !requestKey) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.post<{ sale: SaleRecord; replayed: boolean }>(
+        "/sales",
+        {
+          benefitType,
+          paymentMethod,
+          requestKey,
+          items: cart.map((line) => ({
+            productId: line.product.id,
+            quantity: line.quantity,
+            benefitApplied: line.benefitApplied,
+          })),
+          ...(benefitType === "REGULAR"
+            ? {}
+            : {
+                customerName,
+                customerIdType,
+                customerIdNumber,
+                customerIdChecked,
+              }),
+        },
+      );
+      setSaleRecord(result.sale);
+      setCart([]);
+      setPreview(null);
+      setRequestKey("");
+      const [shiftResult, catalogResult] = await Promise.all([
+        api.get<{ shift: CurrentShift | null }>("/shifts/current"),
+        api.get<{ products: CatalogProduct[] }>(
+          `/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`,
+        ),
+      ]);
+      setShift(shiftResult.shift);
+      if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
+      setProducts(catalogResult.products);
+      setNotice(result.replayed ? "Saved sale recovered." : "Sale saved.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="page-section inventory-page checkout-page">
       <PageHeading
@@ -1265,6 +1522,11 @@ export function CheckoutPage() {
       {error && (
         <div className="banner banner-error" role="alert">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="banner banner-success" role="status">
+          {notice}
         </div>
       )}
       <div className="checkout-grid">
@@ -1329,9 +1591,7 @@ export function CheckoutPage() {
           <div className="card-heading inventory-card-heading">
             <div>
               <h2>Current cart</h2>
-              <p>
-                Items and quantities are held in this browser until checkout.
-              </p>
+              <p>Items and quantities are held in this browser until saved.</p>
             </div>
             <span className="activity-icon">
               <ShoppingCart size={17} />
@@ -1383,7 +1643,7 @@ export function CheckoutPage() {
                 ))}
               </div>
               <div className="cart-total">
-                <span>Cart total</span>
+                <span>Listed-price subtotal</span>
                 <strong>{formatCents(total)}</strong>
               </div>
             </>
@@ -1396,10 +1656,283 @@ export function CheckoutPage() {
               <small>Search the catalog and add an active product.</small>
             </div>
           )}
-          <div className="checkout-next-note">
-            Sale calculation and finalization will be enabled with the checkout
-            and tax bundle.
+          <div className="checkout-policy-status" role="status">
+            {operationsLoading || !policy
+              ? "Loading tax policy…"
+              : policy.approved
+                ? `Approved tax profile: ${policy.version}`
+                : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
+          {!operationsLoading && !shift ? (
+            <form
+              className="checkout-shift-form"
+              onSubmit={(event) => void openCurrentShift(event)}
+            >
+              <h3>Open a cashier shift</h3>
+              <p>
+                Enter the physical cash placed in the drawer. QR declarations
+                are not counted as cash.
+              </p>
+              <Field id="shift-opening-cash" label="Opening cash (₱)">
+                <input
+                  id="shift-opening-cash"
+                  className="text-input"
+                  inputMode="decimal"
+                  value={openingCash}
+                  onChange={(event) => setOpeningCash(event.target.value)}
+                  required
+                  pattern="[0-9]+(\.[0-9]{1,2})?"
+                />
+              </Field>
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={saving}
+              >
+                {saving ? "Opening…" : "Open shift"}
+              </button>
+            </form>
+          ) : shift ? (
+            <div className="checkout-shift-open">
+              <strong>Shift open</strong>
+              <span>Expected physical cash: ₱{shift.expectedCash}</span>
+              <details>
+                <summary>Close shift and count cash</summary>
+                <form
+                  className="form-stack inventory-form"
+                  onSubmit={(event) => void closeCurrentShift(event)}
+                >
+                  <Field id="shift-closing-cash" label="Actual cash count (₱)">
+                    <input
+                      id="shift-closing-cash"
+                      className="text-input"
+                      inputMode="decimal"
+                      value={closingCash}
+                      onChange={(event) => setClosingCash(event.target.value)}
+                      required
+                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                    />
+                  </Field>
+                  <Field
+                    id="shift-variance-reason"
+                    label="Variance reason if count differs"
+                  >
+                    <input
+                      id="shift-variance-reason"
+                      className="text-input"
+                      value={varianceReason}
+                      onChange={(event) =>
+                        setVarianceReason(event.target.value)
+                      }
+                      maxLength={500}
+                    />
+                  </Field>
+                  <button
+                    className="button button-quiet"
+                    type="submit"
+                    disabled={saving}
+                  >
+                    Close shift
+                  </button>
+                </form>
+              </details>
+            </div>
+          ) : null}
+          {cart.length > 0 && (
+            <form
+              className="checkout-options"
+              onSubmit={(event) => void calculateCheckout(event)}
+            >
+              <Field id="sale-benefit-type" label="Sale benefit">
+                <select
+                  id="sale-benefit-type"
+                  className="text-input select-input"
+                  value={benefitType}
+                  onChange={(event) => {
+                    const next = event.target.value as typeof benefitType;
+                    setBenefitType(next);
+                    if (next === "REGULAR")
+                      setCart((current) =>
+                        current.map((line) => ({
+                          ...line,
+                          benefitApplied: false,
+                        })),
+                      );
+                    invalidatePreview();
+                  }}
+                >
+                  <option value="REGULAR">Regular sale</option>
+                  <option value="SENIOR_CITIZEN">Senior citizen</option>
+                  <option value="PWD">PWD</option>
+                </select>
+              </Field>
+              {benefitType !== "REGULAR" && (
+                <div className="checkout-benefit-lines">
+                  <strong>Select eligible cart lines</strong>
+                  {cart.map((line) => (
+                    <label className="inventory-checkbox" key={line.product.id}>
+                      <input
+                        type="checkbox"
+                        checked={line.benefitApplied}
+                        disabled={!line.product.scPwdEligible}
+                        onChange={(event) =>
+                          setBenefitForLine(
+                            line.product.id,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      <span>
+                        {line.product.name}
+                        {line.product.scPwdEligible
+                          ? " · eligible"
+                          : " · not eligible"}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {benefitType !== "REGULAR" && (
+                <div className="checkout-customer-fields">
+                  <Field id="benefit-customer-name" label="Customer name">
+                    <input
+                      id="benefit-customer-name"
+                      className="text-input"
+                      value={customerName}
+                      onChange={(event) => {
+                        setCustomerName(event.target.value);
+                        setRequestKey("");
+                      }}
+                      required
+                      minLength={2}
+                      maxLength={160}
+                    />
+                  </Field>
+                  <Field id="benefit-id-type" label="ID type">
+                    <input
+                      id="benefit-id-type"
+                      className="text-input"
+                      value={customerIdType}
+                      onChange={(event) => {
+                        setCustomerIdType(event.target.value);
+                        setRequestKey("");
+                      }}
+                      required
+                      minLength={2}
+                      maxLength={60}
+                    />
+                  </Field>
+                  <Field id="benefit-id-number" label="ID number">
+                    <input
+                      id="benefit-id-number"
+                      className="text-input"
+                      value={customerIdNumber}
+                      onChange={(event) => {
+                        setCustomerIdNumber(event.target.value);
+                        setRequestKey("");
+                      }}
+                      required
+                      minLength={2}
+                      maxLength={80}
+                    />
+                  </Field>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={customerIdChecked}
+                      onChange={(event) => {
+                        setCustomerIdChecked(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>I checked the physical ID</span>
+                  </label>
+                </div>
+              )}
+              <Field id="sale-payment-method" label="Payment declaration">
+                <select
+                  id="sale-payment-method"
+                  className="text-input select-input"
+                  value={paymentMethod}
+                  onChange={(event) => {
+                    setPaymentMethod(
+                      event.target.value as typeof paymentMethod,
+                    );
+                    setRequestKey("");
+                  }}
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="QR">QR (staff declaration only)</option>
+                </select>
+              </Field>
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={saving}
+              >
+                {saving ? "Calculating…" : "Calculate line taxes and discounts"}
+              </button>
+            </form>
+          )}
+          {preview && (
+            <div className="checkout-preview">
+              <h3>Server calculation</h3>
+              {preview.policyNotice && (
+                <p className="checkout-policy-warning">
+                  {preview.policyNotice}
+                </p>
+              )}
+              <div className="checkout-preview-lines">
+                {preview.lines.map((line) => (
+                  <div key={line.productId}>
+                    <strong>
+                      {line.name} × {line.quantity}
+                    </strong>
+                    <small>
+                      Tax basis ₱{line.taxBasis} · VAT ₱{line.vat}
+                      {centsFromMoney(line.vatRemoved) > 0n
+                        ? ` · VAT removed ₱${line.vatRemoved}`
+                        : ""}{" "}
+                      · discount ₱{line.discount}
+                    </small>
+                    <span>Line due ₱{line.amountDue}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="checkout-preview-total">
+                <span>Amount due</span>
+                <strong>₱{preview.totals.amountDue}</strong>
+              </div>
+              <button
+                className="button button-primary"
+                type="button"
+                disabled={saving || !policy?.approved || !shift || !requestKey}
+                onClick={() => void finalizeSale()}
+              >
+                {saving ? "Saving…" : "Confirm sale"}
+              </button>
+              {!policy?.approved && (
+                <small className="field-hint">
+                  Finalization is locked while the policy is provisional.
+                </small>
+              )}
+              {!shift && (
+                <small className="field-hint">
+                  Open a cashier shift before confirming a sale.
+                </small>
+              )}
+            </div>
+          )}
+          {saleRecord && (
+            <div className="sale-saved-card" role="status">
+              <strong>{saleRecord.label}</strong>
+              <span>{saleRecord.transactionId}</span>
+              <span>
+                ₱{saleRecord.amountDue} ·{" "}
+                {saleRecord.paymentMethod === "QR" ? "QR declared" : "Cash"}
+              </span>
+            </div>
+          )}
         </aside>
       </div>
     </section>

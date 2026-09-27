@@ -16,6 +16,8 @@ The roadmap target is Node.js 24 LTS. The current development environment may us
 
 The local browser development server uses HTTP. App session cookies remain `Secure` by default; browsers permit secure cookies on loopback hosts. `COOKIE_SECURE=false` is reserved for the automated HTTP test server. Pilot network access requires the planned local HTTPS reverse proxy and trusted certificates, which are not configured yet.
 
+SC/PWD customer ID fields use AES-256-GCM with `CUSTOMER_ID_ENCRYPTION_KEY`, a unique 32-byte hex key per environment. Keep it in the local environment's restricted secret store, outside Git and the database. The eventual backup package must include a protected copy of the key so authorized records can be restored.
+
 ## Checks
 
 - `npm run format:check`
@@ -30,5 +32,5 @@ The first bootstrap is intentionally a command-line operation so there is no pub
 ## Implemented workflows
 
 - Owners can create, search, edit, deactivate, and reactivate products; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history.
-- Cashiers can search active products and build a browser cart. Sale calculation and finalization are part of the checkout and tax bundle and are not available yet.
-- Product inventory estimates show a provisional 12% VAT assumption and are not approved accounting figures. See [implementation status](IMPLEMENTATION_STATUS.md) for pending owner and professional decisions and release checks.
+- Cashiers can search active products, build a browser cart, preview server-calculated line taxes/discounts, open and close a cashier shift, and finalize an approved cash or QR-declared sale. Live sale finalization remains blocked until the owner records accountant-approved tax and acquisition-cost policy.
+- Product gross-profit figures remain estimates. Before approval is recorded, they use a labeled provisional 12% VAT-inclusive assumption; afterward they use the owner's recorded approved tax settings and cost basis, while excluding benefit discounts and operating costs. Checkout is blocked until the owner records accountant-approved tax and cost settings. The test database alone has a clearly synthetic policy fixture. See [implementation status](IMPLEMENTATION_STATUS.md) for pending decisions and release checks.
