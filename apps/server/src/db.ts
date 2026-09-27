@@ -76,7 +76,7 @@ export function writeAuditEvent(
     action: string;
     entityType: string;
     entityId: string;
-    details?: Record<string, string | number | boolean | null>;
+    details?: Record<string, unknown>;
   },
 ): void {
   db.prepare(

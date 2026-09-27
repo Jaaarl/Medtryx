@@ -7,7 +7,7 @@ export default async function globalSetup(): Promise<void> {
   const db = openDatabase("test");
   try {
     db.exec(
-      "DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
+      "DELETE FROM audit_events; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sessions; DELETE FROM users;",
     );
     const now = new Date().toISOString();
     const passwordHash = await argon2.hash("SyntheticOwnerPassword-48!", {

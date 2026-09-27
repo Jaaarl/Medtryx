@@ -26,6 +26,7 @@ import {
   type AuthenticatedUser,
 } from "./auth.js";
 import { selectedEnvironment, writeAuditEvent } from "./db.js";
+import { registerInventoryRoutes } from "./inventory.js";
 
 const loginSchema = z
   .object({ email: z.email().max(254), password: z.string().min(1).max(128) })
@@ -398,6 +399,9 @@ export function createApp(
     }),
   );
   registerAuthRoutes(app, db);
+  const inventoryRouter = express.Router();
+  registerInventoryRoutes(inventoryRouter, db);
+  app.use("/api", inventoryRouter);
 
   app.use("/api", (_req, res) =>
     res.status(404).json({ error: "api_route_not_found" }),

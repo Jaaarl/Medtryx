@@ -67,6 +67,9 @@ export const api = {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   },
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+  },
 };
 
 export type CurrentUserResponse = { user: User };

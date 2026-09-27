@@ -26,3 +26,9 @@ The local browser development server uses HTTP. App session cookies remain `Secu
 - `npm run test:e2e` (requires Playwright Chromium; uses only a separate synthetic test database)
 
 The first bootstrap is intentionally a command-line operation so there is no public registration route. Owners create and deactivate subsequent owner or cashier accounts under **Settings**. Staff can change their own password after signing in.
+
+## Implemented workflows
+
+- Owners can create, search, edit, deactivate, and reactivate products; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history.
+- Cashiers can search active products and build a browser cart. Sale calculation and finalization are part of the checkout and tax bundle and are not available yet.
+- Product inventory estimates show a provisional 12% VAT assumption and are not approved accounting figures. See [implementation status](IMPLEMENTATION_STATUS.md) for pending owner and professional decisions and release checks.

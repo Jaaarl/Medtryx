@@ -200,7 +200,7 @@ describe("account foundation", () => {
           .post("/api/products")
           .send({ name: "Synthetic unimplemented product" })
       ).status,
-    ).toBe(404);
+    ).toBe(403);
     expect(
       (
         await cashier.post("/api/users").send({

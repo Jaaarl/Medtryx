@@ -28,6 +28,7 @@ import {
 import type { User } from "@medtryx/shared";
 import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
+import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -740,38 +741,11 @@ export function App() {
       <Route element={<Guard />}>
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/checkout" replace />} />
-          <Route
-            path="checkout"
-            element={
-              <PlaceholderPage
-                title="Checkout"
-                description="Start a sale by selecting active products from your store catalog."
-                icon={WalletCards}
-              />
-            }
-          />
+          <Route path="checkout" element={<CheckoutPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route element={<Guard ownerOnly />}>
-            <Route
-              path="products"
-              element={
-                <PlaceholderPage
-                  title="Products"
-                  description="Manage the pharmacy catalog and selling prices."
-                  icon={PackageSearch}
-                />
-              }
-            />
-            <Route
-              path="stock"
-              element={
-                <PlaceholderPage
-                  title="Stock"
-                  description="Receive stock, record adjustments, and review inventory value."
-                  icon={Boxes}
-                />
-              }
-            />
+            <Route path="products" element={<ProductsPage />} />
+            <Route path="stock" element={<StockPage />} />
             <Route
               path="sales"
               element={
