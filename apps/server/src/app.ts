@@ -27,6 +27,7 @@ import {
 } from "./auth.js";
 import { selectedEnvironment, writeAuditEvent } from "./db.js";
 import { registerInventoryRoutes } from "./inventory.js";
+import { registerReversalRoutes } from "./reversals.js";
 import { registerSalesRoutes } from "./sales.js";
 
 const loginSchema = z
@@ -405,6 +406,7 @@ export function createApp(
   app.use("/api", inventoryRouter);
   const salesRouter = express.Router();
   registerSalesRoutes(salesRouter, db);
+  registerReversalRoutes(salesRouter, db);
   app.use("/api", salesRouter);
 
   app.use("/api", (_req, res) =>

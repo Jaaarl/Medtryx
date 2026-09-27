@@ -261,8 +261,67 @@ describe("checkout, sales, and cashier shifts", () => {
       expectedCash: "100.00",
       actualCashCount: "98.00",
       variance: "-2.00",
+      varianceApprovalStatus: "PENDING",
     });
     expect((await cashier.get("/api/shifts/current")).body.shift).toBeNull();
+
+    const cashierCsrf = await csrfFor(cashier);
+    const cashierApproval = await cashier
+      .post(`/api/shifts/${shiftId}/variance-approval`)
+      .set("x-csrf-token", cashierCsrf)
+      .send({
+        ownerPassword,
+        decision: "APPROVE",
+        note: "Synthetic unauthorized variance approval",
+      });
+    expect(cashierApproval.status).toBe(403);
+
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const pending = await owner.get("/api/shifts/variance-approvals");
+    expect(pending.body.shifts).toMatchObject([
+      {
+        id: shiftId,
+        expectedCash: "100.00",
+        actualCashCount: "98.00",
+        variance: "-2.00",
+        cashierReason: "Synthetic count variance for test",
+      },
+    ]);
+    const wrongOwnerCsrf = await csrfFor(owner);
+    const wrongOwnerPassword = await owner
+      .post(`/api/shifts/${shiftId}/variance-approval`)
+      .set("x-csrf-token", wrongOwnerCsrf)
+      .send({
+        ownerPassword: "SyntheticWrongOwnerPassword-1!",
+        decision: "APPROVE",
+        note: "Reviewed synthetic count record",
+      });
+    expect(wrongOwnerPassword.status).toBe(403);
+    expect(wrongOwnerPassword.body.error).toBe("reauthentication_failed");
+    const ownerCsrf = await csrfFor(owner);
+    const approval = await owner
+      .post(`/api/shifts/${shiftId}/variance-approval`)
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        ownerPassword,
+        decision: "APPROVE",
+        note: "Reviewed synthetic count record",
+      });
+    expect(approval.status).toBe(200);
+    expect(approval.body.approvalStatus).toBe("APPROVED");
+    expect(
+      db
+        .prepare(
+          "SELECT variance_approval_status, variance_centavos FROM shifts WHERE id = ?",
+        )
+        .get(shiftId) as {
+        variance_approval_status: string;
+        variance_centavos: number;
+      },
+    ).toEqual({
+      variance_approval_status: "APPROVED",
+      variance_centavos: -200,
+    });
   });
 
   it("commits sale, snapshots, COGS, stock value, cash, and ID atomically and replays idempotently", async () => {

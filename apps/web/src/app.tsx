@@ -29,6 +29,7 @@ import type { User } from "@medtryx/shared";
 import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
 import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
+import { SalesHistoryPage } from "./sales-history";
 import { TaxPolicySettings } from "./tax-policy-settings";
 
 const navigation = [
@@ -748,16 +749,7 @@ export function App() {
           <Route element={<Guard ownerOnly />}>
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
-            <Route
-              path="sales"
-              element={
-                <PlaceholderPage
-                  title="Sales history"
-                  description="Review internal sale records and transaction details."
-                  icon={ClipboardList}
-                />
-              }
-            />
+            <Route path="sales" element={<SalesHistoryPage />} />
             <Route
               path="reports"
               element={

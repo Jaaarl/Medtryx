@@ -157,6 +157,88 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(saleStockEvent).toContainText("SALE");
   await expect(saleStockEvent).toContainText("10.80");
 
+  await ownerPage.goto("/sales");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Sales history", exact: true }),
+  ).toBeVisible();
+  const saleHistoryRow = ownerPage.getByRole("row").filter({
+    hasText: transactionId,
+  });
+  await saleHistoryRow.getByRole("button", { name: "Review" }).click();
+  await expect(
+    ownerPage.getByRole("heading", { name: transactionId }),
+  ).toBeVisible();
+  await ownerPage
+    .getByLabel("Returned item is sellable; restore to stock")
+    .check();
+  await ownerPage
+    .getByLabel("Reason for reversal")
+    .fill("Synthetic browser-test sellable return");
+  await ownerPage
+    .getByLabel("Owner password")
+    .fill("SyntheticOwnerPassword-48!");
+  const openShifts = await ownerContext.request.get("/api/shifts/open");
+  const cashierShift = (
+    (await openShifts.json()) as {
+      shifts: Array<{ id: string; cashierEmail: string }>;
+    }
+  ).shifts.find(
+    (shift) => shift.cashierEmail === "inventory.cashier@example.test",
+  );
+  expect(cashierShift).toBeDefined();
+  await ownerPage
+    .getByLabel("Cash refund from open drawer")
+    .selectOption(cashierShift!.id);
+  await ownerPage
+    .getByRole("button", { name: "Approve full reversal" })
+    .click();
+  await expect(
+    ownerPage.locator(".banner-success").filter({
+      hasText: /Reversal MTR-\d{8}-\d{6} saved/,
+    }),
+  ).toBeVisible();
+  await expect(saleHistoryRow).toContainText("Reversed");
+  const cashierShiftResponse = await cashierContext.request.get(
+    "/api/shifts/current",
+  );
+  const cashierShiftState = (await cashierShiftResponse.json()) as {
+    shift: { expectedCash: string };
+  };
+  expect(cashierShiftState.shift.expectedCash).toBe("50.00");
+  await cashierPage.goto("/checkout");
+  await cashierPage.getByText("Close shift and count cash").click();
+  await cashierPage.getByLabel("Actual cash count (₱)").fill("48.00");
+  await cashierPage
+    .getByLabel("Variance reason if count differs")
+    .fill("Synthetic browser-test cash variance");
+  await cashierPage.getByRole("button", { name: "Close shift" }).click();
+  await expect(cashierPage.getByText("Cashier shift closed.")).toBeVisible();
+  await ownerPage.goto("/stock");
+  await ownerPage.goto("/sales");
+  const varianceRow = ownerPage
+    .locator(".variance-approval-row")
+    .filter({ hasText: "inventory.cashier@example.test" });
+  await expect(varianceRow).toContainText("₱-2.00");
+  await varianceRow
+    .getByLabel("Owner password")
+    .fill("SyntheticOwnerPassword-48!");
+  await varianceRow
+    .getByLabel("Owner decision note")
+    .fill("Synthetic browser-test variance reviewed");
+  await varianceRow.getByRole("button", { name: "Approve variance" }).click();
+  await expect(
+    ownerPage.getByText("Cash variance approved and recorded."),
+  ).toBeVisible();
+  await expect(
+    ownerPage.getByText("No non-zero variances need review."),
+  ).toBeVisible();
+  await ownerPage.goto("/stock");
+  const restoredRow = ownerPage
+    .locator(".stock-list-card .inventory-table tbody tr")
+    .filter({ hasText: "Synthetic Pilot Lotion" });
+  await expect(restoredRow).toContainText("5");
+  await expect(restoredRow).toContainText("₱27.00");
+
   await cashierContext.close();
   await ownerContext.close();
 });

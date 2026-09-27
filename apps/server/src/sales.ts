@@ -495,7 +495,11 @@ type SaleRow = {
   created_at: string;
 };
 
-function getSale(db: Database.Database, id: string, includeCogs = true) {
+export function getSavedSale(
+  db: Database.Database,
+  id: string,
+  includeCogs = true,
+) {
   const sale = db
     .prepare(
       `SELECT s.*, u.email AS cashier_email FROM sales s
@@ -505,7 +509,7 @@ function getSale(db: Database.Database, id: string, includeCogs = true) {
   if (!sale) throw new SalesError(500, "sale_persistence_failed");
   const lines = db
     .prepare(
-      `SELECT product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
+      `SELECT id, product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
               quantity, unit_price_centavos, tax_class_snapshot,
               sc_pwd_eligible_snapshot, benefit_applied, tax_basis_centavos,
               vat_centavos, vat_removed_centavos, discount_centavos, amount_due_centavos,
@@ -513,6 +517,7 @@ function getSale(db: Database.Database, id: string, includeCogs = true) {
        FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
     )
     .all(id) as {
+    id: string;
     product_id: string;
     product_name_snapshot: string;
     sku_snapshot: string;
@@ -547,6 +552,7 @@ function getSale(db: Database.Database, id: string, includeCogs = true) {
     createdAt: sale.created_at,
     label: "INTERNAL SALES RECORD — NOT AN INVOICE",
     lines: lines.map((line) => ({
+      saleLineId: line.id,
       productId: line.product_id,
       productName: line.product_name_snapshot,
       sku: line.sku_snapshot,
@@ -733,9 +739,11 @@ export function registerSalesRoutes(
           throw new SalesError(400, "variance_reason_required");
         }
         const now = new Date().toISOString();
+        const varianceApprovalStatus = variance === 0 ? "NONE" : "PENDING";
         db.prepare(
           `UPDATE shifts SET closed_at = ?, actual_cash_count_centavos = ?,
-             variance_centavos = ?, variance_reason = ?, close_actor_user_id = ?
+             variance_centavos = ?, variance_reason = ?, close_actor_user_id = ?,
+             variance_approval_status = ?
            WHERE id = ?`,
         ).run(
           now,
@@ -743,6 +751,7 @@ export function registerSalesRoutes(
           variance,
           parsed.data.varianceReason?.trim() || null,
           req.user!.id,
+          varianceApprovalStatus,
           shift.id,
         );
         writeAuditEvent(db, {
@@ -755,6 +764,7 @@ export function registerSalesRoutes(
             actualCashCentavos: actualCash,
             varianceCentavos: variance,
             varianceReason: parsed.data.varianceReason?.trim() || null,
+            varianceApprovalStatus,
           },
         });
         return {
@@ -762,6 +772,7 @@ export function registerSalesRoutes(
           expectedCashCentavos: shift.expected_cash_centavos,
           actualCashCentavos: actualCash,
           varianceCentavos: variance,
+          varianceApprovalStatus,
           closedAt: now,
         };
       })();
@@ -771,6 +782,7 @@ export function registerSalesRoutes(
           expectedCash: money(result.expectedCashCentavos),
           actualCashCount: money(result.actualCashCentavos),
           variance: money(result.varianceCentavos),
+          varianceApprovalStatus: result.varianceApprovalStatus,
           closedAt: result.closedAt,
         },
       });
@@ -998,7 +1010,7 @@ export function registerSalesRoutes(
         });
         return { id: saleId, replayed: false };
       })();
-      const sale = getSale(db, outcome.id, req.user?.role === "owner");
+      const sale = getSavedSale(db, outcome.id, req.user?.role === "owner");
       res.status(outcome.replayed ? 200 : 201).json({
         sale,
         replayed: outcome.replayed,
@@ -1024,7 +1036,7 @@ export function registerSalesRoutes(
       return res.status(403).json({ error: "forbidden" });
     }
     res.json({
-      sale: getSale(db, saleRow.id, req.user.role === "owner"),
+      sale: getSavedSale(db, saleRow.id, req.user.role === "owner"),
     });
   });
 
