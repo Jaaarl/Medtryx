@@ -20,6 +20,7 @@ export type TaxPolicy = {
 export type TaxLineInput = {
   unitPriceCentavos: number;
   quantity: number;
+  grossOverrideCentavos?: number;
   taxClass: SaleTaxClass;
   isScEligible: boolean;
   isPwdEligible: boolean;
@@ -123,6 +124,17 @@ export function calculateTaxLine(
     throw new TaxCalculationError("zero_rated_not_approved");
   }
   const gross = new Decimal(input.unitPriceCentavos).mul(input.quantity);
+  if (
+    input.grossOverrideCentavos !== undefined &&
+    (!Number.isSafeInteger(input.grossOverrideCentavos) ||
+      input.grossOverrideCentavos < 0)
+  ) {
+    throw new TaxCalculationError("invalid_sale_line");
+  }
+  const effectiveGross =
+    input.grossOverrideCentavos === undefined
+      ? gross
+      : new Decimal(input.grossOverrideCentavos);
   const useBenefit = input.benefitApplied;
   const discountRate =
     input.benefit === "SENIOR_CITIZEN"
@@ -135,14 +147,14 @@ export function calculateTaxLine(
 
   if (input.taxClass === "VATABLE") {
     const basis = policy.vatInclusivePrices
-      ? gross
+      ? effectiveGross
           .mul(10_000)
           .div(10_000 + policy.vatRateBasisPoints)
           .toDecimalPlaces(0, decimalRoundingMode(policy.roundingMode))
-      : gross;
+      : effectiveGross;
     if (useBenefit) {
       taxBasis = basis;
-      if (policy.vatInclusivePrices) vatRemoved = gross.minus(basis);
+      if (policy.vatInclusivePrices) vatRemoved = effectiveGross.minus(basis);
       discount = basis
         .mul(discountRate)
         .div(10_000)
@@ -150,23 +162,23 @@ export function calculateTaxLine(
     } else {
       taxBasis = basis;
       vat = policy.vatInclusivePrices
-        ? gross.minus(basis)
-        : gross
+        ? effectiveGross.minus(basis)
+        : effectiveGross
             .mul(policy.vatRateBasisPoints)
             .div(10_000)
             .toDecimalPlaces(0, decimalRoundingMode(policy.roundingMode));
     }
   } else {
-    taxBasis = gross;
+    taxBasis = effectiveGross;
     if (useBenefit) {
-      discount = gross
+      discount = effectiveGross
         .mul(discountRate)
         .div(10_000)
         .toDecimalPlaces(0, decimalRoundingMode(policy.roundingMode));
     }
   }
 
-  const grossCentavos = roundedCentavos(gross, policy.roundingMode);
+  const grossCentavos = roundedCentavos(effectiveGross, policy.roundingMode);
   const taxBasisCentavos = roundedCentavos(taxBasis, policy.roundingMode);
   const vatCentavos = roundedCentavos(vat, policy.roundingMode);
   const vatRemovedCentavos = roundedCentavos(vatRemoved, policy.roundingMode);
@@ -175,8 +187,10 @@ export function calculateTaxLine(
     input.taxClass === "VATABLE" && useBenefit && policy.vatInclusivePrices
       ? taxBasis.minus(discount)
       : input.taxClass === "VATABLE" && useBenefit
-        ? gross.minus(discount)
-        : gross.plus(policy.vatInclusivePrices ? 0 : vat).minus(discount);
+        ? effectiveGross.minus(discount)
+        : effectiveGross
+            .plus(policy.vatInclusivePrices ? 0 : vat)
+            .minus(discount);
   const amountDueCentavos = roundedCentavos(amountDue, policy.roundingMode);
 
   return {

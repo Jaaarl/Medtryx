@@ -26,6 +26,7 @@ type SaleLineRow = {
   vat_centavos: number;
   vat_removed_centavos: number;
   discount_centavos: number;
+  bundle_promotion_discount_centavos: number;
   amount_due_centavos: number;
   allocated_cogs_centavos: number;
 };
@@ -109,6 +110,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       `SELECT sl.quantity, sl.unit_price_centavos, sl.tax_class_snapshot,
               sl.benefit_applied, s.benefit_type, sl.tax_basis_centavos,
               sl.vat_centavos, sl.vat_removed_centavos, sl.discount_centavos,
+              sl.bundle_promotion_discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos
        FROM sale_lines sl JOIN sales s ON s.id = sl.sale_id
        WHERE s.business_date >= ? AND s.business_date <= ?`,
@@ -132,6 +134,11 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     add(totals, "vatOutput", BigInt(line.vat_centavos));
     add(totals, "vatRemoved", BigInt(line.vat_removed_centavos));
     add(totals, "cogs", BigInt(line.allocated_cogs_centavos));
+    add(
+      totals,
+      "bundlePromotionalDiscounts",
+      BigInt(line.bundle_promotion_discount_centavos),
+    );
     if (line.benefit_applied === 1) {
       if (line.benefit_type === "SENIOR_CITIZEN") {
         add(totals, "seniorDiscounts", BigInt(line.discount_centavos));
@@ -171,6 +178,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       `SELECT sl.quantity, sl.unit_price_centavos, sl.tax_class_snapshot,
               sl.benefit_applied, s.benefit_type, sl.tax_basis_centavos,
               sl.vat_centavos, sl.vat_removed_centavos, sl.discount_centavos,
+              sl.bundle_promotion_discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos,
               rl.refund_amount_centavos, rl.original_cogs_centavos
        FROM sale_reversal_lines rl
@@ -198,6 +206,11 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     add(totals, "vatOutput", -BigInt(line.vat_centavos));
     add(totals, "vatRemoved", -BigInt(line.vat_removed_centavos));
     add(totals, "cogs", -BigInt(line.original_cogs_centavos));
+    add(
+      totals,
+      "bundlePromotionalDiscounts",
+      -BigInt(line.bundle_promotion_discount_centavos),
+    );
     if (line.benefit_applied === 1) {
       if (line.benefit_type === "SENIOR_CITIZEN") {
         add(totals, "seniorDiscounts", -BigInt(line.discount_centavos));
@@ -330,6 +343,27 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
          AND created_at >= ? AND created_at < ?`,
     )
     .get(window.start, window.end) as { quantity: number };
+  const bundlePromotionRows = db
+    .prepare(
+      `SELECT b.code_snapshot, b.name_snapshot, b.version_snapshot,
+              b.quantity, b.regular_total_centavos,
+              b.promotional_price_per_bundle_centavos,
+              b.promotional_discount_offered_centavos,
+              b.promotional_discount_applied_centavos
+       FROM sale_bundle_snapshots b JOIN sales s ON s.id = b.sale_id
+       WHERE s.business_date >= ? AND s.business_date <= ?
+       ORDER BY s.created_at, b.code_snapshot`,
+    )
+    .all(startDay, endDay) as Array<{
+    code_snapshot: string;
+    name_snapshot: string;
+    version_snapshot: number;
+    quantity: number;
+    regular_total_centavos: number;
+    promotional_price_per_bundle_centavos: number;
+    promotional_discount_offered_centavos: number;
+    promotional_discount_applied_centavos: number;
+  }>;
   const reversalCount = reversalRows.length;
   const total = (key: string) => money(totals[key] ?? 0n);
   const estimatedGrossProfit =
@@ -350,6 +384,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       vatRemoved: total("vatRemoved"),
       seniorDiscounts: total("seniorDiscounts"),
       pwdDiscounts: total("pwdDiscounts"),
+      bundlePromotionalDiscounts: total("bundlePromotionalDiscounts"),
       cashSales: total("cashSales"),
       qrSales: total("qrSales"),
       cashRoundingAdjustments: total("cashRoundingAdjustments"),
@@ -369,6 +404,24 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       estimatedGrossProfit: money(estimatedGrossProfit),
     },
     reversalCount,
+    bundlePromotions: bundlePromotionRows.map((bundle) => ({
+      code: bundle.code_snapshot,
+      name: bundle.name_snapshot,
+      version: bundle.version_snapshot,
+      quantity: bundle.quantity,
+      regularTotal: money(
+        BigInt(bundle.regular_total_centavos) * BigInt(bundle.quantity),
+      ),
+      promotionalPricePerBundle: money(
+        BigInt(bundle.promotional_price_per_bundle_centavos),
+      ),
+      promotionalDiscountOffered: money(
+        BigInt(bundle.promotional_discount_offered_centavos),
+      ),
+      promotionalDiscountApplied: money(
+        BigInt(bundle.promotional_discount_applied_centavos),
+      ),
+    })),
     inventory: {
       activeProductCount: activeProducts.length,
       lowStockCount: lowStock.length,
@@ -392,7 +445,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       ).length,
     },
     notes: [
-      "Net sales exclude output VAT and subtract line discounts and full reversals recorded during the selected Manila business-date range.",
+      "Net sales exclude output VAT and include statutory and bundle promotional discounts; full reversals are recorded on their reversal date.",
       "COGS follows saved sale-line acquisition-cost allocations; full reversals offset the original saved COGS on their recorded date.",
       "Estimated gross profit excludes separate stock write-offs and operating expenses.",
       "Cash and QR are staff-declared settlement methods, not payment verification.",
@@ -415,6 +468,11 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ["Tax", "VAT removed for benefits", report.metrics.vatRemoved],
     ["Discounts", "Senior citizen", report.metrics.seniorDiscounts],
     ["Discounts", "PWD", report.metrics.pwdDiscounts],
+    [
+      "Discounts",
+      "Bundle promotional discounts (net of reversals)",
+      report.metrics.bundlePromotionalDiscounts,
+    ],
     ["Payments", "Cash declared sales", report.metrics.cashSales],
     ["Payments", "QR declared sales", report.metrics.qrSales],
     [
@@ -453,6 +511,13 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
       "Low stock",
       `${product.sku} ${product.name} (${product.unit})`,
       `${product.quantityOnHand} / reorder ${product.reorderLevel}`,
+    ]);
+  }
+  for (const bundle of report.bundlePromotions) {
+    rows.push([
+      "Bundle offer",
+      `${bundle.code} ${bundle.name} v${bundle.version} x${bundle.quantity}`,
+      `regular ${bundle.regularTotal} / advertised ${bundle.promotionalPricePerBundle} each / offered discount ${bundle.promotionalDiscountOffered} / applied discount ${bundle.promotionalDiscountApplied}`,
     ]);
   }
   for (const lot of report.inventory.trackedLots) {

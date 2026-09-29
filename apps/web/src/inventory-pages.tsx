@@ -1874,6 +1874,45 @@ type CartLine = {
   benefitApplied: boolean;
 };
 
+type BundleOffer = {
+  id: string;
+  versionId: string;
+  version: number;
+  code: string;
+  name: string;
+  activeFrom: string;
+  activeUntil: string | null;
+  maxQuantityPerSale: number | null;
+  promotionalPrice: string;
+  regularTotal: string;
+  suggestedPromotionalPrice: string;
+  priceRuleVersion: string;
+  discountInteractionRule: string;
+  quantityAvailable: number;
+  components: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    unit: string;
+    quantity: number;
+    order: number;
+    sellingPrice: string;
+    taxClass: CatalogProduct["taxClass"];
+    isScEligible: boolean;
+    isPwdEligible: boolean;
+    tracksLots: boolean;
+    quantityAvailable: number;
+    assignedLots: CatalogProduct["assignedLots"];
+  }>;
+};
+
+type BundleCartLine = {
+  offer: BundleOffer;
+  offerKey: string;
+  quantity: number;
+  componentBenefits: Record<string, boolean>;
+};
+
 type CheckoutPreview = {
   policy: {
     approved: boolean;
@@ -1886,6 +1925,18 @@ type CheckoutPreview = {
     productId: string;
     name: string;
     quantity: number;
+    bundle: null | {
+      offerKey: string;
+      code: string;
+      name: string;
+      regularGross: string;
+      allocatedPromotionDiscount: string;
+      appliedPromotionDiscount: string;
+      promotionSelected: boolean;
+      statutoryAlternativeAmountDue: string;
+      promotionAlternativeAmountDue: string;
+      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
+    };
     assignedLots: Array<{
       lotId: string;
       lotCode: string;
@@ -1899,12 +1950,35 @@ type CheckoutPreview = {
     discount: string;
     amountDue: string;
   }>;
+  bundles: Array<{
+    offerKey: string;
+    code: string;
+    name: string;
+    version: number;
+    quantity: number;
+    regularTotal: string;
+    promotionalPricePerBundle: string;
+    promotionalDiscountOffered: string;
+    promotionalDiscountApplied: string;
+    discountInteractionRule: string;
+    components: Array<{
+      productId: string;
+      productName: string;
+      quantity: number;
+      regularAmount: string;
+      promotionAlternativeAmountDue: string;
+      statutoryAlternativeAmountDue: string;
+      appliedPromotionDiscount: string;
+      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
+    }>;
+  }>;
   totals: {
     subtotal: string;
     vat: string;
     vatRemoved: string;
     seniorDiscount: string;
     pwdDiscount: string;
+    bundlePromotionalDiscount: string;
     amountBeforeCashRounding: string;
     cashRoundingAdjustment: string;
     amountDue: string;
@@ -1934,6 +2008,8 @@ export function CheckoutPage() {
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [bundleOffers, setBundleOffers] = useState<BundleOffer[]>([]);
+  const [bundleCart, setBundleCart] = useState<BundleCartLine[]>([]);
   const [benefitType, setBenefitType] = useState<
     "REGULAR" | "SENIOR_CITIZEN" | "PWD"
   >("REGULAR");
@@ -1988,12 +2064,14 @@ export function CheckoutPage() {
       api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
         "/shifts/current",
       ),
+      api.get<{ bundles: BundleOffer[] }>("/bundles/active"),
     ])
-      .then(([policyResult, shiftResult]) => {
+      .then(([policyResult, shiftResult, bundleResult]) => {
         if (!active) return;
         setPolicy(policyResult.policy);
         setShift(shiftResult.shift);
         setRegisterOpen(shiftResult.registerOpen);
+        setBundleOffers(bundleResult.bundles);
         if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       })
       .catch(() => {
@@ -2014,9 +2092,20 @@ export function CheckoutPage() {
           sum +
           centsFromMoney(line.product.sellingPrice) * BigInt(line.quantity),
         0n,
+      ) +
+      bundleCart.reduce(
+        (sum, line) =>
+          sum +
+          centsFromMoney(line.offer.promotionalPrice) * BigInt(line.quantity),
+        0n,
       ),
-    [cart],
+    [cart, bundleCart],
   );
+  const hasTrackedCart =
+    cart.some((line) => line.product.tracksLots) ||
+    bundleCart.some((line) =>
+      line.offer.components.some((component) => component.tracksLots),
+    );
 
   function invalidatePreview() {
     setPreview(null);
@@ -2028,7 +2117,8 @@ export function CheckoutPage() {
   }
 
   function addProduct(product: CatalogProduct) {
-    if (product.quantityAvailable <= 0) return;
+    const available = availableProductQuantity(product.id);
+    if (available <= 0) return;
     invalidatePreview();
     setCart((current) => {
       const line = current.find((entry) => entry.product.id === product.id);
@@ -2037,10 +2127,7 @@ export function CheckoutPage() {
           entry.product.id === product.id
             ? {
                 ...entry,
-                quantity: Math.min(
-                  product.quantityAvailable,
-                  entry.quantity + 1,
-                ),
+                quantity: Math.min(available, entry.quantity + 1),
               }
             : entry,
         );
@@ -2058,7 +2145,10 @@ export function CheckoutPage() {
             : [
                 {
                   ...line,
-                  quantity: Math.min(line.product.quantityAvailable, quantity),
+                  quantity: Math.min(
+                    availableProductQuantity(productId),
+                    quantity,
+                  ),
                 },
               ],
       ),
@@ -2070,6 +2160,125 @@ export function CheckoutPage() {
     setCart((current) =>
       current.map((line) =>
         line.product.id === productId ? { ...line, benefitApplied } : line,
+      ),
+    );
+  }
+
+  function availableBundleQuantity(
+    offer: BundleOffer,
+    excludeOfferKey?: string,
+  ) {
+    let available = offer.quantityAvailable;
+    for (const component of offer.components) {
+      const productInCart =
+        cart.find((line) => line.product.id === component.productId)
+          ?.quantity ?? 0;
+      const otherBundleUsage = bundleCart
+        .filter((line) => line.offerKey !== excludeOfferKey)
+        .reduce((sum, line) => {
+          const otherComponent = line.offer.components.find(
+            (entry) => entry.productId === component.productId,
+          );
+          return (
+            sum + (otherComponent ? otherComponent.quantity * line.quantity : 0)
+          );
+        }, 0);
+      available = Math.min(
+        available,
+        Math.floor(
+          (component.quantityAvailable - productInCart - otherBundleUsage) /
+            component.quantity,
+        ),
+      );
+    }
+    return Math.max(0, available);
+  }
+
+  function availableProductQuantity(productId: string) {
+    const product =
+      products.find((entry) => entry.id === productId) ??
+      cart.find((entry) => entry.product.id === productId)?.product;
+    if (!product) return 0;
+    const bundleUsage = bundleCart.reduce((sum, line) => {
+      const component = line.offer.components.find(
+        (entry) => entry.productId === productId,
+      );
+      return sum + (component ? component.quantity * line.quantity : 0);
+    }, 0);
+    return Math.max(0, product.quantityAvailable - bundleUsage);
+  }
+
+  function addBundle(offer: BundleOffer) {
+    invalidatePreview();
+    setBundleCart((current) => {
+      const existing = current.find(
+        (line) =>
+          line.offer.id === offer.id &&
+          line.offer.versionId === offer.versionId,
+      );
+      const available = availableBundleQuantity(offer, existing?.offerKey);
+      const nextQuantity = Math.min(
+        available,
+        offer.maxQuantityPerSale ?? Number.MAX_SAFE_INTEGER,
+        (existing?.quantity ?? 0) + 1,
+      );
+      if (nextQuantity < 1) return current;
+      if (existing)
+        return current.map((line) =>
+          line.offerKey === existing.offerKey
+            ? { ...line, quantity: nextQuantity }
+            : line,
+        );
+      return [
+        ...current,
+        {
+          offer,
+          offerKey: window.crypto.randomUUID(),
+          quantity: 1,
+          componentBenefits: Object.fromEntries(
+            offer.components.map((component) => [component.productId, false]),
+          ),
+        },
+      ];
+    });
+  }
+
+  function setBundleQuantity(offerKey: string, quantity: number) {
+    invalidatePreview();
+    setBundleCart((current) => {
+      const existing = current.find((line) => line.offerKey === offerKey);
+      if (!existing) return current;
+      if (quantity < 1)
+        return current.filter((line) => line.offerKey !== offerKey);
+      const available = availableBundleQuantity(existing.offer, offerKey);
+      const capped = Math.min(
+        quantity,
+        available,
+        existing.offer.maxQuantityPerSale ?? Number.MAX_SAFE_INTEGER,
+      );
+      return current.map((line) =>
+        line.offerKey === offerKey ? { ...line, quantity: capped } : line,
+      );
+    });
+  }
+
+  function setBundleBenefit(
+    offerKey: string,
+    productId: string,
+    benefitApplied: boolean,
+  ) {
+    invalidatePreview();
+    setBundleCart((current) =>
+      current.map((line) =>
+        line.offerKey === offerKey
+          ? {
+              ...line,
+              componentBenefits: {
+                ...line.componentBenefits,
+                [productId]: benefitApplied,
+              },
+            }
+          : line,
       ),
     );
   }
@@ -2121,7 +2330,7 @@ export function CheckoutPage() {
 
   async function calculateCheckout(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!cart.length) return;
+    if (!cart.length && !bundleCart.length) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -2133,6 +2342,16 @@ export function CheckoutPage() {
           productId: line.product.id,
           quantity: line.quantity,
           benefitApplied: line.benefitApplied,
+        })),
+        bundleOffers: bundleCart.map((line) => ({
+          offerKey: line.offerKey,
+          bundleVersionId: line.offer.versionId,
+          quantity: line.quantity,
+          components: line.offer.components.map((component) => ({
+            productId: component.productId,
+            benefitApplied:
+              line.componentBenefits[component.productId] ?? false,
+          })),
         })),
       });
       setPreview(result);
@@ -2177,6 +2396,33 @@ export function CheckoutPage() {
                 }
               : {}),
           })),
+          bundleOffers: bundleCart.map((line) => ({
+            offerKey: line.offerKey,
+            bundleVersionId: line.offer.versionId,
+            quantity: line.quantity,
+            components: line.offer.components.map((component) => {
+              const previewLine = preview.lines.find(
+                (entry) =>
+                  entry.bundle?.offerKey === line.offerKey &&
+                  entry.productId === component.productId,
+              );
+              return {
+                productId: component.productId,
+                benefitApplied:
+                  line.componentBenefits[component.productId] ?? false,
+                ...(component.tracksLots
+                  ? {
+                      lotAllocations:
+                        previewLine?.assignedLots.map((lot) => ({
+                          lotId: lot.lotId,
+                          quantity: lot.quantity,
+                        })) ?? [],
+                      lotPickConfirmed,
+                    }
+                  : {}),
+              };
+            }),
+          })),
           ...(benefitType === "REGULAR"
             ? {}
             : {
@@ -2189,20 +2435,23 @@ export function CheckoutPage() {
       );
       setSaleRecord(result.sale);
       setCart([]);
+      setBundleCart([]);
       setPreview(null);
       setRequestKey("");
-      const [shiftResult, catalogResult] = await Promise.all([
+      const [shiftResult, catalogResult, bundleResult] = await Promise.all([
         api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
           "/shifts/current",
         ),
         api.get<{ products: CatalogProduct[] }>(
           `/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`,
         ),
+        api.get<{ bundles: BundleOffer[] }>("/bundles/active"),
       ]);
       setShift(shiftResult.shift);
       setRegisterOpen(shiftResult.registerOpen);
       if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       setProducts(catalogResult.products);
+      setBundleOffers(bundleResult.bundles);
       setNotice(result.replayed ? "Saved sale recovered." : "Sale saved.");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -2275,10 +2524,12 @@ export function CheckoutPage() {
                   <button
                     className="button button-primary"
                     type="button"
-                    disabled={product.quantityAvailable <= 0}
+                    disabled={availableProductQuantity(product.id) <= 0}
                     onClick={() => addProduct(product)}
                   >
-                    {product.quantityAvailable ? "Add to cart" : "Out of stock"}
+                    {availableProductQuantity(product.id)
+                      ? "Add to cart"
+                      : "Out of stock"}
                   </button>
                 </div>
               ))
@@ -2290,6 +2541,43 @@ export function CheckoutPage() {
               </div>
             )}
           </div>
+          {bundleOffers.length > 0 && (
+            <div className="bundle-offer-list">
+              <h3>Virtual bundle offers</h3>
+              {bundleOffers.map((offer) => (
+                <article className="catalog-result" key={offer.versionId}>
+                  <div className="catalog-product-copy">
+                    <strong>
+                      {offer.name} · {offer.code}
+                    </strong>
+                    <small>
+                      {offer.components
+                        .map(
+                          (component) =>
+                            `${component.quantity} × ${component.name}`,
+                        )
+                        .join(" + ")}
+                    </small>
+                    <span>
+                      Regular components ₱{offer.regularTotal} · bundle offer ₱
+                      {offer.promotionalPrice} ·{" "}
+                      {availableBundleQuantity(offer)} available
+                    </span>
+                  </div>
+                  <button
+                    className="button button-primary"
+                    type="button"
+                    disabled={availableBundleQuantity(offer) <= 0}
+                    onClick={() => addBundle(offer)}
+                  >
+                    {availableBundleQuantity(offer) > 0
+                      ? "Add bundle"
+                      : "Unavailable"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
         <aside className="settings-main-card cart-card">
           <div className="card-heading inventory-card-heading">
@@ -2301,7 +2589,7 @@ export function CheckoutPage() {
               <ShoppingCart size={17} />
             </span>
           </div>
-          {cart.length ? (
+          {cart.length || bundleCart.length ? (
             <>
               <div className="cart-lines">
                 {cart.map((line) => (
@@ -2327,7 +2615,8 @@ export function CheckoutPage() {
                         className="icon-button"
                         aria-label={`Add one ${line.product.name}`}
                         disabled={
-                          line.quantity >= line.product.quantityAvailable
+                          line.quantity >=
+                          availableProductQuantity(line.product.id)
                         }
                         onClick={() =>
                           setQuantity(line.product.id, line.quantity + 1)
@@ -2345,9 +2634,70 @@ export function CheckoutPage() {
                     </div>
                   </div>
                 ))}
+                {bundleCart.map((line) => (
+                  <div
+                    className="cart-line bundle-cart-line"
+                    key={line.offerKey}
+                  >
+                    <div>
+                      <strong>
+                        {line.offer.name} · {line.offer.code}
+                      </strong>
+                      <small>
+                        ₱{line.offer.regularTotal} regular · ₱
+                        {line.offer.promotionalPrice} offer × {line.quantity}
+                      </small>
+                      <small>
+                        {line.offer.components
+                          .map(
+                            (component) =>
+                              `${component.quantity * line.quantity} × ${component.name}`,
+                          )
+                          .join(" + ")}
+                      </small>
+                    </div>
+                    <div className="cart-line-actions">
+                      <button
+                        className="icon-button"
+                        aria-label={`Remove one ${line.offer.name}`}
+                        onClick={() =>
+                          setBundleQuantity(line.offerKey, line.quantity - 1)
+                        }
+                      >
+                        −
+                      </button>
+                      <span>{line.quantity}</span>
+                      <button
+                        className="icon-button"
+                        aria-label={`Add one ${line.offer.name}`}
+                        disabled={
+                          line.quantity >=
+                            availableBundleQuantity(
+                              line.offer,
+                              line.offerKey,
+                            ) ||
+                          (line.offer.maxQuantityPerSale !== null &&
+                            line.quantity >= line.offer.maxQuantityPerSale)
+                        }
+                        onClick={() =>
+                          setBundleQuantity(line.offerKey, line.quantity + 1)
+                        }
+                      >
+                        +
+                      </button>
+                      <button
+                        className="icon-button cart-remove"
+                        aria-label={`Remove ${line.offer.name}`}
+                        onClick={() => setBundleQuantity(line.offerKey, 0)}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
               <div className="cart-total">
-                <span>Listed-price subtotal</span>
+                <span>Products and advertised bundle prices</span>
                 <strong>{formatCents(total)}</strong>
               </div>
             </>
@@ -2357,7 +2707,7 @@ export function CheckoutPage() {
                 <ShoppingCart size={22} />
               </span>
               <strong>Your cart is empty</strong>
-              <small>Search the catalog and add an active product.</small>
+              <small>Search the catalog or add an active bundle offer.</small>
             </div>
           )}
           <div className="checkout-policy-status" role="status">
@@ -2449,7 +2799,7 @@ export function CheckoutPage() {
               </details>
             </div>
           ) : null}
-          {cart.length > 0 && (
+          {(cart.length > 0 || bundleCart.length > 0) && (
             <form
               className="checkout-options"
               onSubmit={(event) => void calculateCheckout(event)}
@@ -2472,6 +2822,24 @@ export function CheckoutPage() {
                               ? line.benefitApplied &&
                                 line.product.isPwdEligible
                               : false,
+                      })),
+                    );
+                    setBundleCart((current) =>
+                      current.map((bundleLine) => ({
+                        ...bundleLine,
+                        componentBenefits: Object.fromEntries(
+                          bundleLine.offer.components.map((component) => [
+                            component.productId,
+                            Boolean(
+                              bundleLine.componentBenefits[component.productId],
+                            ) &&
+                              (next === "SENIOR_CITIZEN"
+                                ? component.isScEligible
+                                : next === "PWD"
+                                  ? component.isPwdEligible
+                                  : false),
+                          ]),
+                        ),
                       })),
                     );
                     invalidatePreview();
@@ -2514,6 +2882,46 @@ export function CheckoutPage() {
                       </span>
                     </label>
                   ))}
+                </div>
+              )}
+              {benefitType !== "REGULAR" && bundleCart.length > 0 && (
+                <div className="checkout-benefit-lines">
+                  <strong>Choose eligible bundle components</strong>
+                  {bundleCart.flatMap((bundleLine) =>
+                    bundleLine.offer.components.map((component) => {
+                      const eligible =
+                        benefitType === "SENIOR_CITIZEN"
+                          ? component.isScEligible
+                          : component.isPwdEligible;
+                      return (
+                        <label
+                          className="inventory-checkbox"
+                          key={`${bundleLine.offerKey}-${component.productId}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={
+                              bundleLine.componentBenefits[
+                                component.productId
+                              ] ?? false
+                            }
+                            disabled={!eligible}
+                            onChange={(event) =>
+                              setBundleBenefit(
+                                bundleLine.offerKey,
+                                component.productId,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          <span>
+                            {bundleLine.offer.name} · {component.name}
+                            {eligible ? " · eligible" : " · not eligible"}
+                          </span>
+                        </label>
+                      );
+                    }),
+                  )}
                 </div>
               )}
               {benefitType !== "REGULAR" && (
@@ -2607,9 +3015,41 @@ export function CheckoutPage() {
                   {preview.policyNotice}
                 </p>
               )}
+              {preview.bundles.map((bundle) => (
+                <div className="bundle-preview-summary" key={bundle.offerKey}>
+                  <strong>
+                    {bundle.name} · {bundle.code} · v{bundle.version}
+                  </strong>
+                  <span>
+                    Regular components ₱{bundle.regularTotal} · advertised ₱
+                    {bundle.promotionalPricePerBundle} × {bundle.quantity} ·
+                    promotion actually applied ₱
+                    {bundle.promotionalDiscountApplied}
+                  </span>
+                  <small>
+                    When a component receives a better SC/PWD treatment, that
+                    statutory result replaces its allocated bundle reduction.
+                    The final amount can differ from the advertised price.
+                  </small>
+                </div>
+              ))}
               <div className="checkout-preview-lines">
                 {preview.lines.map((line) => (
-                  <div key={line.productId}>
+                  <div
+                    key={`${line.bundle?.offerKey ?? "product"}-${line.productId}`}
+                  >
+                    {line.bundle && (
+                      <small>
+                        Regular ₱{line.bundle.regularGross}; allocated promotion
+                        ₱{line.bundle.allocatedPromotionDiscount}; promotion
+                        outcome ₱{line.bundle.promotionAlternativeAmountDue};
+                        statutory outcome ₱
+                        {line.bundle.statutoryAlternativeAmountDue}; selected{" "}
+                        {line.bundle.promotionSelected
+                          ? "promotion"
+                          : line.bundle.selectedStatutoryTreatment}
+                      </small>
+                    )}
                     <strong>
                       {line.name} × {line.quantity}
                     </strong>
@@ -2644,7 +3084,7 @@ export function CheckoutPage() {
                 </span>
                 <strong>₱{preview.totals.amountDue}</strong>
               </div>
-              {cart.some((line) => line.product.tracksLots) && (
+              {hasTrackedCart && (
                 <label className="inventory-checkbox">
                   <input
                     type="checkbox"
@@ -2679,8 +3119,7 @@ export function CheckoutPage() {
                   !policy?.approved ||
                   !shift ||
                   !requestKey ||
-                  (cart.some((line) => line.product.tracksLots) &&
-                    !lotPickConfirmed)
+                  (hasTrackedCart && !lotPickConfirmed)
                 }
                 onClick={() => void finalizeSale()}
               >

@@ -49,3 +49,47 @@ export function clearLotLedgerForTest(db: Database.Database): void {
     for (const sql of appendOnlyTriggers) db.exec(sql);
   })();
 }
+
+const bundleImmutableTriggers = [
+  `CREATE TRIGGER sales_bundle_versions_no_update BEFORE UPDATE ON sales_bundle_versions
+   BEGIN SELECT RAISE(ABORT, 'sales_bundle_versions_are_immutable'); END`,
+  `CREATE TRIGGER sales_bundle_versions_no_delete BEFORE DELETE ON sales_bundle_versions
+   BEGIN SELECT RAISE(ABORT, 'sales_bundle_versions_are_immutable'); END`,
+  `CREATE TRIGGER sales_bundle_version_components_no_update BEFORE UPDATE ON sales_bundle_version_components
+   BEGIN SELECT RAISE(ABORT, 'sales_bundle_version_components_are_immutable'); END`,
+  `CREATE TRIGGER sales_bundle_version_components_no_delete BEFORE DELETE ON sales_bundle_version_components
+   BEGIN SELECT RAISE(ABORT, 'sales_bundle_version_components_are_immutable'); END`,
+  `CREATE TRIGGER sale_bundle_snapshots_no_update BEFORE UPDATE ON sale_bundle_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bundle_snapshots_are_immutable'); END`,
+  `CREATE TRIGGER sale_bundle_snapshots_no_delete BEFORE DELETE ON sale_bundle_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bundle_snapshots_are_immutable'); END`,
+  `CREATE TRIGGER sale_bundle_component_snapshots_no_update BEFORE UPDATE ON sale_bundle_component_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bundle_component_snapshots_are_immutable'); END`,
+  `CREATE TRIGGER sale_bundle_component_snapshots_no_delete BEFORE DELETE ON sale_bundle_component_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bundle_component_snapshots_are_immutable'); END`,
+];
+
+export function clearBundleLedgerForTest(db: Database.Database): void {
+  db.transaction(() => {
+    for (const name of [
+      "sales_bundle_versions_no_update",
+      "sales_bundle_versions_no_delete",
+      "sales_bundle_version_components_no_update",
+      "sales_bundle_version_components_no_delete",
+      "sale_bundle_snapshots_no_update",
+      "sale_bundle_snapshots_no_delete",
+      "sale_bundle_component_snapshots_no_update",
+      "sale_bundle_component_snapshots_no_delete",
+    ]) {
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    }
+    db.exec(
+      `DELETE FROM sale_bundle_component_snapshots;
+       DELETE FROM sale_bundle_snapshots;
+       DELETE FROM sales_bundle_version_components;
+       DELETE FROM sales_bundle_versions;
+       DELETE FROM sales_bundles;`,
+    );
+    for (const sql of bundleImmutableTriggers) db.exec(sql);
+  })();
+}

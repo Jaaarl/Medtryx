@@ -30,7 +30,7 @@ Medtryx is a browser-based pharmacy sales and simple stock system. The owner cre
 | Inventory | Product-level choice of lot/expiry tracking, immutable lot ledger, and FEFO sale allocation | One stock unit per SKU; untracked flow remains for products the owner marks non-expiring |
 | Acquisition cost | Lot/cost snapshots and more detailed margin reporting | Record the unit acquisition cost on each stock receipt; show a weighted-average cost and estimated unit profit per SKU |
 | Expiry | Owner-visible lot balances, expiry warnings, and sale blocking for expired, quarantined, or unassigned tracked stock | Printed expiry date is the last saleable day; expired stock remains until authorized disposal |
-| Virtual bundles | Owner-approved promotion expanded into original component SKUs at checkout | No independent bundle stock or bundle SKU costing |
+| Virtual bundles | Owner-approved, immutable offer versions expand into component SKUs at checkout | Maximum quantity is per sale; no independent bundle stock or bundle SKU costing |
 | BNPC benefit | Separate 5% product-level benefit under an owner-controlled, versioned policy | Off by default; live use waits for current policy and store-procedure approval |
 | Customer devices | Special iPad pairing and tablet-hosted dashboard | Same browser app with role-based screens |
 
@@ -43,6 +43,7 @@ The original specification remains available for later features. Its implementat
 - Individual staff accounts with cashier and owner permissions.
 - Owner-only product creation and editing; cashier product search during checkout; optional barcode field.
 - Opening stock, stock received with unit acquisition cost, and manual stock adjustments.
+- Owner-approved, scheduled virtual bundle offers with a per-sale quantity limit, explicit promotional price, and component stock deductions.
 - Optional product-level lot/expiry tracking with owner reconciliation, FEFO sale allocation, expiry alerts, and exact-lot stock history.
 - Checkout with cash or QR as a **declared** settlement method.
 - VATable and catalog VAT-exempt products, with zero-rated products only if the owner has an approved reason to use that class.
@@ -67,8 +68,8 @@ Products explicitly marked as lot-tracked require a batch identifier and valid e
 
 | Role | Can do |
 | --- | --- |
-| Cashier | Sign in, open/close the store's single cash-register shift, search **existing active products** and add them to a checkout cart, make sales, see stock availability and selling prices, record cash or QR declaration. Cannot create or edit an inventory product. |
-| Owner | Everything a cashier can do, plus create/edit/deactivate inventory products, receive/adjust stock, view acquisition cost and profit estimates, approve voids, review shift opening/closing history and cash reconciliation, view reports, export data, and manage users and backups. |
+| Cashier | Sign in, open/close the store's single cash-register shift, search **existing active products** or select active bundle offers for checkout, make sales, see stock availability and selling prices, record cash or QR declaration. Cannot create or edit an inventory product or bundle offer. |
+| Owner | Everything a cashier can do, plus create/edit/deactivate inventory products and bundle offers, receive/adjust stock, view acquisition cost and profit estimates, approve voids, review shift opening/closing history and cash reconciliation, view reports, export data, and manage users and backups. |
 
 An optional read-only role can be added if someone needs report access without editing rights. All protected actions are checked on the server, not only hidden in the browser interface.
 
@@ -144,11 +145,12 @@ For management reports, define **estimated gross profit = sale revenue after dis
 1. Cashier searches or scans an existing active product or virtual bundle. A bundle expands into component products and quantities; it has no independent stock.
 2. For tracked products, checkout shows FEFO lot assignments. The cashier physically picks and confirms those lots before finalization.
 3. Each component retains its own product identity, tax class, SC/PWD/BNPC eligibility, lot allocation, and sale snapshot. Each line gets at most one selected statutory treatment.
-4. A bundle promotion is allocated proportionally across component regular-price lines. It cannot stack with BNPC; the more favorable permitted component-level treatment is shown before confirmation.
-5. For SC/PWD/BNPC, staff use protected customer identity and physical-ID confirmation. BNPC additionally requires the separate booklet/representative and prior-purchase checks from the approved store procedure; missing evidence means no BNPC benefit.
-6. Medtryx calculates and shows each line's tax, discounts, and amount due, then the total. BNPC keeps the normal VAT class and never uses the SC/PWD VAT-removal formula.
-7. Cashier declares `CASH` or `QR`. QR is a staff declaration, not payment verification.
-8. Cashier confirms the sale. Medtryx revalidates offer dates, stock, lot availability, and policy in one transaction, saves immutable component and benefit snapshots with stock deductions, then assigns a unique internal transaction ID.
+4. Owners choose a percentage or fixed-amount reduction to calculate a suggested price, then explicitly approve the final promotional price. Editing creates a new immutable version. The maximum quantity applies per sale; bundle offers do not have stock.
+5. A bundle promotion is allocated proportionally across component regular-price lines, with centavo remainders assigned deterministically so the allocation equals the approved price. For each component, checkout compares the promotional result with its permitted statutory result and applies the lower amount due; discounts never stack. It shows the regular price and both results before confirmation. The selection rule is saved as `MORE_FAVORABLE_NO_STACK_V1`.
+6. For SC/PWD/BNPC, staff use protected customer identity and physical-ID confirmation. BNPC additionally requires the separate booklet/representative and prior-purchase checks from the approved store procedure; missing evidence means no BNPC benefit.
+7. Medtryx calculates and shows each line's tax, discounts, and amount due, then the total. BNPC keeps the normal VAT class and never uses the SC/PWD VAT-removal formula. A statutory outcome can make the final total differ from the bundle's advertised price.
+8. Cashier declares `CASH` or `QR`. QR is a staff declaration, not payment verification.
+9. Cashier confirms the sale. Medtryx revalidates the current bundle version, active dates, per-sale limit, component prices, stock, lot availability, and policy in one transaction, saves immutable offer/component/tax snapshots with stock deductions, then assigns a unique internal transaction ID.
 
 The pharmacy is assumed to be VAT-registered and to use VAT-inclusive prices, as stated in the original specification. The rate, approved rounding rule, and product classifications must be confirmed before live use. Use decimal/integer-centavo money calculations; never use binary floating point for stored monetary values. Store each line's price, tax class, benefit selection, calculation, and applied rule at the time of sale so later edits do not change history.
 
@@ -237,7 +239,7 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 15. Owners can review shift opener/closer accounts and times, drawer amounts and cash reconciliation; cashier accounts cannot access the owner history endpoint.
 16. With owner-approved nearest-₱0.25 cash rounding enabled, checkout rounds the combined CASH total by the documented table, leaves QR totals and line tax unchanged, and preserves the signed adjustment through sale, full reversal, expected shift cash, reports, and CSV.
 17. Tracked lots enforce Manila FEFO ordering, stable same-expiry tie-breaks, last-saleable-day expiry boundaries, exact-lot disposal, concurrent last-unit safety, and original-lot-only physically verified reversal; reports and backup/restore reconcile lot quantity and value.
-18. Virtual bundles revalidate current owner-approved configuration and dates at finalization, enforce the configured per-sale or promotion-wide limit, expand into component lines, and allocate centavos deterministically so component promotion discounts sum exactly to the approved bundle price.
+18. Virtual bundles revalidate the current owner-approved version, dates, per-sale limit, and component prices at finalization. They expand into component lines, have no independent stock, and allocate promotional centavos deterministically so component allocations sum exactly to the approved bundle price. Each component keeps its own tax and statutory treatment; the more favorable permitted result is selected without stacking.
 19. BNPC eligibility is explicit and independent from tax class and SC/PWD flags. BNPC is off by default; approved use is per selected line, honors verified weekly allowance and evidence, retains normal VAT treatment, does not stack with promotions, and snapshots policy and allowance.
 
 ## 11. Decisions to make before development or launch

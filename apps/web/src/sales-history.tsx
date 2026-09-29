@@ -39,6 +39,21 @@ type SaleLine = {
   unitPrice: string;
   amountDue: string;
   cogs: string;
+  bundlePromotionDiscount: string;
+  bundle: null | {
+    code: string;
+    name: string;
+    version: number;
+    bundleQuantity: number;
+    promotionalPricePerBundle: string;
+    componentQuantityPerBundle: number;
+    regularLineTotal: string;
+    allocatedPromotionDiscount: string;
+    appliedPromotionDiscount: string;
+    selectedStatutoryTreatment: string;
+    priceRuleVersion: string;
+    discountInteractionRule: string;
+  };
   lotAllocations: Array<{
     lotId: string;
     lotCode: string;
@@ -637,6 +652,16 @@ export function SalesHistoryPage() {
                     <span>
                       Due ₱{line.amountDue} · Saved COGS ₱{line.cogs}
                     </span>
+                    {line.bundle && (
+                      <small>
+                        {line.bundle.code} · {line.bundle.name} v
+                        {line.bundle.version} · regular component ₱
+                        {line.bundle.regularLineTotal} · allocated offer ₱
+                        {line.bundle.allocatedPromotionDiscount} · applied offer
+                        ₱{line.bundlePromotionDiscount} · selected{" "}
+                        {line.bundle.selectedStatutoryTreatment}
+                      </small>
+                    )}
                     {line.lotAllocations.length > 0 && (
                       <small>
                         Original lot(s):{" "}

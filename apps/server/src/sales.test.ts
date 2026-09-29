@@ -8,7 +8,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { decryptCustomerField } from "./customer-data.js";
 import { openDatabase } from "./db.js";
-import { clearLotLedgerForTest } from "./test-ledger.js";
+import {
+  clearBundleLedgerForTest,
+  clearLotLedgerForTest,
+} from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -30,6 +33,7 @@ let secondCashierHash: string;
 type Agent = ReturnType<typeof request.agent>;
 
 async function seedUsers(): Promise<void> {
+  clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   db.exec(
     "DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",

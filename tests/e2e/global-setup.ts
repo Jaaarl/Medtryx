@@ -1,11 +1,17 @@
 import argon2 from "argon2";
 import { randomUUID } from "node:crypto";
 import { openDatabase } from "../../apps/server/src/db.js";
+import {
+  clearBundleLedgerForTest,
+  clearLotLedgerForTest,
+} from "../../apps/server/src/test-ledger.js";
 
 export default async function globalSetup(): Promise<void> {
   process.env.APP_ENV = "test";
   const db = openDatabase("test");
   try {
+    clearBundleLedgerForTest(db);
+    clearLotLedgerForTest(db);
     db.exec(
       "DELETE FROM sale_reversal_lines; DELETE FROM cash_movements; DELETE FROM sale_reversals; DELETE FROM reversal_sequences; DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
     );

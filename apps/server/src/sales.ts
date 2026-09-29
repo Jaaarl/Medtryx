@@ -41,29 +41,54 @@ const benefitSchema = z.enum(["REGULAR", "SENIOR_CITIZEN", "PWD"]);
 const paymentSchema = z.enum(["CASH", "QR"]);
 const roundingSchema = z.enum(["HALF_UP", "HALF_EVEN", "DOWN"]);
 const cashRoundingSchema = z.enum(["NONE", "NEAREST_25_CENTAVOS"]);
-
-const checkoutItemsSchema = z
+const checkoutItemSchema = z
+  .object({
+    productId: z.uuid(),
+    quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY),
+    benefitApplied: z.boolean().default(false),
+    lotAllocations: z
+      .array(
+        z
+          .object({
+            lotId: z.uuid(),
+            quantity: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .optional(),
+    lotPickConfirmed: z.boolean().default(false),
+  })
+  .strict();
+const checkoutBundleComponentSchema = z
+  .object({
+    productId: z.uuid(),
+    benefitApplied: z.boolean().default(false),
+    lotAllocations: z
+      .array(
+        z
+          .object({ lotId: z.uuid(), quantity: z.number().int().positive() })
+          .strict(),
+      )
+      .optional(),
+    lotPickConfirmed: z.boolean().default(false),
+  })
+  .strict();
+const checkoutBundleOffersSchema = z
   .array(
     z
       .object({
-        productId: z.uuid(),
-        quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY),
-        benefitApplied: z.boolean().default(false),
-        lotAllocations: z
-          .array(
-            z
-              .object({
-                lotId: z.uuid(),
-                quantity: z.number().int().positive(),
-              })
-              .strict(),
-          )
-          .optional(),
-        lotPickConfirmed: z.boolean().default(false),
+        offerKey: z.uuid(),
+        bundleVersionId: z.uuid(),
+        quantity: z.number().int().min(1).max(1000),
+        components: z.array(checkoutBundleComponentSchema).min(2).max(20),
       })
       .strict(),
   )
-  .min(1)
+  .max(20);
+
+const checkoutItemsSchema = z
+  .array(checkoutItemSchema)
+  .min(0)
   .max(MAX_CART_LINES)
   .superRefine((items, context) => {
     const ids = new Set<string>();
@@ -83,14 +108,19 @@ const checkoutBaseSchema = z
   .object({
     benefitType: benefitSchema,
     items: checkoutItemsSchema,
+    bundleOffers: checkoutBundleOffersSchema.default([]),
     paymentMethod: paymentSchema.default("QR"),
   })
-  .strict();
+  .strict()
+  .refine((value) => value.items.length > 0 || value.bundleOffers.length > 0, {
+    message: "checkout_cart_empty",
+  });
 
 const saleRequestSchema = z
   .object({
     benefitType: benefitSchema,
     items: checkoutItemsSchema,
+    bundleOffers: checkoutBundleOffersSchema.default([]),
     paymentMethod: paymentSchema,
     requestKey: z.uuid(),
     customerName: z.string().trim().min(2).max(160).optional(),
@@ -136,7 +166,12 @@ const saleRequestSchema = z
         message: "physical_id_check_required",
       });
     }
-    if (!value.items.some((item) => item.benefitApplied)) {
+    if (
+      !value.items.some((item) => item.benefitApplied) &&
+      !value.bundleOffers.some((offer) =>
+        offer.components.some((component) => component.benefitApplied),
+      )
+    ) {
       context.addIssue({
         code: "custom",
         path: ["items"],
@@ -341,6 +376,47 @@ function manilaBusinessDate(now: Date): string {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
+type BundleComponentCalculation = {
+  offerKey: string;
+  bundleId: string;
+  bundleVersionId: string;
+  code: string;
+  name: string;
+  version: number;
+  bundleQuantity: number;
+  componentQuantityPerBundle: number;
+  allocatedPromotionDiscountCentavos: number;
+  appliedPromotionDiscountCentavos: number;
+  promotionSelected: boolean;
+  selectedStatutoryTreatment: SaleBenefit;
+  regularTotalCentavos: number;
+  promotionalPriceCentavos: number;
+  maxQuantityPerSale: number | null;
+  priceRuleVersion: string;
+  discountInteractionRule: string;
+  statutoryAlternativeAmountDueCentavos: number;
+  promotionAlternativeAmountDueCentavos: number;
+};
+
+type BundleSnapshotCalculation = {
+  offerKey: string;
+  bundleId: string;
+  bundleVersionId: string;
+  code: string;
+  name: string;
+  version: number;
+  activeFrom: string;
+  activeUntil: string | null;
+  quantity: number;
+  maxQuantityPerSale: number | null;
+  regularTotalCentavos: number;
+  promotionalPriceCentavos: number;
+  promotionalDiscountOfferedCentavos: number;
+  promotionalDiscountAppliedCentavos: number;
+  priceRuleVersion: string;
+  discountInteractionRule: string;
+};
+
 function calculateCart(
   db: Database.Database,
   benefitType: SaleBenefit,
@@ -348,10 +424,219 @@ function calculateCart(
   policy: TaxPolicy,
   paymentMethod: "CASH" | "QR",
   requireLotConfirmation = false,
+  bundleOffers: z.infer<typeof checkoutBundleOffersSchema> = [],
 ) {
   const reservedLots = new Map<string, number>();
+  const reservedUntracked = new Map<string, number>();
   const today = manilaCalendarDate();
-  const lines = items.map((item) => {
+  const expandedItems: Array<{
+    item: z.infer<typeof checkoutItemSchema>;
+    bundle: BundleComponentCalculation | null;
+  }> = items.map((item) => ({ item, bundle: null }));
+  const seenBundleVersions = new Set<string>();
+  const bundleSnapshotDrafts: Array<{
+    snapshot: BundleSnapshotCalculation;
+    components: Array<{
+      productId: string;
+      quantityPerBundle: number;
+      lineIndex: number;
+    }>;
+  }> = [];
+  for (const offer of bundleOffers) {
+    if (seenBundleVersions.has(offer.bundleVersionId)) {
+      throw new SalesError(400, "duplicate_bundle_offer");
+    }
+    seenBundleVersions.add(offer.bundleVersionId);
+    const version = db
+      .prepare(
+        `SELECT b.id AS bundle_id, b.code, b.is_active, b.current_version,
+                v.id, v.version, v.name_snapshot, v.active_from, v.active_until,
+                v.max_quantity_per_sale, v.promotional_price_centavos,
+                v.price_rule_version, v.discount_interaction_rule
+         FROM sales_bundle_versions v JOIN sales_bundles b ON b.id = v.bundle_id
+         WHERE v.id = ?`,
+      )
+      .get(offer.bundleVersionId) as
+      | {
+          bundle_id: string;
+          code: string;
+          is_active: number;
+          current_version: number;
+          id: string;
+          version: number;
+          name_snapshot: string;
+          active_from: string;
+          active_until: string | null;
+          max_quantity_per_sale: number | null;
+          promotional_price_centavos: number;
+          price_rule_version: string;
+          discount_interaction_rule: string;
+        }
+      | undefined;
+    if (
+      !version ||
+      version.is_active !== 1 ||
+      version.current_version !== version.version
+    ) {
+      throw new SalesError(409, "bundle_offer_unavailable");
+    }
+    if (
+      version.active_from > today ||
+      (version.active_until !== null && version.active_until < today)
+    ) {
+      throw new SalesError(409, "bundle_offer_outside_active_period");
+    }
+    if (
+      version.max_quantity_per_sale !== null &&
+      offer.quantity > version.max_quantity_per_sale
+    ) {
+      throw new SalesError(409, "bundle_sale_limit_exceeded");
+    }
+    const components = db
+      .prepare(
+        `SELECT c.product_id, c.quantity, c.component_order
+         FROM sales_bundle_version_components c
+         WHERE c.bundle_version_id = ? ORDER BY c.component_order`,
+      )
+      .all(version.id) as Array<{
+      product_id: string;
+      quantity: number;
+      component_order: number;
+    }>;
+    const supplied = new Map(
+      offer.components.map((component) => [component.productId, component]),
+    );
+    if (
+      components.length !== offer.components.length ||
+      components.some((component) => !supplied.has(component.product_id))
+    ) {
+      throw new SalesError(400, "bundle_component_mapping_changed");
+    }
+    const bundleProducts = components.map((component) => {
+      const product = db
+        .prepare(
+          `SELECT id, selling_price_centavos, is_active FROM products WHERE id = ?`,
+        )
+        .get(component.product_id) as
+        | { id: string; selling_price_centavos: number; is_active: number }
+        | undefined;
+      if (!product || product.is_active !== 1) {
+        throw new SalesError(409, "bundle_component_unavailable");
+      }
+      return { ...component, product };
+    });
+    const regularTotalBig = bundleProducts.reduce(
+      (total, component) =>
+        total +
+        BigInt(component.product.selling_price_centavos) *
+          BigInt(component.quantity),
+      0n,
+    );
+    if (
+      regularTotalBig <= BigInt(version.promotional_price_centavos) ||
+      regularTotalBig > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new SalesError(409, "bundle_price_no_longer_promotional");
+    }
+    const regularTotalCentavos = Number(regularTotalBig);
+    const offeredDiscountPerBundle =
+      regularTotalCentavos - version.promotional_price_centavos;
+    const offeredDiscountTotalBig =
+      BigInt(offeredDiscountPerBundle) * BigInt(offer.quantity);
+    if (offeredDiscountTotalBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new SalesError(400, "bundle_price_overflow");
+    }
+    const offeredDiscountTotal = Number(offeredDiscountTotalBig);
+    let remainingDiscount = offeredDiscountTotal;
+    const draftComponents: Array<{
+      productId: string;
+      quantityPerBundle: number;
+      lineIndex: number;
+    }> = [];
+    for (const [index, component] of bundleProducts.entries()) {
+      const suppliedComponent = supplied.get(component.product_id)!;
+      const lineQuantity = component.quantity * offer.quantity;
+      if (
+        !Number.isSafeInteger(lineQuantity) ||
+        lineQuantity > MAX_LINE_QUANTITY
+      ) {
+        throw new SalesError(400, "bundle_quantity_overflow");
+      }
+      const regularLineTotal =
+        component.product.selling_price_centavos * lineQuantity;
+      const allocation =
+        index === bundleProducts.length - 1
+          ? remainingDiscount
+          : Number(
+              (BigInt(offeredDiscountTotal) * BigInt(regularLineTotal)) /
+                (regularTotalBig * BigInt(offer.quantity)),
+            );
+      remainingDiscount -= allocation;
+      const item = {
+        productId: component.product_id,
+        quantity: lineQuantity,
+        benefitApplied: suppliedComponent.benefitApplied,
+        lotAllocations: suppliedComponent.lotAllocations,
+        lotPickConfirmed: suppliedComponent.lotPickConfirmed,
+      };
+      const lineIndex = expandedItems.length;
+      expandedItems.push({
+        item,
+        bundle: {
+          offerKey: offer.offerKey,
+          bundleId: version.bundle_id,
+          bundleVersionId: version.id,
+          code: version.code,
+          name: version.name_snapshot,
+          version: version.version,
+          bundleQuantity: offer.quantity,
+          componentQuantityPerBundle: component.quantity,
+          allocatedPromotionDiscountCentavos: allocation,
+          appliedPromotionDiscountCentavos: 0,
+          promotionSelected: false,
+          selectedStatutoryTreatment: "REGULAR",
+          regularTotalCentavos,
+          promotionalPriceCentavos: version.promotional_price_centavos,
+          maxQuantityPerSale: version.max_quantity_per_sale,
+          priceRuleVersion: version.price_rule_version,
+          discountInteractionRule: version.discount_interaction_rule,
+          statutoryAlternativeAmountDueCentavos: 0,
+          promotionAlternativeAmountDueCentavos: 0,
+        },
+      });
+      draftComponents.push({
+        productId: component.product_id,
+        quantityPerBundle: component.quantity,
+        lineIndex,
+      });
+    }
+    if (remainingDiscount !== 0) {
+      throw new SalesError(409, "bundle_discount_allocation_failed");
+    }
+    bundleSnapshotDrafts.push({
+      snapshot: {
+        offerKey: offer.offerKey,
+        bundleId: version.bundle_id,
+        bundleVersionId: version.id,
+        code: version.code,
+        name: version.name_snapshot,
+        version: version.version,
+        activeFrom: version.active_from,
+        activeUntil: version.active_until,
+        quantity: offer.quantity,
+        maxQuantityPerSale: version.max_quantity_per_sale,
+        regularTotalCentavos,
+        promotionalPriceCentavos: version.promotional_price_centavos,
+        promotionalDiscountOfferedCentavos: offeredDiscountTotal,
+        promotionalDiscountAppliedCentavos: 0,
+        priceRuleVersion: version.price_rule_version,
+        discountInteractionRule: version.discount_interaction_rule,
+      },
+      components: draftComponents,
+    });
+  }
+
+  const lines = expandedItems.map(({ item, bundle }) => {
     const product = db
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
@@ -392,15 +677,22 @@ function calculateCart(
           throw new SalesError(409, "lot_pick_confirmation_required");
         }
       }
-    } else if (item.quantity > product.quantity_on_hand) {
-      throw new SalesError(409, "insufficient_stock");
+    } else {
+      const alreadyReserved = reservedUntracked.get(product.id) ?? 0;
+      if (item.quantity + alreadyReserved > product.quantity_on_hand) {
+        throw new SalesError(409, "insufficient_stock");
+      }
+      reservedUntracked.set(product.id, alreadyReserved + item.quantity);
     }
-    let calculation;
+    let calculation: ReturnType<typeof calculateTaxLine>;
+    let statutoryAlternative: ReturnType<typeof calculateTaxLine>;
+    let promotionAlternative: ReturnType<typeof calculateTaxLine> | null = null;
     try {
-      calculation = calculateTaxLine(
+      statutoryAlternative = calculateTaxLine(
         {
           unitPriceCentavos: product.selling_price_centavos,
           quantity: item.quantity,
+          grossOverrideCentavos: product.selling_price_centavos * item.quantity,
           taxClass: product.tax_class,
           isScEligible: product.sc_eligible === 1,
           isPwdEligible: product.pwd_eligible === 1,
@@ -409,6 +701,49 @@ function calculateCart(
         },
         policy,
       );
+      if (bundle) {
+        const promotionalGross =
+          product.selling_price_centavos * item.quantity -
+          bundle.allocatedPromotionDiscountCentavos;
+        promotionAlternative = calculateTaxLine(
+          {
+            unitPriceCentavos: product.selling_price_centavos,
+            quantity: item.quantity,
+            grossOverrideCentavos: promotionalGross,
+            taxClass: product.tax_class,
+            isScEligible: product.sc_eligible === 1,
+            isPwdEligible: product.pwd_eligible === 1,
+            benefit: benefitType,
+            benefitApplied: false,
+          },
+          policy,
+        );
+        const promotionSelected =
+          promotionAlternative.amountDueCentavos <=
+          statutoryAlternative.amountDueCentavos;
+        calculation = promotionSelected
+          ? promotionAlternative
+          : statutoryAlternative;
+        bundle.statutoryAlternativeAmountDueCentavos =
+          statutoryAlternative.amountDueCentavos;
+        bundle.promotionAlternativeAmountDueCentavos =
+          promotionAlternative.amountDueCentavos;
+        bundle.promotionSelected = promotionSelected;
+        bundle.selectedStatutoryTreatment = promotionSelected
+          ? "REGULAR"
+          : item.benefitApplied
+            ? benefitType
+            : "REGULAR";
+        bundle.appliedPromotionDiscountCentavos = promotionSelected
+          ? bundle.allocatedPromotionDiscountCentavos
+          : 0;
+        bundleSnapshotDrafts.find(
+          (entry) => entry.snapshot.offerKey === bundle.offerKey,
+        )!.snapshot.promotionalDiscountAppliedCentavos +=
+          bundle.appliedPromotionDiscountCentavos;
+      } else {
+        calculation = statutoryAlternative;
+      }
     } catch (error) {
       if (error instanceof TaxCalculationError) throw error;
       throw new SalesError(400, "sale_calculation_failed");
@@ -417,6 +752,8 @@ function calculateCart(
       product,
       quantity: item.quantity,
       lotAllocations,
+      bundle,
+      regularGrossCentavos: product.selling_price_centavos * item.quantity,
       ...calculation,
       unitPriceCentavos: product.selling_price_centavos,
     };
@@ -433,6 +770,9 @@ function calculateCart(
   );
   const lineAmountDueCentavos = safeCentavoTotal(
     lines.map((line) => line.amountDueCentavos),
+  );
+  const bundlePromotionalDiscountCentavos = safeCentavoTotal(
+    lines.map((line) => line.bundle?.appliedPromotionDiscountCentavos ?? 0),
   );
   const cashRoundingAdjustmentCentavos =
     paymentMethod === "CASH"
@@ -452,6 +792,8 @@ function calculateCart(
     lineAmountDueCentavos,
     cashRoundingAdjustmentCentavos,
     amountDueCentavos,
+    bundlePromotionalDiscountCentavos,
+    bundleOffers: bundleSnapshotDrafts,
     seniorDiscountCentavos:
       benefitType === "SENIOR_CITIZEN" ? discountCentavos : 0,
     pwdDiscountCentavos: benefitType === "PWD" ? discountCentavos : 0,
@@ -477,6 +819,7 @@ function presentCheckout(
       unit: line.product.unit,
       quantity: line.quantity,
       unitPrice: money(line.unitPriceCentavos),
+      regularGross: money(line.regularGrossCentavos),
       gross: money(line.grossCentavos),
       taxClass: line.product.tax_class,
       productType: line.product.product_type,
@@ -490,6 +833,31 @@ function presentCheckout(
       discount: money(line.discountCentavos),
       amountDue: money(line.amountDueCentavos),
       ruleVersion: line.ruleVersion,
+      bundle: line.bundle
+        ? {
+            offerKey: line.bundle.offerKey,
+            code: line.bundle.code,
+            name: line.bundle.name,
+            componentQuantityPerBundle: line.bundle.componentQuantityPerBundle,
+            regularGross: money(line.regularGrossCentavos),
+            allocatedPromotionDiscount: money(
+              line.bundle.allocatedPromotionDiscountCentavos,
+            ),
+            appliedPromotionDiscount: money(
+              line.bundle.appliedPromotionDiscountCentavos,
+            ),
+            promotionSelected: line.bundle.promotionSelected,
+            statutoryAlternativeAmountDue: money(
+              line.bundle.statutoryAlternativeAmountDueCentavos,
+            ),
+            promotionAlternativeAmountDue: money(
+              line.bundle.promotionAlternativeAmountDueCentavos,
+            ),
+            selectedStatutoryTreatment: line.bundle.selectedStatutoryTreatment,
+            priceRuleVersion: line.bundle.priceRuleVersion,
+            discountInteractionRule: line.bundle.discountInteractionRule,
+          }
+        : null,
       assignedLots: line.lotAllocations.map((allocation) => {
         const lot = getLotBalances(db, line.product.id).find(
           (entry) => entry.id === allocation.lotId,
@@ -502,12 +870,50 @@ function presentCheckout(
         };
       }),
     })),
+    bundles: result.bundleOffers.map(({ snapshot, components }) => ({
+      offerKey: snapshot.offerKey,
+      code: snapshot.code,
+      name: snapshot.name,
+      version: snapshot.version,
+      quantity: snapshot.quantity,
+      regularTotal: money(snapshot.regularTotalCentavos * snapshot.quantity),
+      promotionalPricePerBundle: money(snapshot.promotionalPriceCentavos),
+      promotionalDiscountOffered: money(
+        snapshot.promotionalDiscountOfferedCentavos,
+      ),
+      promotionalDiscountApplied: money(
+        snapshot.promotionalDiscountAppliedCentavos,
+      ),
+      discountInteractionRule: snapshot.discountInteractionRule,
+      components: components.map(({ lineIndex }) => {
+        const line = result.lines[lineIndex]!;
+        return {
+          productId: line.product.id,
+          productName: line.product.name,
+          quantity: line.quantity,
+          regularAmount: money(line.regularGrossCentavos),
+          promotionAlternativeAmountDue: money(
+            line.bundle!.promotionAlternativeAmountDueCentavos,
+          ),
+          statutoryAlternativeAmountDue: money(
+            line.bundle!.statutoryAlternativeAmountDueCentavos,
+          ),
+          appliedPromotionDiscount: money(
+            line.bundle!.appliedPromotionDiscountCentavos,
+          ),
+          selectedStatutoryTreatment: line.bundle!.selectedStatutoryTreatment,
+        };
+      }),
+    })),
     totals: {
       subtotal: money(result.subtotalCentavos),
       vat: money(result.vatCentavos),
       vatRemoved: money(result.vatRemovedCentavos),
       seniorDiscount: money(result.seniorDiscountCentavos),
       pwdDiscount: money(result.pwdDiscountCentavos),
+      bundlePromotionalDiscount: money(
+        result.bundlePromotionalDiscountCentavos,
+      ),
       amountBeforeCashRounding: money(result.lineAmountDueCentavos),
       cashRoundingAdjustment: money(result.cashRoundingAdjustmentCentavos),
       amountDue: money(result.amountDueCentavos),
@@ -617,7 +1023,8 @@ export function getSavedSale(
               sc_pwd_eligible_snapshot, sc_eligible_snapshot,
               pwd_eligible_snapshot, product_type_snapshot,
               benefit_applied, tax_basis_centavos,
-              vat_centavos, vat_removed_centavos, discount_centavos, amount_due_centavos,
+              vat_centavos, vat_removed_centavos, discount_centavos,
+              bundle_promotion_discount_centavos, amount_due_centavos,
               allocated_cogs_centavos, tax_policy_version
        FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
     )
@@ -639,6 +1046,7 @@ export function getSavedSale(
     vat_centavos: number;
     vat_removed_centavos: number;
     discount_centavos: number;
+    bundle_promotion_discount_centavos: number;
     amount_due_centavos: number;
     allocated_cogs_centavos: number;
     tax_policy_version: string;
@@ -699,6 +1107,62 @@ export function getSavedSale(
       vat: money(line.vat_centavos),
       vatRemoved: money(line.vat_removed_centavos),
       discount: money(line.discount_centavos),
+      bundlePromotionDiscount: money(line.bundle_promotion_discount_centavos),
+      bundle: (() => {
+        const row = db
+          .prepare(
+            `SELECT b.code_snapshot, b.name_snapshot, b.version_snapshot,
+                    b.quantity AS bundle_quantity,
+                    b.promotional_price_per_bundle_centavos,
+                    b.price_rule_version, b.discount_interaction_rule,
+                    c.component_quantity_per_bundle,
+                    c.regular_line_total_centavos,
+                    c.promotional_discount_allocated_centavos,
+                    c.promotional_discount_applied_centavos,
+                    c.selected_statutory_treatment
+             FROM sale_bundle_component_snapshots c
+             JOIN sale_bundle_snapshots b ON b.id = c.sale_bundle_snapshot_id
+             WHERE c.sale_line_id = ?`,
+          )
+          .get(line.id) as
+          | {
+              code_snapshot: string;
+              name_snapshot: string;
+              version_snapshot: number;
+              bundle_quantity: number;
+              promotional_price_per_bundle_centavos: number;
+              price_rule_version: string;
+              discount_interaction_rule: string;
+              component_quantity_per_bundle: number;
+              regular_line_total_centavos: number;
+              promotional_discount_allocated_centavos: number;
+              promotional_discount_applied_centavos: number;
+              selected_statutory_treatment: string;
+            }
+          | undefined;
+        return row
+          ? {
+              code: row.code_snapshot,
+              name: row.name_snapshot,
+              version: row.version_snapshot,
+              bundleQuantity: row.bundle_quantity,
+              promotionalPricePerBundle: money(
+                row.promotional_price_per_bundle_centavos,
+              ),
+              componentQuantityPerBundle: row.component_quantity_per_bundle,
+              regularLineTotal: money(row.regular_line_total_centavos),
+              allocatedPromotionDiscount: money(
+                row.promotional_discount_allocated_centavos,
+              ),
+              appliedPromotionDiscount: money(
+                row.promotional_discount_applied_centavos,
+              ),
+              selectedStatutoryTreatment: row.selected_statutory_treatment,
+              priceRuleVersion: row.price_rule_version,
+              discountInteractionRule: row.discount_interaction_rule,
+            }
+          : null;
+      })(),
       amountDue: money(line.amount_due_centavos),
       ...(includeCogs ? { cogs: money(line.allocated_cogs_centavos) } : {}),
       taxPolicyVersion: line.tax_policy_version,
@@ -1056,6 +1520,8 @@ export function registerSalesRoutes(
         parsed.data.items,
         policy,
         parsed.data.paymentMethod,
+        false,
+        parsed.data.bundleOffers,
       );
       res.json(presentCheckout(db, result, policy, parsed.data.paymentMethod));
     } catch (error) {
@@ -1072,6 +1538,7 @@ export function registerSalesRoutes(
           benefitType: parsed.data.benefitType,
           paymentMethod: parsed.data.paymentMethod,
           items: parsed.data.items,
+          bundleOffers: parsed.data.bundleOffers,
         }),
       )
       .digest("hex");
@@ -1105,6 +1572,7 @@ export function registerSalesRoutes(
           policy,
           parsed.data.paymentMethod,
           true,
+          parsed.data.bundleOffers,
         );
         const nowDate = new Date();
         const businessDate = manilaBusinessDate(nowDate);
@@ -1167,6 +1635,43 @@ export function registerSalesRoutes(
           preview.cashRoundingAdjustmentCentavos,
         );
 
+        const bundleSnapshotIds = new Map<string, string>();
+        const insertBundleSnapshot = db.prepare(
+          `INSERT INTO sale_bundle_snapshots
+            (id, sale_id, bundle_id, bundle_version_id, code_snapshot,
+             name_snapshot, version_snapshot, active_from_snapshot,
+             active_until_snapshot, quantity, max_quantity_per_sale_snapshot,
+             regular_total_centavos, promotional_price_per_bundle_centavos,
+             promotional_discount_offered_centavos,
+             promotional_discount_applied_centavos, price_rule_version,
+             discount_interaction_rule, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const { snapshot } of preview.bundleOffers) {
+          const snapshotId = randomUUID();
+          bundleSnapshotIds.set(snapshot.offerKey, snapshotId);
+          insertBundleSnapshot.run(
+            snapshotId,
+            saleId,
+            snapshot.bundleId,
+            snapshot.bundleVersionId,
+            snapshot.code,
+            snapshot.name,
+            snapshot.version,
+            snapshot.activeFrom,
+            snapshot.activeUntil,
+            snapshot.quantity,
+            snapshot.maxQuantityPerSale,
+            snapshot.regularTotalCentavos,
+            snapshot.promotionalPriceCentavos,
+            snapshot.promotionalDiscountOfferedCentavos,
+            snapshot.promotionalDiscountAppliedCentavos,
+            snapshot.priceRuleVersion,
+            snapshot.discountInteractionRule,
+            now,
+          );
+        }
+
         const insertLine = db.prepare(
           `INSERT INTO sale_lines
             (id, sale_id, line_number, product_id, product_name_snapshot,
@@ -1175,9 +1680,10 @@ export function registerSalesRoutes(
              sc_eligible_snapshot, pwd_eligible_snapshot, product_type_snapshot,
              benefit_applied,
              tax_basis_centavos, vat_centavos, vat_removed_centavos, discount_centavos,
+             bundle_promotion_discount_centavos,
              amount_due_centavos, allocated_cogs_centavos,
              tax_policy_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const [index, line] of preview.lines.entries()) {
           const product = db
@@ -1244,11 +1750,42 @@ export function registerSalesRoutes(
             line.vatCentavos,
             line.vatRemovedCentavos,
             line.discountCentavos,
+            line.bundle?.appliedPromotionDiscountCentavos ?? 0,
             line.amountDueCentavos,
             allocatedCogs,
             line.ruleVersion,
             now,
           );
+          if (line.bundle) {
+            const snapshotId = bundleSnapshotIds.get(line.bundle.offerKey);
+            if (!snapshotId) {
+              throw new SalesError(500, "bundle_snapshot_missing");
+            }
+            db.prepare(
+              `INSERT INTO sale_bundle_component_snapshots
+                (id, sale_bundle_snapshot_id, sale_line_id, product_id,
+                 component_quantity_per_bundle, total_quantity,
+                 regular_unit_price_centavos, regular_line_total_centavos,
+                 promotional_discount_allocated_centavos,
+                 promotional_discount_applied_centavos,
+                 selected_statutory_treatment, tax_policy_version, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              randomUUID(),
+              snapshotId,
+              saleLineId,
+              line.product.id,
+              line.bundle.componentQuantityPerBundle,
+              line.quantity,
+              line.unitPriceCentavos,
+              line.regularGrossCentavos,
+              line.bundle.allocatedPromotionDiscountCentavos,
+              line.bundle.appliedPromotionDiscountCentavos,
+              line.benefitApplied ? parsed.data.benefitType : "REGULAR",
+              line.ruleVersion,
+              now,
+            );
+          }
           if (line.product.tracks_lots === 1) {
             let remainingCogs = allocatedCogs;
             for (const [

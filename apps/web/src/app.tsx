@@ -23,6 +23,7 @@ import {
   Menu,
   PackageSearch,
   ShieldCheck,
+  Tag,
   Users,
   WalletCards,
   X,
@@ -36,12 +37,14 @@ import { ReportsPage } from "./reports-page";
 import { ShiftHistoryPage } from "./shift-history-page";
 import { BackupsPage } from "./backups-page";
 import { TaxPolicySettings } from "./tax-policy-settings";
+import { BundlesPage } from "./bundles-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
+  { to: "/bundles", label: "Bundles", icon: Tag, ownerOnly: true },
   {
     to: "/sales",
     label: "Sales history",
@@ -728,6 +731,7 @@ export function App() {
           <Route element={<Guard ownerOnly />}>
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
+            <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="shifts" element={<ShiftHistoryPage />} />

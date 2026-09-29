@@ -257,6 +257,117 @@ function assertDatabaseIntegrity(db: Database.Database): void {
     throw new BackupError("backup_database_foreign_key_failed");
   if (lotLedgerIssues(db).length > 0)
     throw new BackupError("backup_lot_stock_reconciliation_failed");
+  const hasBundleTables = db
+    .prepare(
+      `SELECT count(*) AS count FROM sqlite_master
+       WHERE type = 'table' AND name IN (
+         'sales_bundle_versions', 'sales_bundle_version_components',
+         'sale_bundle_snapshots', 'sale_bundle_component_snapshots')`,
+    )
+    .get() as { count: number };
+  if (hasBundleTables.count === 4 && bundleSnapshotIssues(db).length > 0)
+    throw new BackupError("backup_bundle_snapshot_failed");
+}
+
+function bundleSnapshotIssues(db: Database.Database): string[] {
+  const issues: string[] = [];
+  const parentRows = db
+    .prepare(
+      `SELECT b.id, b.quantity, b.regular_total_centavos,
+              b.promotional_price_per_bundle_centavos,
+              b.promotional_discount_offered_centavos,
+              b.promotional_discount_applied_centavos,
+              coalesce(sum(c.promotional_discount_allocated_centavos), 0) AS allocated,
+              coalesce(sum(c.promotional_discount_applied_centavos), 0) AS applied,
+              count(c.id) AS component_count,
+              (SELECT count(*) FROM sales_bundle_version_components vc
+               WHERE vc.bundle_version_id = b.bundle_version_id) AS configured_count
+       FROM sale_bundle_snapshots b
+       LEFT JOIN sale_bundle_component_snapshots c
+         ON c.sale_bundle_snapshot_id = b.id
+       GROUP BY b.id`,
+    )
+    .all() as Array<{
+    id: string;
+    quantity: number;
+    regular_total_centavos: number;
+    promotional_price_per_bundle_centavos: number;
+    promotional_discount_offered_centavos: number;
+    promotional_discount_applied_centavos: number;
+    allocated: number;
+    applied: number;
+    component_count: number;
+    configured_count: number;
+  }>;
+  for (const row of parentRows) {
+    const expectedOffer =
+      (BigInt(row.regular_total_centavos) -
+        BigInt(row.promotional_price_per_bundle_centavos)) *
+      BigInt(row.quantity);
+    if (
+      expectedOffer !== BigInt(row.promotional_discount_offered_centavos) ||
+      BigInt(row.allocated) !== expectedOffer ||
+      BigInt(row.applied) !==
+        BigInt(row.promotional_discount_applied_centavos) ||
+      row.component_count !== row.configured_count
+    ) {
+      issues.push(`bundle_parent:${row.id}`);
+    }
+  }
+  const componentRows = db
+    .prepare(
+      `SELECT c.id, b.quantity AS bundle_quantity,
+              c.component_quantity_per_bundle, vc.quantity AS configured_quantity,
+              c.total_quantity,
+              c.regular_unit_price_centavos, c.regular_line_total_centavos,
+              c.promotional_discount_applied_centavos,
+              sl.quantity AS line_quantity, sl.unit_price_centavos,
+              sl.bundle_promotion_discount_centavos, sl.benefit_applied,
+              s.benefit_type, c.selected_statutory_treatment
+       FROM sale_bundle_component_snapshots c
+       JOIN sale_bundle_snapshots b ON b.id = c.sale_bundle_snapshot_id
+       JOIN sales_bundle_version_components vc
+         ON vc.bundle_version_id = b.bundle_version_id
+        AND vc.product_id = c.product_id
+       JOIN sale_lines sl ON sl.id = c.sale_line_id
+       JOIN sales s ON s.id = sl.sale_id`,
+    )
+    .all() as Array<{
+    id: string;
+    bundle_quantity: number;
+    component_quantity_per_bundle: number;
+    configured_quantity: number;
+    total_quantity: number;
+    regular_unit_price_centavos: number;
+    regular_line_total_centavos: number;
+    promotional_discount_applied_centavos: number;
+    line_quantity: number;
+    unit_price_centavos: number;
+    bundle_promotion_discount_centavos: number;
+    benefit_applied: number;
+    benefit_type: string;
+    selected_statutory_treatment: string;
+  }>;
+  for (const row of componentRows) {
+    if (
+      row.component_quantity_per_bundle !== row.configured_quantity ||
+      row.total_quantity !==
+        row.component_quantity_per_bundle * row.bundle_quantity ||
+      row.total_quantity !== row.line_quantity ||
+      row.regular_unit_price_centavos !== row.unit_price_centavos ||
+      BigInt(row.regular_line_total_centavos) !==
+        BigInt(row.regular_unit_price_centavos) * BigInt(row.total_quantity) ||
+      row.bundle_promotion_discount_centavos !==
+        row.promotional_discount_applied_centavos ||
+      (row.selected_statutory_treatment === "REGULAR"
+        ? row.benefit_applied !== 0
+        : row.benefit_applied !== 1 ||
+          row.benefit_type !== row.selected_statutory_treatment)
+    ) {
+      issues.push(`bundle_component:${row.id}`);
+    }
+  }
+  return issues;
 }
 
 function validateCustomerCiphertexts(db: Database.Database, key: string): void {
@@ -606,7 +717,12 @@ const restoreTables = [
   "lot_reconciliations",
   "shifts",
   "sales",
+  "sales_bundles",
+  "sales_bundle_versions",
+  "sales_bundle_version_components",
+  "sale_bundle_snapshots",
   "sale_lines",
+  "sale_bundle_component_snapshots",
   "sale_reversals",
   "sale_reversal_lines",
   "cash_movements",
@@ -632,7 +748,13 @@ function applyRestoredDatabase(
            'lot_stock_movements_no_negative_balance',
            'lot_reconciliations_no_update', 'lot_reconciliations_no_delete',
            'inventory_lots_identity_immutable', 'inventory_lots_no_delete',
-           'sale_line_lot_allocations_no_update', 'sale_line_lot_allocations_no_delete'
+           'sale_line_lot_allocations_no_update', 'sale_line_lot_allocations_no_delete',
+           'sales_bundle_versions_no_update', 'sales_bundle_versions_no_delete',
+           'sales_bundle_version_components_no_update',
+           'sales_bundle_version_components_no_delete',
+           'sale_bundle_snapshots_no_update', 'sale_bundle_snapshots_no_delete',
+           'sale_bundle_component_snapshots_no_update',
+           'sale_bundle_component_snapshots_no_delete'
          ) ORDER BY name`,
       )
       .all() as Array<{ sql: string }>;
@@ -647,6 +769,14 @@ function applyRestoredDatabase(
         "inventory_lots_no_delete",
         "sale_line_lot_allocations_no_update",
         "sale_line_lot_allocations_no_delete",
+        "sales_bundle_versions_no_update",
+        "sales_bundle_versions_no_delete",
+        "sales_bundle_version_components_no_update",
+        "sales_bundle_version_components_no_delete",
+        "sale_bundle_snapshots_no_update",
+        "sale_bundle_snapshots_no_delete",
+        "sale_bundle_component_snapshots_no_update",
+        "sale_bundle_component_snapshots_no_delete",
       ]) {
         db.exec(`DROP TRIGGER IF EXISTS main.${triggerName}`);
       }

@@ -20,7 +20,10 @@ import {
   decryptCustomerField,
 } from "./customer-data.js";
 import { openDatabase } from "./db.js";
-import { clearLotLedgerForTest } from "./test-ledger.js";
+import {
+  clearBundleLedgerForTest,
+  clearLotLedgerForTest,
+} from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -92,6 +95,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   for (const path of [primaryDirectory, secondaryDirectory]) {
     rmSync(path, { recursive: true, force: true });
@@ -230,6 +234,75 @@ describe("owner-only verified backup and restore", () => {
     expect(trackedProductResponse.status).toBe(201);
     const trackedProductId = trackedProductResponse.body.product.id as string;
 
+    const bundleResponse = await postWithCsrf(owner, "/bundles", {
+      code: "SYN-BACKUP-BUNDLE",
+      name: "Synthetic backup bundle",
+      activeFrom: manilaDayAfter(0),
+      activeUntil: null,
+      maxQuantityPerSale: null,
+      reductionType: "AMOUNT",
+      reductionValue: 100,
+      promotionalPrice: "131.00",
+      confirmFinalPrice: true,
+      components: [
+        { productId: trackedProductId, quantity: 1 },
+        { productId, quantity: 1 },
+      ],
+    });
+    expect(bundleResponse.status, JSON.stringify(bundleResponse.body)).toBe(
+      201,
+    );
+    const bundleVersionId = bundleResponse.body.bundle.versionId as string;
+    const bundleOfferKey = randomUUID();
+    const bundlePreview = await postWithCsrf(cashier, "/sales/preview", {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [],
+      bundleOffers: [
+        {
+          offerKey: bundleOfferKey,
+          bundleVersionId,
+          quantity: 1,
+          components: [{ productId: trackedProductId }, { productId }],
+        },
+      ],
+    });
+    expect(bundlePreview.status, JSON.stringify(bundlePreview.body)).toBe(200);
+    const bundleLotPick = (
+      bundlePreview.body.lines[0].assignedLots as Array<{
+        lotId: string;
+        quantity: number;
+      }>
+    ).map(({ lotId, quantity }) => ({ lotId, quantity }));
+    const bundleSaleResponse = await postWithCsrf(cashier, "/sales", {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      requestKey: randomUUID(),
+      items: [],
+      bundleOffers: [
+        {
+          offerKey: bundleOfferKey,
+          bundleVersionId,
+          quantity: 1,
+          components: [
+            {
+              productId: trackedProductId,
+              lotAllocations: bundleLotPick,
+              lotPickConfirmed: true,
+            },
+            { productId },
+          ],
+        },
+      ],
+    });
+    expect(
+      bundleSaleResponse.status,
+      JSON.stringify(bundleSaleResponse.body),
+    ).toBe(201);
+    const bundleSale = bundleSaleResponse.body.sale as {
+      transactionId: string;
+    };
+
     const backupResponse = await postWithCsrf(owner, "/backups", {});
     expect(backupResponse.status, JSON.stringify(backupResponse.body)).toBe(
       201,
@@ -331,8 +404,8 @@ describe("owner-only verified backup and restore", () => {
     expect(restoredProduct).toEqual({
       name: "Synthetic backup medicine",
       selling_price_centavos: 11_200,
-      quantity_on_hand: 3,
-      inventory_value_centavos: 10_500,
+      quantity_on_hand: 2,
+      inventory_value_centavos: 7_000,
     });
     const restoredLot = db
       .prepare(
@@ -345,7 +418,7 @@ describe("owner-only verified backup and restore", () => {
     expect(restoredLot).toMatchObject({
       lot_code: "SYN-BACKUP-BATCH",
       expiry_date: manilaDayAfter(30),
-      quantity: 2,
+      quantity: 1,
     });
     const restoredLotId = db
       .prepare("SELECT id FROM inventory_lots WHERE product_id = ?")
@@ -371,6 +444,55 @@ describe("owner-only verified backup and restore", () => {
     );
     expect(restoredSale.status).toBe(200);
     expect(restoredSale.body.sale.lines[0].cogs).toBe("35.00");
+    const restoredBundleSale = await signedInOwner.get(
+      `/api/sales/${bundleSale.transactionId}`,
+    );
+    expect(restoredBundleSale.status).toBe(200);
+    expect(restoredBundleSale.body.sale.lines[0]).toMatchObject({
+      productName: "Synthetic tracked backup item",
+      bundle: {
+        code: "SYN-BACKUP-BUNDLE",
+        name: "Synthetic backup bundle",
+        version: 1,
+      },
+      lotAllocations: [
+        expect.objectContaining({ lotCode: "SYN-BACKUP-BATCH" }),
+      ],
+    });
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT promotional_discount_applied_centavos FROM sale_bundle_snapshots WHERE sale_id = (SELECT id FROM sales WHERE transaction_id = ?)",
+          )
+          .get(bundleSale.transactionId) as {
+          promotional_discount_applied_centavos: number;
+        }
+      ).promotional_discount_applied_centavos,
+    ).toBe(100);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM sales_bundle_versions WHERE bundle_id = (SELECT id FROM sales_bundles WHERE code = 'SYN-BACKUP-BUNDLE')",
+          )
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
+    expect(() =>
+      db
+        .prepare(
+          "UPDATE sales_bundle_versions SET name_snapshot = 'tampered' WHERE bundle_id = (SELECT id FROM sales_bundles WHERE code = 'SYN-BACKUP-BUNDLE')",
+        )
+        .run(),
+    ).toThrow(/sales_bundle_versions_are_immutable/u);
+    expect(() =>
+      db
+        .prepare(
+          "UPDATE sale_bundle_snapshots SET name_snapshot = 'tampered' WHERE sale_id = (SELECT id FROM sales WHERE transaction_id = ?)",
+        )
+        .run(bundleSale.transactionId),
+    ).toThrow(/sale_bundle_snapshots_are_immutable/u);
     const customer = await signedInOwner.get(
       `/api/sales/${sale.transactionId}/customer`,
     );
@@ -382,8 +504,9 @@ describe("owner-only verified backup and restore", () => {
     const report = await signedInOwner.get(
       `/api/reports/daily?date=${sale.businessDate}`,
     );
-    expect(report.body.report.metrics.grossSales).toBe("112.00");
-    expect(report.body.report.inventory.inventoryValue).toBe("129.00");
+    expect(report.body.report.metrics.grossSales).toBe("244.00");
+    expect(report.body.report.metrics.bundlePromotionalDiscounts).toBe("1.00");
+    expect(report.body.report.inventory.inventoryValue).toBe("82.00");
     const restoredBackups = await signedInOwner.get("/api/backups");
     expect(restoredBackups.body.backups).toEqual(
       expect.arrayContaining([
@@ -458,6 +581,13 @@ describe("owner-only verified backup and restore", () => {
             .prepare("SELECT COUNT(*) AS count FROM sales")
             .get() as { count: number }
         ).count,
+      ).toBe(2);
+      expect(
+        (
+          cleanInstallDb
+            .prepare("SELECT COUNT(*) AS count FROM sale_bundle_snapshots")
+            .get() as { count: number }
+        ).count,
       ).toBe(1);
       expect(
         cleanInstallDb
@@ -465,7 +595,7 @@ describe("owner-only verified backup and restore", () => {
             "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
           )
           .get(productId),
-      ).toEqual({ quantity_on_hand: 3, inventory_value_centavos: 10_500 });
+      ).toEqual({ quantity_on_hand: 2, inventory_value_centavos: 7_000 });
       expect(
         (
           cleanInstallDb

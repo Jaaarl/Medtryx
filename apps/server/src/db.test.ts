@@ -49,6 +49,39 @@ describe("database migrations", () => {
            VALUES (?, 'legacy-product', ?, ?, ?, ?, 'legacy-owner', ?)`,
         ).run(eventId, eventType, qty, cost, value, now);
       }
+      db.prepare(
+        `INSERT INTO shifts
+          (id, cashier_user_id, opened_at, opening_cash_centavos,
+           expected_cash_centavos)
+         VALUES ('legacy-sale-shift', 'legacy-owner', ?, 0, 0)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sales
+          (id, transaction_id, business_date, request_key, request_hash,
+           cashier_user_id, shift_id, benefit_type, customer_id_checked,
+           payment_method, subtotal_centavos, vat_centavos,
+           vat_removed_centavos, senior_discount_centavos,
+           pwd_discount_centavos, amount_due_centavos, tax_policy_version,
+           created_at)
+         VALUES ('legacy-sale', 'MTX-20260102-000001', '2026-01-02',
+           'legacy-sale-key', 'legacy-sale-hash', 'legacy-owner',
+           'legacy-sale-shift', 'REGULAR', 0, 'CASH', 500, 0, 0, 0, 0,
+           500, 'LEGACY-TAX', ?)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sale_lines
+          (id, sale_id, line_number, product_id, product_name_snapshot,
+           sku_snapshot, unit_snapshot, quantity, unit_price_centavos,
+           tax_class_snapshot, sc_pwd_eligible_snapshot, benefit_applied,
+           tax_basis_centavos, vat_centavos, vat_removed_centavos,
+           discount_centavos, amount_due_centavos, allocated_cogs_centavos,
+           tax_policy_version, created_at, sc_eligible_snapshot,
+           pwd_eligible_snapshot, product_type_snapshot)
+         VALUES ('legacy-sale-line', 'legacy-sale', 1, 'legacy-product',
+           'Legacy tracked later', 'SYN-LEGACY-LOT', 'piece', 1, 500,
+           'VATABLE', 0, 0, 446, 54, 0, 0, 500, 300, 'LEGACY-TAX', ?,
+           0, 0, NULL)`,
+      ).run(now);
 
       migrateDatabase(db);
 
@@ -82,6 +115,27 @@ describe("database migrations", () => {
           )
           .get(),
       ).toEqual({ count: 2 });
+      expect(
+        db
+          .prepare(
+            `SELECT sl.product_name_snapshot, sl.unit_price_centavos,
+                    sl.amount_due_centavos, sl.bundle_promotion_discount_centavos,
+                    b.id AS bundle_snapshot
+             FROM sale_lines sl LEFT JOIN sale_bundle_component_snapshots b
+               ON b.sale_line_id = sl.id
+             WHERE sl.id = 'legacy-sale-line'`,
+          )
+          .get(),
+      ).toEqual({
+        product_name_snapshot: "Legacy tracked later",
+        unit_price_centavos: 500,
+        amount_due_centavos: 500,
+        bundle_promotion_discount_centavos: 0,
+        bundle_snapshot: null,
+      });
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM sale_bundle_snapshots").get(),
+      ).toEqual({ count: 0 });
     } finally {
       db.close();
     }

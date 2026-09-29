@@ -10,6 +10,16 @@ type SalesReport = {
   generatedAt: string;
   metrics: Record<string, string>;
   reversalCount: number;
+  bundlePromotions: Array<{
+    code: string;
+    name: string;
+    version: number;
+    quantity: number;
+    regularTotal: string;
+    promotionalPricePerBundle: string;
+    promotionalDiscountOffered: string;
+    promotionalDiscountApplied: string;
+  }>;
   inventory: {
     activeProductCount: number;
     lowStockCount: number;
@@ -63,6 +73,10 @@ const metricGroups: Array<{
       ["VAT removed for benefits", "vatRemoved"],
       ["Senior citizen discounts", "seniorDiscounts"],
       ["PWD discounts", "pwdDiscounts"],
+      [
+        "Bundle promotional discounts (net of reversals)",
+        "bundlePromotionalDiscounts",
+      ],
     ],
   },
   {
@@ -269,6 +283,52 @@ export function ReportsPage() {
               </section>
             ))}
           </div>
+
+          <section className="settings-main-card report-low-stock">
+            <div className="card-heading">
+              <div>
+                <h2>Bundle offer snapshots</h2>
+                <p>
+                  Original approved prices and component promotion outcomes from
+                  sales in this period.
+                </p>
+              </div>
+            </div>
+            {report.bundlePromotions.length ? (
+              <div className="inventory-table-wrap">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Offer</th>
+                      <th>Qty</th>
+                      <th>Regular components</th>
+                      <th>Offer price each</th>
+                      <th>Discount offered</th>
+                      <th>Discount applied</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.bundlePromotions.map((bundle, index) => (
+                      <tr key={`${bundle.code}-${bundle.version}-${index}`}>
+                        <td>
+                          {bundle.code} · {bundle.name} · v{bundle.version}
+                        </td>
+                        <td>{bundle.quantity}</td>
+                        <td>₱{bundle.regularTotal}</td>
+                        <td>₱{bundle.promotionalPricePerBundle}</td>
+                        <td>₱{bundle.promotionalDiscountOffered}</td>
+                        <td>₱{bundle.promotionalDiscountApplied}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="report-empty">
+                No bundle offers appear in the selected sales.
+              </p>
+            )}
+          </section>
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">

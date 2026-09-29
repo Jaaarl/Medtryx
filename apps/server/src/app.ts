@@ -27,6 +27,7 @@ import {
 } from "./auth.js";
 import { selectedEnvironment, writeAuditEvent } from "./db.js";
 import { registerInventoryRoutes } from "./inventory.js";
+import { registerBundleRoutes } from "./bundles.js";
 import { registerBackupRoutes } from "./backups.js";
 import { registerReversalRoutes } from "./reversals.js";
 import { registerReportRoutes } from "./reports.js";
@@ -407,6 +408,7 @@ export function createApp(
   registerAuthRoutes(app, db);
   const inventoryRouter = express.Router();
   registerInventoryRoutes(inventoryRouter, db);
+  registerBundleRoutes(inventoryRouter, db);
   registerBackupRoutes(inventoryRouter, db);
   app.use("/api", inventoryRouter);
   const salesRouter = express.Router();
