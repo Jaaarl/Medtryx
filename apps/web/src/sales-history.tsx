@@ -17,6 +17,7 @@ type SaleSummary = {
   cashierEmail: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  cashRoundingAdjustment: string;
   createdAt: string;
   status: "FINALIZED" | "REVERSED";
   reversal: {
@@ -24,6 +25,7 @@ type SaleSummary = {
     createdAt: string;
     refundMethod: "CASH" | "QR";
     amount: string;
+    cashRoundingAdjustment: string;
   } | null;
 };
 
@@ -45,6 +47,8 @@ type SaleDetails = {
   cashierEmail: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
+  cashRoundingAdjustment: string;
   createdAt: string;
   label: string;
   lines: SaleLine[];
@@ -81,8 +85,17 @@ type PendingVariance = {
 };
 
 function cents(value: string): bigint {
-  const [whole = "0", fraction = ""] = value.split(".");
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  const negative = value.startsWith("-");
+  const normalized = negative ? value.slice(1) : value;
+  const [whole = "0", fraction = ""] = normalized.split(".");
+  const total = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return negative ? -total : total;
+}
+
+function cashAdjustmentText(value: string): string {
+  const total = cents(value);
+  const absolute = total < 0n ? -total : total;
+  return `${total < 0n ? "−" : ""}₱${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`;
 }
 
 function dateText(value: string): string {
@@ -629,6 +642,13 @@ export function SalesHistoryPage() {
                   </div>
                 ))}
               </div>
+              {sale.cashRoundingMode === "NEAREST_25_CENTAVOS" &&
+                sale.paymentMethod === "CASH" && (
+                  <small className="field-hint">
+                    Cash rounding adjustment:{" "}
+                    {cashAdjustmentText(sale.cashRoundingAdjustment)}
+                  </small>
+                )}
               <div className="sale-detail-total">
                 <span>Full refund amount</span>
                 <strong>₱{sale.amountDue}</strong>
@@ -640,6 +660,16 @@ export function SalesHistoryPage() {
                   {dateText(selectedSummary.reversal.createdAt)} for ₱
                   {selectedSummary.reversal.amount} by{" "}
                   {selectedSummary.reversal.refundMethod}.
+                  {selectedSummary.reversal.cashRoundingAdjustment !==
+                    "0.00" && (
+                    <>
+                      Cash rounding adjustment:{" "}
+                      {cashAdjustmentText(
+                        selectedSummary.reversal.cashRoundingAdjustment,
+                      )}
+                      .
+                    </>
+                  )}
                 </div>
               ) : (
                 <form

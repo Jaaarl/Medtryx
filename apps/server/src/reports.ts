@@ -81,18 +81,25 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
   const totals: Record<string, bigint> = {};
   const sales = db
     .prepare(
-      `SELECT payment_method, amount_due_centavos FROM sales
+      `SELECT payment_method, amount_due_centavos,
+              cash_rounding_adjustment_centavos FROM sales
        WHERE business_date >= ? AND business_date <= ?`,
     )
     .all(startDay, endDay) as {
     payment_method: "CASH" | "QR";
     amount_due_centavos: number;
+    cash_rounding_adjustment_centavos: number;
   }[];
   for (const sale of sales) {
     add(
       totals,
       sale.payment_method === "CASH" ? "cashSales" : "qrSales",
       BigInt(sale.amount_due_centavos),
+    );
+    add(
+      totals,
+      "cashRoundingAdjustments",
+      BigInt(sale.cash_rounding_adjustment_centavos),
     );
   }
 
@@ -135,19 +142,26 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
 
   const reversalRows = db
     .prepare(
-      `SELECT r.refund_method, r.amount_centavos
+      `SELECT r.refund_method, r.amount_centavos,
+              r.cash_rounding_adjustment_centavos
        FROM sale_reversals r
        WHERE r.created_at >= ? AND r.created_at < ?`,
     )
     .all(window.start, window.end) as {
     refund_method: "CASH" | "QR";
     amount_centavos: number;
+    cash_rounding_adjustment_centavos: number;
   }[];
   for (const reversal of reversalRows) {
     add(
       totals,
       reversal.refund_method === "CASH" ? "cashRefunds" : "qrRefunds",
       BigInt(reversal.amount_centavos),
+    );
+    add(
+      totals,
+      "cashRoundingAdjustments",
+      -BigInt(reversal.cash_rounding_adjustment_centavos),
     );
   }
 
@@ -271,6 +285,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       pwdDiscounts: total("pwdDiscounts"),
       cashSales: total("cashSales"),
       qrSales: total("qrSales"),
+      cashRoundingAdjustments: total("cashRoundingAdjustments"),
       cashRefunds: total("cashRefunds"),
       qrRefunds: total("qrRefunds"),
       cashIn: total("cashIn"),
@@ -304,6 +319,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       "COGS follows saved sale-line acquisition-cost allocations; full reversals offset the original saved COGS on their recorded date.",
       "Estimated gross profit excludes separate stock write-offs and operating expenses.",
       "Cash and QR are staff-declared settlement methods, not payment verification.",
+      "Cash rounding adjustments are reported separately and do not change saved line tax, net-sales, or estimated gross-profit figures.",
       "Inventory value and low-stock counts show current balances, not historical end-of-day balances.",
     ],
   };
@@ -323,6 +339,11 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ["Discounts", "PWD", report.metrics.pwdDiscounts],
     ["Payments", "Cash declared sales", report.metrics.cashSales],
     ["Payments", "QR declared sales", report.metrics.qrSales],
+    [
+      "Payments",
+      "Cash rounding adjustments (net of reversals)",
+      report.metrics.cashRoundingAdjustments,
+    ],
     ["Payments", "Cash refunds", report.metrics.cashRefunds],
     ["Payments", "QR refunds", report.metrics.qrRefunds],
     ["Payments", "Cash-in", report.metrics.cashIn],

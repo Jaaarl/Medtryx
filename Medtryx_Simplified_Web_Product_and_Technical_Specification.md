@@ -148,6 +148,18 @@ This design **does not provide lot traceability or automatic expiry protection**
 
 The pharmacy is assumed to be VAT-registered and to use VAT-inclusive prices, as stated in the original specification. The rate, approved rounding rule, and product classifications must be confirmed before live use. Use decimal/integer-centavo money calculations; never use binary floating point for stored monetary values. Store each line's price, tax class, benefit selection, calculation, and applied rule at the time of sale so later edits do not change history.
 
+Tax-component rounding and cash-total rounding are separate approved settings. When the owner selects **nearest ₱0.25**, round the combined final CASH amount using these centavo ranges; keep each saved line's tax and due amount unchanged. QR-declared totals stay exact. Save the signed difference between the line total and cash total on the sale, use the rounded sale total for the shift's expected cash, and preserve the same difference in a full-sale reversal so the original paid amount is refunded. Show cash rounding adjustments as a separate report metric, offsetting them when a reversal is recorded; do not add them to line tax, net-sales, or estimated-gross-profit figures.
+
+| Final cash total ending | Rounded cash total |
+| ----------------------- | ------------------ |
+| `.00–.12`               | `.00`              |
+| `.13–.37`               | `.25`              |
+| `.38–.62`               | `.50`              |
+| `.63–.87`               | `.75`              |
+| `.88–.99`               | next `.00`         |
+
+The pharmacy's owner/accountant must approve this treatment before enabling it for live sales.
+
 For an approved SC/PWD-qualified VATable line, remove the VAT component from the VAT-inclusive price before calculating the applicable 20% statutory discount. For a catalog VAT-exempt qualified line, apply the approved discount without removing VAT again. An unselected or ineligible line remains a regular line. Do not combine SC and PWD benefits on the same line. Show the calculation to staff so it can be transcribed into the separate manual-invoice process.
 
 These rules carry forward the original specification's core calculation, which should be reviewed against [RA 9994](https://lawphil.net/statutes/repacts/ra2010/ra_9994_2010.html) and [BIR RR 5-2017](https://ncda.gov.ph/disability-laws/implementing-rules-and-regulations-irr/revenue-regulations-no-5-2017-rules-and-regulations-implementing-republic-act-no-10754/) before release. Staff must use the pharmacy's approved eligibility and documentation procedure.
@@ -219,6 +231,7 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 13. The owner confirms the acquisition-cost basis, manual expiry/lot procedure, tax rules, invoice process, and any required system registration before live use.
 14. At most one cashier shift can be open store-wide, including when separate cashier accounts attempt to open simultaneously; a cashier can open after the active shift closes.
 15. Owners can review shift opener/closer accounts and times, drawer amounts and cash reconciliation; cashier accounts cannot access the owner history endpoint.
+16. With owner-approved nearest-₱0.25 cash rounding enabled, checkout rounds the combined CASH total by the documented table, leaves QR totals and line tax unchanged, and preserves the signed adjustment through sale, full reversal, expected shift cash, reports, and CSV.
 
 ## 11. Decisions to make before development or launch
 

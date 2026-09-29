@@ -70,6 +70,10 @@ const metricGroups: Array<{
     metrics: [
       ["Cash sales", "cashSales"],
       ["QR sales", "qrSales"],
+      [
+        "Cash rounding adjustments (net of reversals)",
+        "cashRoundingAdjustments",
+      ],
       ["Cash refunds", "cashRefunds"],
       ["QR refunds", "qrRefunds"],
       ["Cash-in", "cashIn"],

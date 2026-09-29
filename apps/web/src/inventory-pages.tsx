@@ -160,8 +160,11 @@ function PageHeading({
 }
 
 function centsFromMoney(value: string): bigint {
-  const [whole = "0", fraction = ""] = value.split(".");
-  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  const negative = value.startsWith("-");
+  const normalized = negative ? value.slice(1) : value;
+  const [whole = "0", fraction = ""] = normalized.split(".");
+  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return negative ? -cents : cents;
 }
 
 function formatCents(cents: bigint): string {
@@ -1280,7 +1283,12 @@ type CartLine = {
 };
 
 type CheckoutPreview = {
-  policy: { approved: boolean; version: string };
+  policy: {
+    approved: boolean;
+    version: string;
+    cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
+  };
+  paymentMethod: "CASH" | "QR";
   policyNotice: string | null;
   lines: Array<{
     productId: string;
@@ -1299,6 +1307,8 @@ type CheckoutPreview = {
     vatRemoved: string;
     seniorDiscount: string;
     pwdDiscount: string;
+    amountBeforeCashRounding: string;
+    cashRoundingAdjustment: string;
     amountDue: string;
   };
 };
@@ -1308,6 +1318,8 @@ type SaleRecord = {
   transactionId: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
+  cashRoundingAdjustment: string;
   label: string;
 };
 
@@ -1516,6 +1528,7 @@ export function CheckoutPage() {
     try {
       const result = await api.post<CheckoutPreview>("/sales/preview", {
         benefitType,
+        paymentMethod,
         items: cart.map((line) => ({
           productId: line.product.id,
           quantity: line.quantity,
@@ -1950,6 +1963,7 @@ export function CheckoutPage() {
                       event.target.value as typeof paymentMethod,
                     );
                     setRequestKey("");
+                    setPreview(null);
                   }}
                 >
                   <option value="CASH">Cash</option>
@@ -1991,9 +2005,26 @@ export function CheckoutPage() {
                 ))}
               </div>
               <div className="checkout-preview-total">
-                <span>Amount due</span>
+                <span>
+                  {preview.paymentMethod === "CASH" &&
+                  preview.policy.cashRoundingMode === "NEAREST_25_CENTAVOS"
+                    ? "Rounded cash total"
+                    : "Amount due"}
+                </span>
                 <strong>₱{preview.totals.amountDue}</strong>
               </div>
+              {preview.paymentMethod === "CASH" &&
+                preview.policy.cashRoundingMode === "NEAREST_25_CENTAVOS" && (
+                  <small className="field-hint checkout-rounding-note">
+                    Line total before cash rounding: ₱
+                    {preview.totals.amountBeforeCashRounding} · cash rounding
+                    adjustment:{" "}
+                    {formatCents(
+                      centsFromMoney(preview.totals.cashRoundingAdjustment),
+                    )}
+                    . Tax calculations are unchanged.
+                  </small>
+                )}
               <button
                 className="button button-primary"
                 type="button"
@@ -2022,6 +2053,16 @@ export function CheckoutPage() {
                 ₱{saleRecord.amountDue} ·{" "}
                 {saleRecord.paymentMethod === "QR" ? "QR declared" : "Cash"}
               </span>
+              {saleRecord.cashRoundingMode === "NEAREST_25_CENTAVOS" &&
+                saleRecord.paymentMethod === "CASH" &&
+                saleRecord.cashRoundingAdjustment !== "0.00" && (
+                  <span>
+                    Cash rounding adjustment
+                    {formatCents(
+                      centsFromMoney(saleRecord.cashRoundingAdjustment),
+                    )}
+                  </span>
+                )}
             </div>
           )}
         </aside>

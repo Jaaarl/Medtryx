@@ -295,6 +295,100 @@ describe("daily owner reports and CSV export", () => {
     });
   });
 
+  it("reports cash rounding separately from line revenue and offsets it on reversal", async () => {
+    const owner = await signIn("owner.reports@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.reports@example.test",
+      cashierPassword,
+    );
+    const configured = await postWithCsrf(owner, "/settings/tax-policy", {
+      confirmApproved: true,
+      version: "SYNTHETIC-REPORT-CASH-ROUNDING",
+      vatRateBasisPoints: 1_200,
+      seniorDiscountBasisPoints: 2_000,
+      pwdDiscountBasisPoints: 2_000,
+      vatInclusivePrices: true,
+      allowZeroRated: false,
+      roundingMode: "HALF_UP",
+      cashRoundingMode: "NEAREST_25_CENTAVOS",
+      approvalReference: "Synthetic report cash rounding policy",
+      costBasisDescription: "Synthetic weighted-average acquisition cost",
+    });
+    expect(configured.status).toBe(200);
+    const productResponse = await postWithCsrf(owner, "/products", {
+      sku: "SYN-REPORT-ROUND-001",
+      name: "Synthetic rounding report medicine",
+      unit: "piece",
+      sellingPrice: "112.13",
+      taxClass: "VATABLE",
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
+      openingQuantity: 2,
+      openingUnitCost: "40.00",
+      reorderLevel: 0,
+    });
+    expect(productResponse.status).toBe(201);
+    const productId = productResponse.body.product.id as string;
+    const shiftResponse = await postWithCsrf(cashier, "/shifts", {
+      openingCash: "100.00",
+    });
+    expect(shiftResponse.status).toBe(201);
+    const saleResponse = await postWithCsrf(cashier, "/sales", {
+      benefitType: "REGULAR",
+      items: [{ productId, quantity: 1 }],
+      paymentMethod: "CASH",
+      requestKey: randomUUID(),
+    });
+    expect(saleResponse.status, JSON.stringify(saleResponse.body)).toBe(201);
+    const sale = saleResponse.body.sale as {
+      transactionId: string;
+      businessDate: string;
+      amountDue: string;
+      lines: Array<{ saleLineId: string; amountDue: string }>;
+    };
+    expect(sale).toMatchObject({
+      amountDue: "112.25",
+      lines: [{ amountDue: "112.13" }],
+    });
+    const range = `/api/reports/daily?date=${sale.businessDate}`;
+    const beforeReversal = await owner.get(range);
+    expect(beforeReversal.body.report.metrics).toMatchObject({
+      cashSales: "112.25",
+      cashRoundingAdjustments: "0.12",
+      netSalesExcludingVat: "100.12",
+      estimatedGrossProfit: "60.12",
+    });
+
+    const reversal = await postWithCsrf(
+      owner,
+      `/sales/${sale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "Synthetic cash-rounding report reversal",
+        refundMethod: "CASH",
+        refundShiftId: shiftResponse.body.shift.id,
+        lines: [{ saleLineId: sale.lines[0]!.saleLineId, restock: true }],
+      },
+    );
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    const afterReversal = await owner.get(range);
+    expect(afterReversal.body.report.metrics).toMatchObject({
+      cashSales: "112.25",
+      cashRefunds: "112.25",
+      cashRoundingAdjustments: "0.00",
+      netCashImpact: "0.00",
+      netSalesExcludingVat: "0.00",
+      estimatedGrossProfit: "0.00",
+    });
+    const csv = await owner.get(
+      `/api/reports/daily.csv?date=${sale.businessDate}`,
+    );
+    expect(csv.text).toContain(
+      '"Payments","Cash rounding adjustments (net of reversals)","0.00"',
+    );
+  });
+
   it("aggregates inclusive Manila date ranges and exports the same period", async () => {
     const owner = await signIn("owner.reports@example.test", ownerPassword);
     const cashier = await signIn(

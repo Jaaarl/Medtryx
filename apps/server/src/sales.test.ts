@@ -68,7 +68,10 @@ async function csrfFor(agent: Agent): Promise<string> {
   return (await agent.get("/api/auth/csrf")).body.token as string;
 }
 
-async function configureApprovedPolicy(owner: Agent): Promise<void> {
+async function configureApprovedPolicy(
+  owner: Agent,
+  cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS" = "NONE",
+): Promise<void> {
   const csrf = await csrfFor(owner);
   const response = await owner
     .post("/api/settings/tax-policy")
@@ -82,6 +85,7 @@ async function configureApprovedPolicy(owner: Agent): Promise<void> {
       vatInclusivePrices: true,
       allowZeroRated: false,
       roundingMode: "HALF_UP",
+      cashRoundingMode,
       approvalReference: "Synthetic test-only approval record",
       costBasisDescription:
         "Synthetic unit acquisition cost including all test inputs",
@@ -513,6 +517,92 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(
       (await owner.get("/api/shifts/history?beforeOpenedAt=invalid")).status,
     ).toBe(400);
+  });
+
+  it("rounds cash totals to the nearest quarter, snapshots the adjustment, and leaves QR and line tax exact", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+    const product = await createProduct(owner, { sellingPrice: "112.13" });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    await openShift(cashier, "100.00");
+    const csrf = await csrfFor(cashier);
+
+    const cashPreview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "CASH",
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(cashPreview.status).toBe(200);
+    expect(cashPreview.body.lines[0].amountDue).toBe("112.13");
+    expect(cashPreview.body.totals).toMatchObject({
+      amountBeforeCashRounding: "112.13",
+      cashRoundingAdjustment: "0.12",
+      amountDue: "112.25",
+    });
+
+    const qrCsrf = await csrfFor(cashier);
+    const qrPreview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", qrCsrf)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(qrPreview.status, JSON.stringify(qrPreview.body)).toBe(200);
+    expect(qrPreview.body.totals).toMatchObject({
+      amountBeforeCashRounding: "112.13",
+      cashRoundingAdjustment: "0.00",
+      amountDue: "112.13",
+    });
+
+    const sale = await postSale(cashier, {
+      productId: product.id,
+      quantity: 1,
+      paymentMethod: "CASH",
+    });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    expect(sale.body.sale).toMatchObject({
+      amountDue: "112.25",
+      cashRoundingMode: "NEAREST_25_CENTAVOS",
+      cashRoundingAdjustment: "0.12",
+      lines: [{ amountDue: "112.13" }],
+    });
+    const qrSale = await postSale(cashier, {
+      productId: product.id,
+      quantity: 1,
+      paymentMethod: "QR",
+    });
+    expect(qrSale.status, JSON.stringify(qrSale.body)).toBe(201);
+    expect(qrSale.body.sale).toMatchObject({
+      paymentMethod: "QR",
+      amountDue: "112.13",
+      cashRoundingMode: "NEAREST_25_CENTAVOS",
+      cashRoundingAdjustment: "0.00",
+      lines: [{ amountDue: "112.13" }],
+    });
+    expect(
+      (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+    ).toBe("212.25");
+    expect(
+      db
+        .prepare(
+          `SELECT cash_rounding_mode, cash_rounding_adjustment_centavos,
+                amount_due_centavos FROM sales WHERE payment_method = 'CASH'`,
+        )
+        .get() as {
+        cash_rounding_mode: string;
+        cash_rounding_adjustment_centavos: number;
+        amount_due_centavos: number;
+      },
+    ).toEqual({
+      cash_rounding_mode: "NEAREST_25_CENTAVOS",
+      cash_rounding_adjustment_centavos: 12,
+      amount_due_centavos: 11_225,
+    });
   });
 
   it("commits sale, snapshots, COGS, stock value, cash, and ID atomically and replays idempotently", async () => {

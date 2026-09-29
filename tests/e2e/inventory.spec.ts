@@ -18,6 +18,22 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const ownerContext = await browser.newContext();
   const ownerPage = await ownerContext.newPage();
   await signIn(ownerPage, "owner@example.test", "SyntheticOwnerPassword-48!");
+  await ownerPage.goto("/settings");
+  await ownerPage
+    .getByLabel("Cash total rounding")
+    .selectOption("NEAREST_25_CENTAVOS");
+  await expect(
+    ownerPage.getByText(/nearest ₱0\.25 for the final cash total/i),
+  ).toBeVisible();
+  await ownerPage.locator(".tax-approval-attestation input").check();
+  await ownerPage
+    .getByRole("button", { name: "Record approved policy" })
+    .click();
+  await expect(
+    ownerPage.getByText(
+      "Approved policy saved and recorded in the audit history.",
+    ),
+  ).toBeVisible();
   await ownerPage.goto("/products");
   await expect(
     ownerPage.getByRole("heading", { name: "Products", exact: true }),
@@ -162,7 +178,13 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(
     cashierPage.getByRole("heading", { name: "Server calculation" }),
   ).toBeVisible();
-  await expect(cashierPage.getByText("Amount due")).toBeVisible();
+  await expect(cashierPage.getByText("Rounded cash total")).toBeVisible();
+  await expect(
+    cashierPage.getByText(/Line total before cash rounding: ₱23\.98/),
+  ).toBeVisible();
+  await expect(
+    cashierPage.getByText(/cash rounding adjustment: ₱0\.02/),
+  ).toBeVisible();
   await cashierPage.getByRole("button", { name: "Confirm sale" }).click();
   await expect(cashierPage.getByText("Sale saved.")).toBeVisible();
   await expect(
@@ -180,6 +202,8 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const savedSale = (await saleResponse.json()) as {
     sale: {
       amountDue: string;
+      cashRoundingMode: string;
+      cashRoundingAdjustment: string;
       lines: Array<{
         cogs: string;
         quantity: number;
@@ -190,7 +214,9 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     };
   };
   expect(savedSale.sale).toMatchObject({
-    amountDue: "23.98",
+    amountDue: "24.00",
+    cashRoundingMode: "NEAREST_25_CENTAVOS",
+    cashRoundingAdjustment: "0.02",
     lines: [
       {
         quantity: 2,
@@ -302,7 +328,7 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     .filter({ hasText: "inventory.cashier@example.test" });
   await expect(shiftHistoryRow).toContainText("CLOSED");
   await expect(shiftHistoryRow).toContainText("50.00");
-  await expect(shiftHistoryRow).toContainText("23.98");
+  await expect(shiftHistoryRow).toContainText("24.00");
   await expect(shiftHistoryRow).toContainText("48.00");
   await expect(shiftHistoryRow).toContainText("-2.00");
   await ownerPage.goto("/stock");

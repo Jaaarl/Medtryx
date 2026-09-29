@@ -47,7 +47,10 @@ async function postWithCsrf(
   return agent.post(path).set("x-csrf-token", csrf).send(body);
 }
 
-async function configureApprovedPolicy(owner: Agent): Promise<void> {
+async function configureApprovedPolicy(
+  owner: Agent,
+  cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS" = "NONE",
+): Promise<void> {
   const csrf = await csrfFor(owner);
   const response = await owner
     .post("/api/settings/tax-policy")
@@ -61,13 +64,17 @@ async function configureApprovedPolicy(owner: Agent): Promise<void> {
       vatInclusivePrices: true,
       allowZeroRated: false,
       roundingMode: "HALF_UP",
+      cashRoundingMode,
       approvalReference: "Synthetic reversal test policy only",
       costBasisDescription: "Synthetic weighted-average acquisition cost",
     });
   expect(response.status, JSON.stringify(response.body)).toBe(200);
 }
 
-async function createProduct(owner: Agent) {
+async function createProduct(
+  owner: Agent,
+  overrides: Record<string, unknown> = {},
+) {
   const csrf = await csrfFor(owner);
   const response = await owner
     .post("/api/products")
@@ -83,6 +90,7 @@ async function createProduct(owner: Agent) {
       isPwdEligible: true,
       openingQuantity: 5,
       openingUnitCost: "40.00",
+      ...overrides,
     });
   expect(response.status, JSON.stringify(response.body)).toBe(201);
   return response.body.product as { id: string };
@@ -210,6 +218,56 @@ afterAll(() => {
 });
 
 describe("owner-approved full-sale reversals and cash movements", () => {
+  it.each([
+    ["112.13", "0.12", "112.25", 12],
+    ["112.12", "-0.12", "112.00", -12],
+  ])(
+    "refunds the saved $1 cash rounding adjustment and restores the drawer total",
+    async (sellingPrice, adjustment, saleTotal, adjustmentCentavos) => {
+      const owner = await signIn("owner.reversals@example.test", ownerPassword);
+      await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+      const product = await createProduct(owner, { sellingPrice });
+      const cashier = await signIn(
+        "cashier.reversals@example.test",
+        cashierPassword,
+      );
+      const cashierShift = await openShift(cashier, "200.00");
+      const sale = await sell(cashier, product.id, "CASH");
+      expect(sale.amountDue).toBe(saleTotal);
+      expect(
+        (await owner.get(`/api/sales/${sale.transactionId}`)).body.sale
+          .cashRoundingAdjustment,
+      ).toBe(adjustment);
+
+      const saleDetails = await owner.get(`/api/sales/${sale.transactionId}`);
+      const reversal = await reverse(
+        owner,
+        sale.transactionId,
+        saleDetails.body.sale.lines[0].saleLineId as string,
+        { method: "CASH", shiftId: cashierShift.body.shift.id as string },
+      );
+      expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+      expect(reversal.body.reversal).toMatchObject({
+        amount: saleTotal,
+        cashRoundingAdjustment: adjustment,
+        lines: [{ refundAmount: sellingPrice }],
+      });
+      expect(
+        (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+      ).toBe("200.00");
+      expect(
+        db
+          .prepare(
+            "SELECT amount_centavos, cash_rounding_adjustment_centavos FROM sale_reversals",
+          )
+          .get(),
+      ).toEqual({
+        amount_centavos: Number(saleTotal.replace(".", "")),
+        cash_rounding_adjustment_centavos: adjustmentCentavos,
+      });
+    },
+  );
+
   it("reauthenticates the owner, restores original stock cost, and records a cash refund once", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner);

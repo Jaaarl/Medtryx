@@ -138,6 +138,8 @@ type SaleSummaryRow = {
   reversal_created_at: string | null;
   refund_method: "CASH" | "QR" | null;
   refund_amount_centavos: number | null;
+  reversal_cash_rounding_adjustment_centavos: number | null;
+  cash_rounding_adjustment_centavos: number;
 };
 
 function presentSaleSummary(row: SaleSummaryRow) {
@@ -148,6 +150,7 @@ function presentSaleSummary(row: SaleSummaryRow) {
     cashierEmail: row.cashier_email,
     paymentMethod: row.payment_method,
     amountDue: money(row.amount_due_centavos),
+    cashRoundingAdjustment: money(row.cash_rounding_adjustment_centavos),
     createdAt: row.created_at,
     status: row.reversal_transaction_id ? "REVERSED" : "FINALIZED",
     reversal: row.reversal_transaction_id
@@ -156,6 +159,9 @@ function presentSaleSummary(row: SaleSummaryRow) {
           createdAt: row.reversal_created_at,
           refundMethod: row.refund_method,
           amount: money(row.refund_amount_centavos ?? 0),
+          cashRoundingAdjustment: money(
+            row.reversal_cash_rounding_adjustment_centavos ?? 0,
+          ),
         }
       : null,
   };
@@ -206,9 +212,12 @@ export function registerReversalRoutes(
     const rows = db
       .prepare(
         `SELECT s.id, s.transaction_id, s.business_date, u.email AS cashier_email,
-                s.payment_method, s.amount_due_centavos, s.created_at,
+                s.payment_method, s.amount_due_centavos,
+                s.cash_rounding_adjustment_centavos, s.created_at,
                 r.reversal_transaction_id, r.created_at AS reversal_created_at,
-                r.refund_method, r.amount_centavos AS refund_amount_centavos
+                r.refund_method, r.amount_centavos AS refund_amount_centavos,
+                r.cash_rounding_adjustment_centavos
+                  AS reversal_cash_rounding_adjustment_centavos
          FROM sales s JOIN users u ON u.id = s.cashier_user_id
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
          ORDER BY s.created_at DESC, s.transaction_id DESC LIMIT ?`,
@@ -509,10 +518,15 @@ export function registerReversalRoutes(
 
       const sale = db
         .prepare(
-          `SELECT id, amount_due_centavos FROM sales WHERE transaction_id = ?`,
+          `SELECT id, amount_due_centavos, cash_rounding_adjustment_centavos
+           FROM sales WHERE transaction_id = ?`,
         )
         .get(transactionId.data) as
-        | { id: string; amount_due_centavos: number }
+        | {
+            id: string;
+            amount_due_centavos: number;
+            cash_rounding_adjustment_centavos: number;
+          }
         | undefined;
       if (!sale) {
         res.status(404).json({ error: "sale_not_found" });
@@ -551,9 +565,16 @@ export function registerReversalRoutes(
             throw new ReversalError(403, "reauthentication_failed");
           }
           const original = db
-            .prepare(`SELECT id, amount_due_centavos FROM sales WHERE id = ?`)
+            .prepare(
+              `SELECT id, amount_due_centavos, cash_rounding_adjustment_centavos
+               FROM sales WHERE id = ?`,
+            )
             .get(sale.id) as
-            | { id: string; amount_due_centavos: number }
+            | {
+                id: string;
+                amount_due_centavos: number;
+                cash_rounding_adjustment_centavos: number;
+              }
             | undefined;
           if (!original) throw new ReversalError(404, "sale_not_found");
           if (
@@ -586,12 +607,15 @@ export function registerReversalRoutes(
           ) {
             throw new ReversalError(400, "reversal_lines_must_match_sale");
           }
-          const refundTotal = saleLines.reduce(
+          const lineRefundTotal = saleLines.reduce(
             (total, line) => total + line.amount_due_centavos,
             0,
           );
+          const refundTotal =
+            lineRefundTotal + original.cash_rounding_adjustment_centavos;
           if (
             !Number.isSafeInteger(refundTotal) ||
+            refundTotal < 0 ||
             refundTotal !== original.amount_due_centavos
           ) {
             throw new ReversalError(409, "sale_totals_do_not_reconcile");
@@ -626,8 +650,9 @@ export function registerReversalRoutes(
           db.prepare(
             `INSERT INTO sale_reversals
               (id, reversal_transaction_id, sale_id, approved_by_user_id, reason,
-               refund_method, amount_centavos, cash_shift_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               refund_method, amount_centavos, cash_shift_id, created_at,
+               cash_rounding_adjustment_centavos)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             reversalId,
             reversalTransactionId,
@@ -638,6 +663,7 @@ export function registerReversalRoutes(
             refundTotal,
             cashShift?.id ?? null,
             createdAt,
+            original.cash_rounding_adjustment_centavos,
           );
 
           const insertLine = db.prepare(
@@ -784,7 +810,8 @@ export function registerReversalRoutes(
           .prepare(
             `SELECT r.id, r.reversal_transaction_id, r.sale_id, r.reason,
                     r.refund_method, r.amount_centavos, r.cash_shift_id,
-                    r.created_at, u.email AS approved_by_email
+                    r.cash_rounding_adjustment_centavos, r.created_at,
+                    u.email AS approved_by_email
              FROM sale_reversals r JOIN users u ON u.id = r.approved_by_user_id
              WHERE r.id = ?`,
           )
@@ -796,6 +823,7 @@ export function registerReversalRoutes(
           refund_method: "CASH" | "QR";
           amount_centavos: number;
           cash_shift_id: string | null;
+          cash_rounding_adjustment_centavos: number;
           created_at: string;
           approved_by_email: string;
         };
@@ -828,6 +856,9 @@ export function registerReversalRoutes(
             reason: reversal.reason,
             refundMethod: reversal.refund_method,
             amount: money(reversal.amount_centavos),
+            cashRoundingAdjustment: money(
+              reversal.cash_rounding_adjustment_centavos,
+            ),
             cashShiftId: reversal.cash_shift_id,
             approvedBy: reversal.approved_by_email,
             createdAt: reversal.created_at,

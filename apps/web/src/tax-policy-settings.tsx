@@ -12,6 +12,7 @@ type Policy = {
   vatInclusivePrices: boolean;
   allowZeroRated: boolean;
   roundingMode: "HALF_UP" | "HALF_EVEN" | "DOWN";
+  cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
   approvalReference: string;
   costBasisDescription: string;
 };
@@ -24,6 +25,7 @@ type FormState = {
   vatInclusivePrices: boolean;
   allowZeroRated: boolean;
   roundingMode: Policy["roundingMode"];
+  cashRoundingMode: Policy["cashRoundingMode"];
   approvalReference: string;
   costBasisDescription: string;
   confirmApproved: boolean;
@@ -69,6 +71,7 @@ function emptyForm(policy?: Policy): FormState {
     vatInclusivePrices: policy?.vatInclusivePrices ?? true,
     allowZeroRated: policy?.allowZeroRated ?? false,
     roundingMode: policy?.roundingMode ?? "HALF_UP",
+    cashRoundingMode: policy?.cashRoundingMode ?? "NONE",
     approvalReference: policy?.approvalReference ?? "",
     costBasisDescription: policy?.costBasisDescription ?? "",
     confirmApproved: false,
@@ -124,6 +127,7 @@ export function TaxPolicySettings() {
         vatInclusivePrices: form.vatInclusivePrices,
         allowZeroRated: form.allowZeroRated,
         roundingMode: form.roundingMode,
+        cashRoundingMode: form.cashRoundingMode,
         approvalReference: form.approvalReference.trim(),
         costBasisDescription: form.costBasisDescription.trim(),
       });
@@ -193,7 +197,7 @@ export function TaxPolicySettings() {
               maxLength={64}
             />
           </Field>
-          <Field id="tax-rounding-mode" label="Approved centavo rounding">
+          <Field id="tax-rounding-mode" label="Tax-component centavo rounding">
             <select
               id="tax-rounding-mode"
               className="text-input select-input"
@@ -211,6 +215,31 @@ export function TaxPolicySettings() {
             </select>
           </Field>
         </div>
+        <Field id="cash-rounding-mode" label="Cash total rounding">
+          <select
+            id="cash-rounding-mode"
+            className="text-input select-input"
+            value={form.cashRoundingMode}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                cashRoundingMode: event.target
+                  .value as Policy["cashRoundingMode"],
+              })
+            }
+          >
+            <option value="NONE">No cash total rounding</option>
+            <option value="NEAREST_25_CENTAVOS">
+              Nearest ₱0.25 (cash only)
+            </option>
+          </select>
+        </Field>
+        <p className="field-hint">
+          Nearest ₱0.25 for the final cash total: ₱0.00–₱0.12 → ₱0.00;
+          ₱0.13–₱0.37 → ₱0.25; ₱0.38–₱0.62 → ₱0.50; ₱0.63–₱0.87 → ₱0.75;
+          ₱0.88–₱0.99 → next ₱1.00. This does not change item tax calculations
+          or QR totals.
+        </p>
         <div className="tax-percentage-grid">
           <Field id="tax-vat-rate" label="VAT rate (%)">
             <input
@@ -315,8 +344,9 @@ export function TaxPolicySettings() {
             }
           />
           <span>
-            I confirm these tax, benefit, rounding, classification, and
-            cost-basis rules have been approved for this pharmacy.
+            I confirm these tax, benefit, cash and tax-component rounding,
+            classification, and cost-basis rules have been approved for this
+            pharmacy.
           </span>
         </label>
         <button

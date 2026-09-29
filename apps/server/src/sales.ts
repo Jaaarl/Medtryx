@@ -12,11 +12,13 @@ import {
 } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
 import {
+  cashRoundingAdjustment,
   calculateTaxLine,
   PROVISIONAL_TAX_POLICY,
   TaxCalculationError,
 } from "./tax-engine.js";
 import type {
+  CashRoundingMode,
   SaleBenefit,
   SaleTaxClass,
   TaxPolicy,
@@ -32,6 +34,7 @@ const moneySchema = z
 const benefitSchema = z.enum(["REGULAR", "SENIOR_CITIZEN", "PWD"]);
 const paymentSchema = z.enum(["CASH", "QR"]);
 const roundingSchema = z.enum(["HALF_UP", "HALF_EVEN", "DOWN"]);
+const cashRoundingSchema = z.enum(["NONE", "NEAREST_25_CENTAVOS"]);
 
 const checkoutItemsSchema = z
   .array(
@@ -60,7 +63,11 @@ const checkoutItemsSchema = z
   });
 
 const checkoutBaseSchema = z
-  .object({ benefitType: benefitSchema, items: checkoutItemsSchema })
+  .object({
+    benefitType: benefitSchema,
+    items: checkoutItemsSchema,
+    paymentMethod: paymentSchema.default("QR"),
+  })
   .strict();
 
 const saleRequestSchema = z
@@ -131,6 +138,7 @@ const taxPolicyUpdateSchema = z
     vatInclusivePrices: z.boolean(),
     allowZeroRated: z.boolean(),
     roundingMode: roundingSchema,
+    cashRoundingMode: cashRoundingSchema.default("NONE"),
     approvalReference: z.string().trim().min(3).max(160),
     costBasisDescription: z.string().trim().min(3).max(500),
   })
@@ -226,6 +234,7 @@ function configuredTaxApproval(
         vatInclusivePrices: z.boolean(),
         allowZeroRated: z.boolean(),
         roundingMode: roundingSchema,
+        cashRoundingMode: cashRoundingSchema.default("NONE"),
         approvalReference: z.string().min(3).max(160),
         costBasisDescription: z.string().min(3).max(500),
         approvedAt: z.string().min(1),
@@ -236,6 +245,7 @@ function configuredTaxApproval(
     return {
       ...parsed.data,
       roundingMode: parsed.data.roundingMode as TaxRoundingMode,
+      cashRoundingMode: parsed.data.cashRoundingMode as CashRoundingMode,
     };
   } catch {
     return null;
@@ -254,6 +264,7 @@ function taxPolicy(db: Database.Database): TaxPolicy {
     vatInclusivePrices: configured.vatInclusivePrices,
     allowZeroRated: configured.allowZeroRated,
     roundingMode: configured.roundingMode,
+    cashRoundingMode: configured.cashRoundingMode,
   };
 }
 
@@ -267,6 +278,7 @@ function presentPolicy(policy: TaxPolicy) {
     vatInclusivePrices: policy.vatInclusivePrices,
     allowZeroRated: policy.allowZeroRated,
     roundingMode: policy.roundingMode,
+    cashRoundingMode: policy.cashRoundingMode,
   };
 }
 
@@ -316,6 +328,7 @@ function calculateCart(
   benefitType: SaleBenefit,
   items: z.infer<typeof checkoutItemsSchema>,
   policy: TaxPolicy,
+  paymentMethod: "CASH" | "QR",
 ) {
   const lines = items.map((item) => {
     const product = db
@@ -368,15 +381,26 @@ function calculateCart(
   const discountCentavos = safeCentavoTotal(
     lines.map((line) => line.discountCentavos),
   );
-  const amountDueCentavos = safeCentavoTotal(
+  const lineAmountDueCentavos = safeCentavoTotal(
     lines.map((line) => line.amountDueCentavos),
   );
+  const cashRoundingAdjustmentCentavos =
+    paymentMethod === "CASH"
+      ? cashRoundingAdjustment(lineAmountDueCentavos, policy.cashRoundingMode)
+      : 0;
+  const amountDueCentavos =
+    lineAmountDueCentavos + cashRoundingAdjustmentCentavos;
+  if (!Number.isSafeInteger(amountDueCentavos) || amountDueCentavos < 0) {
+    throw new SalesError(400, "sale_amount_overflow");
+  }
   return {
     lines,
     subtotalCentavos,
     vatCentavos,
     vatRemovedCentavos,
     discountCentavos,
+    lineAmountDueCentavos,
+    cashRoundingAdjustmentCentavos,
     amountDueCentavos,
     seniorDiscountCentavos:
       benefitType === "SENIOR_CITIZEN" ? discountCentavos : 0,
@@ -387,9 +411,11 @@ function calculateCart(
 function presentCheckout(
   result: ReturnType<typeof calculateCart>,
   policy: TaxPolicy,
+  paymentMethod: "CASH" | "QR",
 ) {
   return {
     policy: presentPolicy(policy),
+    paymentMethod,
     policyNotice: policy.approved
       ? null
       : "Provisional estimate only. Sale finalization is disabled until tax, rounding, and acquisition-cost policy approval is recorded.",
@@ -420,6 +446,8 @@ function presentCheckout(
       vatRemoved: money(result.vatRemovedCentavos),
       seniorDiscount: money(result.seniorDiscountCentavos),
       pwdDiscount: money(result.pwdDiscountCentavos),
+      amountBeforeCashRounding: money(result.lineAmountDueCentavos),
+      cashRoundingAdjustment: money(result.cashRoundingAdjustmentCentavos),
       amountDue: money(result.amountDueCentavos),
     },
   };
@@ -500,6 +528,8 @@ type SaleRow = {
   senior_discount_centavos: number;
   pwd_discount_centavos: number;
   amount_due_centavos: number;
+  cash_rounding_mode: CashRoundingMode;
+  cash_rounding_adjustment_centavos: number;
   tax_policy_version: string;
   created_at: string;
 };
@@ -562,6 +592,8 @@ export function getSavedSale(
     seniorDiscount: money(sale.senior_discount_centavos),
     pwdDiscount: money(sale.pwd_discount_centavos),
     amountDue: money(sale.amount_due_centavos),
+    cashRoundingMode: sale.cash_rounding_mode,
+    cashRoundingAdjustment: money(sale.cash_rounding_adjustment_centavos),
     taxPolicyVersion: sale.tax_policy_version,
     createdAt: sale.created_at,
     label: "INTERNAL SALES RECORD — NOT AN INVOICE",
@@ -645,6 +677,7 @@ export function registerSalesRoutes(
         vatInclusivePrices: parsed.data.vatInclusivePrices,
         allowZeroRated: parsed.data.allowZeroRated,
         roundingMode: parsed.data.roundingMode,
+        cashRoundingMode: parsed.data.cashRoundingMode,
         approvalReference: parsed.data.approvalReference,
         costBasisDescription: parsed.data.costBasisDescription,
         approved: true,
@@ -670,6 +703,7 @@ export function registerSalesRoutes(
             pwdDiscountBasisPoints: approval.pwdDiscountBasisPoints,
             vatInclusivePrices: approval.vatInclusivePrices,
             roundingMode: approval.roundingMode,
+            cashRoundingMode: approval.cashRoundingMode,
             allowZeroRated: approval.allowZeroRated,
             approvalReference: approval.approvalReference,
             costBasisDescription: approval.costBasisDescription,
@@ -937,8 +971,9 @@ export function registerSalesRoutes(
         parsed.data.benefitType,
         parsed.data.items,
         policy,
+        parsed.data.paymentMethod,
       );
-      res.json(presentCheckout(result, policy));
+      res.json(presentCheckout(result, policy, parsed.data.paymentMethod));
     } catch (error) {
       if (!handleSalesError(error, res)) throw error;
     }
@@ -984,6 +1019,7 @@ export function registerSalesRoutes(
           parsed.data.benefitType,
           parsed.data.items,
           policy,
+          parsed.data.paymentMethod,
         );
         const nowDate = new Date();
         const businessDate = manilaBusinessDate(nowDate);
@@ -1017,8 +1053,9 @@ export function registerSalesRoutes(
              customer_id_checked, payment_method, subtotal_centavos, vat_centavos,
              vat_removed_centavos,
              senior_discount_centavos, pwd_discount_centavos, amount_due_centavos,
-             tax_policy_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             tax_policy_version, created_at, cash_rounding_mode,
+             cash_rounding_adjustment_centavos)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           saleId,
           transactionId,
@@ -1041,6 +1078,8 @@ export function registerSalesRoutes(
           preview.amountDueCentavos,
           policy.version,
           now,
+          policy.cashRoundingMode,
+          preview.cashRoundingAdjustmentCentavos,
         );
 
         const insertLine = db.prepare(
@@ -1147,6 +1186,9 @@ export function registerSalesRoutes(
             benefitType: parsed.data.benefitType,
             lineCount: preview.lines.length,
             amountDueCentavos: preview.amountDueCentavos,
+            cashRoundingMode: policy.cashRoundingMode,
+            cashRoundingAdjustmentCentavos:
+              preview.cashRoundingAdjustmentCentavos,
           },
         });
         return { id: saleId, replayed: false };

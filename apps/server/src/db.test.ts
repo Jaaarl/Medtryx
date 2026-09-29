@@ -5,6 +5,71 @@ import { describe, expect, it } from "vitest";
 import { migrateDatabase, repositoryRoot } from "./db.js";
 
 describe("database migrations", () => {
+  it("preserves legacy sale totals and defaults their rounding snapshots to none", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      const priorMigrations = readdirSync(migrationsDirectory)
+        .filter((name) => /^000[1-8]_.*\.sql$/u.test(name))
+        .sort();
+      for (const name of priorMigrations) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+           (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('legacy-cashier', 'legacy@example.test', 'synthetic-hash', 'cashier', 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO shifts
+          (id, cashier_user_id, opened_at, opening_cash_centavos,
+           expected_cash_centavos)
+         VALUES ('legacy-shift', 'legacy-cashier', ?, 0, 100)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sales
+          (id, transaction_id, business_date, request_key, request_hash,
+           cashier_user_id, shift_id, benefit_type, customer_id_checked,
+           payment_method, subtotal_centavos, vat_centavos,
+           vat_removed_centavos, senior_discount_centavos,
+           pwd_discount_centavos, amount_due_centavos, tax_policy_version,
+           created_at)
+         VALUES ('legacy-sale', 'MTX-20260102-000001', '2026-01-02',
+           'legacy-key', 'legacy-hash', 'legacy-cashier', 'legacy-shift',
+           'REGULAR', 0, 'CASH', 100, 0, 0, 0, 0, 100, 'LEGACY', ?)`,
+      ).run(now);
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            `SELECT amount_due_centavos, cash_rounding_mode,
+                    cash_rounding_adjustment_centavos FROM sales
+             WHERE id = 'legacy-sale'`,
+          )
+          .get(),
+      ).toEqual({
+        amount_due_centavos: 100,
+        cash_rounding_mode: "NONE",
+        cash_rounding_adjustment_centavos: 0,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it("preserves legacy combined SC/PWD eligibility as eligibility for both", () => {
     const db = new Database(":memory:");
     try {

@@ -3,6 +3,7 @@ import { Decimal } from "decimal.js";
 export type SaleBenefit = "REGULAR" | "SENIOR_CITIZEN" | "PWD";
 export type SaleTaxClass = "VATABLE" | "VAT_EXEMPT" | "ZERO_RATED";
 export type TaxRoundingMode = "HALF_UP" | "HALF_EVEN" | "DOWN";
+export type CashRoundingMode = "NONE" | "NEAREST_25_CENTAVOS";
 
 export type TaxPolicy = {
   version: string;
@@ -13,6 +14,7 @@ export type TaxPolicy = {
   vatInclusivePrices: boolean;
   allowZeroRated: boolean;
   roundingMode: TaxRoundingMode;
+  cashRoundingMode: CashRoundingMode;
 };
 
 export type TaxLineInput = {
@@ -51,7 +53,27 @@ export const PROVISIONAL_TAX_POLICY: TaxPolicy = {
   vatInclusivePrices: true,
   allowZeroRated: false,
   roundingMode: "HALF_UP",
+  cashRoundingMode: "NONE",
 };
+
+export function cashRoundingAdjustment(
+  totalCentavos: number,
+  mode: CashRoundingMode,
+): number {
+  if (!Number.isSafeInteger(totalCentavos) || totalCentavos < 0) {
+    throw new TaxCalculationError("sale_amount_overflow");
+  }
+  if (mode === "NONE") return 0;
+
+  const total = BigInt(totalCentavos);
+  const remainder = total % 25n;
+  const rounded = total - remainder + (remainder >= 13n ? 25n : 0n);
+  const adjustedTotal = Number(rounded);
+  if (!Number.isSafeInteger(adjustedTotal)) {
+    throw new TaxCalculationError("sale_amount_overflow");
+  }
+  return adjustedTotal - totalCentavos;
+}
 
 function decimalRoundingMode(mode: TaxRoundingMode): Decimal.Rounding {
   switch (mode) {

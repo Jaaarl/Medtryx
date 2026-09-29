@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cashRoundingAdjustment,
   calculateTaxLine,
   PROVISIONAL_TAX_POLICY,
   TaxCalculationError,
@@ -9,6 +10,32 @@ const proposedPolicy = {
   ...PROVISIONAL_TAX_POLICY,
   approved: true,
 };
+
+describe("cash total rounding to the nearest 25 centavos", () => {
+  it.each([
+    [0, 0],
+    [12, -12],
+    [13, 12],
+    [37, -12],
+    [38, 12],
+    [62, -12],
+    [63, 12],
+    [87, -12],
+    [88, 12],
+    [99, 1],
+  ])(
+    "maps an ending of %i centavos to its nearest quarter",
+    (ending, adjustment) => {
+      expect(
+        cashRoundingAdjustment(11_200 + ending, "NEAREST_25_CENTAVOS"),
+      ).toBe(adjustment);
+    },
+  );
+
+  it("leaves totals unchanged when cash rounding is off", () => {
+    expect(cashRoundingAdjustment(11_213, "NONE")).toBe(0);
+  });
+});
 
 describe("line-level decimal tax calculations", () => {
   it("separates included VAT from a regular VATable line", () => {
