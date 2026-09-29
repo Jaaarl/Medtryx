@@ -60,7 +60,7 @@ The repository baseline already exists as commit `1e05374` (`Initial Docs`), con
 - Feedback F3/F4 complete in code: migration 0008 enforces one open shift across the whole store, checkout blocks a second cashier while it is open, and owners have a shift-history screen with opening/closing accounts and times plus drawer sales and reconciliation. API and browser authorization are covered. Bundle commit: `2583517`.
 - Synthetic verification: focused migration/sales tests 14 passed and the full unit/API suite passes 50 tests; the browser suite passes 4 Chromium flows; typecheck, lint, format check, and build pass. Work ran on Node.js 22.17.0; repeat on the target Node.js 24 runtime before release.
 - Existing database upgrade gate: migration 0008 fails atomically if two or more shifts are open. It does not alter or close them. The owner must reconcile real cash drawers and close the corresponding shifts before retrying against a verified backup.
-- Feedback F5 is implemented and verified: owners can select inclusive Manila date ranges, use Month to date, and export matching CSV while retaining the daily API. Sales use saved Manila business dates; reversals/cash movements use event dates; current inventory remains labeled as current. Bundle commit will be recorded in `FEEDBACK_IMPLEMENTATION_STATUS.md`.
+- Feedback F5 is implemented and verified: owners can select inclusive Manila date ranges, use Month to date, and export matching CSV while retaining the daily API. Sales use saved Manila business dates; reversals/cash movements use event dates; current inventory remains labeled as current. Bundle commit: `18bb74b`.
 
 ## Next session
 
