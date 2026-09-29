@@ -15,6 +15,7 @@ const moneySchema = z
   .trim()
   .regex(/^\d{1,7}(?:\.\d{1,2})?$/);
 const taxClassSchema = z.enum(["VATABLE", "VAT_EXEMPT", "ZERO_RATED"]);
+const productTypeSchema = z.enum(["GENERIC", "BRANDED"]);
 const skuSchema = z
   .string()
   .trim()
@@ -33,7 +34,9 @@ const createProductSchema = z
     unit: unitSchema,
     sellingPrice: moneySchema,
     taxClass: taxClassSchema,
-    scPwdEligible: z.boolean(),
+    productType: productTypeSchema,
+    isScEligible: z.boolean(),
+    isPwdEligible: z.boolean(),
     openingQuantity: z.number().int().min(0).max(MAX_QUANTITY).default(0),
     openingUnitCost: moneySchema.optional(),
     reorderLevel: z
@@ -82,7 +85,9 @@ const updateProductSchema = z
     unit: unitSchema.optional(),
     sellingPrice: moneySchema.optional(),
     taxClass: taxClassSchema.optional(),
-    scPwdEligible: z.boolean().optional(),
+    productType: productTypeSchema.optional(),
+    isScEligible: z.boolean().optional(),
+    isPwdEligible: z.boolean().optional(),
     reorderLevel: z
       .number()
       .int()
@@ -165,6 +170,9 @@ type ProductRow = {
   selling_price_centavos: number;
   tax_class: TaxClass;
   sc_pwd_eligible: number;
+  sc_eligible: number;
+  pwd_eligible: number;
+  product_type: "GENERIC" | "BRANDED" | null;
   quantity_on_hand: number;
   inventory_value_centavos: number;
   reorder_level: number | null;
@@ -304,6 +312,9 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
     sellingPrice: money(row.selling_price_centavos),
     taxClass: row.tax_class,
     scPwdEligible: row.sc_pwd_eligible === 1,
+    isScEligible: row.sc_eligible === 1,
+    isPwdEligible: row.pwd_eligible === 1,
+    productType: row.product_type,
     quantityOnHand: row.quantity_on_hand,
     reorderLevel: row.reorder_level,
     active: row.is_active === 1,
@@ -546,7 +557,9 @@ export function registerInventoryRoutes(
       unit: row.unit,
       sellingPrice: money(row.selling_price_centavos),
       taxClass: row.tax_class,
-      scPwdEligible: row.sc_pwd_eligible === 1,
+      isScEligible: row.sc_eligible === 1,
+      isPwdEligible: row.pwd_eligible === 1,
+      productType: row.product_type,
       quantityAvailable: row.quantity_on_hand,
     }));
     res.json({ products });
@@ -607,9 +620,10 @@ export function registerInventoryRoutes(
         db.prepare(
           `INSERT INTO products
             (id, sku, name, barcode, unit, selling_price_centavos, tax_class,
-             sc_pwd_eligible, quantity_on_hand, inventory_value_centavos,
+             sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+             quantity_on_hand, inventory_value_centavos,
              reorder_level, is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         ).run(
           id,
           generatedSku,
@@ -618,7 +632,10 @@ export function registerInventoryRoutes(
           parsed.data.unit,
           sellingPriceCents,
           parsed.data.taxClass,
-          parsed.data.scPwdEligible ? 1 : 0,
+          parsed.data.isScEligible || parsed.data.isPwdEligible ? 1 : 0,
+          parsed.data.isScEligible ? 1 : 0,
+          parsed.data.isPwdEligible ? 1 : 0,
+          parsed.data.productType,
           parsed.data.openingQuantity,
           inventoryValueCents,
           parsed.data.reorderLevel ?? null,
@@ -649,6 +666,9 @@ export function registerInventoryRoutes(
           details: {
             sku: generatedSku,
             name: parsed.data.name,
+            productType: parsed.data.productType,
+            isScEligible: parsed.data.isScEligible,
+            isPwdEligible: parsed.data.isPwdEligible,
             openingQuantity: parsed.data.openingQuantity,
             taxClass: parsed.data.taxClass,
           },
@@ -707,11 +727,33 @@ export function registerInventoryRoutes(
       ) {
         changes.taxClass = parsed.data.taxClass;
       }
+      const nextScEligible =
+        parsed.data.isScEligible ?? current.sc_eligible === 1;
+      const nextPwdEligible =
+        parsed.data.isPwdEligible ?? current.pwd_eligible === 1;
       if (
-        parsed.data.scPwdEligible !== undefined &&
-        parsed.data.scPwdEligible !== (current.sc_pwd_eligible === 1)
+        parsed.data.isScEligible !== undefined &&
+        parsed.data.isScEligible !== (current.sc_eligible === 1)
       ) {
-        changes.scPwdEligible = parsed.data.scPwdEligible;
+        changes.isScEligible = parsed.data.isScEligible;
+      }
+      if (
+        parsed.data.isPwdEligible !== undefined &&
+        parsed.data.isPwdEligible !== (current.pwd_eligible === 1)
+      ) {
+        changes.isPwdEligible = parsed.data.isPwdEligible;
+      }
+      if (
+        parsed.data.productType !== undefined &&
+        parsed.data.productType !== current.product_type
+      ) {
+        changes.productType = parsed.data.productType;
+      }
+      if (
+        nextScEligible !== (current.sc_eligible === 1) ||
+        nextPwdEligible !== (current.pwd_eligible === 1)
+      ) {
+        changes.scPwdEligible = nextScEligible || nextPwdEligible;
       }
       if (
         parsed.data.reorderLevel !== undefined &&
@@ -740,6 +782,9 @@ export function registerInventoryRoutes(
           Number(changes.sellingPriceCentavos),
         ],
         taxClass: ["tax_class", String(changes.taxClass)],
+        isScEligible: ["sc_eligible", changes.isScEligible ? 1 : 0],
+        isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
+        productType: ["product_type", String(changes.productType)],
         scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
         reorderLevel: ["reorder_level", parsed.data.reorderLevel ?? null],
         active: ["is_active", changes.active ? 1 : 0],
@@ -1021,6 +1066,9 @@ function currentValues(
       sellingPriceCentavos: row.selling_price_centavos,
       taxClass: row.tax_class,
       scPwdEligible: row.sc_pwd_eligible === 1,
+      isScEligible: row.sc_eligible === 1,
+      isPwdEligible: row.pwd_eligible === 1,
+      productType: row.product_type,
       reorderLevel: row.reorder_level,
       active: row.is_active === 1,
     };

@@ -26,7 +26,7 @@ Medtryx is a browser-based pharmacy sales and simple stock system. The owner cre
 | --- | --- | --- |
 | App | Kotlin/Compose app on a HUAWEI tablet, plus a separate iPad dashboard | One responsive web app opened in a browser on any approved device |
 | Server | Tablet hosts the data and dashboard | One store computer hosts the web app and database |
-| Product setup | Many product attributes, effective-date versions, and pack conversions | One simple SKU record with required name, unit, price, tax class, and benefit eligibility |
+| Product setup | Many product attributes, effective-date versions, and pack conversions | One simple SKU record with required name, unit, price, tax class, generic/branded type, and separate SC/PWD eligibility |
 | Inventory | Lot-level ledger, expiry dates, automatic lot allocation, pack conversion | One quantity on hand per SKU; simple stock-in and adjustment history |
 | Acquisition cost | Lot/cost snapshots and more detailed margin reporting | Record the unit acquisition cost on each stock receipt; show a weighted-average cost and estimated unit profit per SKU |
 | Expiry | Digital lot and expiry warnings and automatic exclusion from sales | Staff check expiry on the physical product; expired items are removed with a stock adjustment |
@@ -85,12 +85,14 @@ Each SKU represents one product in **one stock and selling unit**. For example, 
 | Selling price | Required, in Philippine pesos; VAT-inclusive where applicable. |
 | Acquisition cost | Entered for opening stock and each receipt, not as one permanent product price; current average cost is calculated from the stock on hand. |
 | Catalog tax class | Required: `VATABLE` or `VAT_EXEMPT`; `ZERO_RATED` only when enabled and approved. |
-| SC/PWD eligible | Required yes/no, reviewed by an authorized person. This is separate from tax class. |
+| Product type | Required radio selection: `GENERIC` or `BRANDED`. This descriptive classification does not determine tax class or benefit eligibility. |
+| Senior Citizen eligible | Required yes/no checkbox, reviewed by an authorized person. |
+| PWD eligible | Required yes/no checkbox, reviewed by an authorized person. The two eligibility flags are independent and may both be selected. |
 | Quantity on hand | Stored whole-unit count; changed only by stock operations or finalized sales. |
 | Reorder level | Optional; used for a simple low-stock list. |
 | Active | Inactive products cannot be added to new sales; old sales remain visible. |
 
-The owner confirms each product's tax class and benefit eligibility against the pharmacy's approved source. The app must never infer either from a product name or from the word “medicine.” Changing price or classification affects future sales only; each finalized sale keeps a copy of the values used at checkout. A product with history is deactivated rather than deleted. Product creation, editing, deactivation, and CSV import require owner permission on the server.
+The owner confirms each product's tax class, generic/branded type, and SC/PWD eligibility against the pharmacy's approved source. The app must never infer these values from a product name or from the word “medicine.” Senior Citizen and PWD eligibility are checked independently during checkout. Changing price or classification affects future sales only; each finalized sale keeps a copy of the values used at checkout. A product with history is deactivated rather than deleted. Product creation, editing, deactivation, and CSV import require owner permission on the server. Existing records from before generic/branded classification remain unclassified until an owner reviews them; old combined SC/PWD eligibility migrates as eligible for both benefits to preserve prior behavior.
 
 For initial setup, support manual product entry. A **simple CSV import** may be included if the starting catalog is large. Its columns include product fields, opening quantity, and opening unit acquisition cost; it has a preview, duplicate-SKU checks, row errors, and explicit confirmation. The import has no lot, expiry, or multiline pack fields.
 

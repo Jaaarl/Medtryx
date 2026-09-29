@@ -12,6 +12,7 @@ coverage/
 playwright-report/
 test-results/
 .vite/
+.kilo/
 
 # Application data, databases, journals, and backups
 data/

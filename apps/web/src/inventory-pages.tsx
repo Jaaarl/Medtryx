@@ -21,7 +21,9 @@ type Product = {
   unit: string;
   sellingPrice: string;
   taxClass: "VATABLE" | "VAT_EXEMPT" | "ZERO_RATED";
-  scPwdEligible: boolean;
+  isScEligible: boolean;
+  isPwdEligible: boolean;
+  productType: "GENERIC" | "BRANDED" | null;
   quantityOnHand: number;
   reorderLevel: number | null;
   active: boolean;
@@ -43,7 +45,9 @@ type CatalogProduct = Pick<
   | "unit"
   | "sellingPrice"
   | "taxClass"
-  | "scPwdEligible"
+  | "isScEligible"
+  | "isPwdEligible"
+  | "productType"
 > & { quantityAvailable: number };
 
 type StockEvent = {
@@ -68,7 +72,9 @@ const EMPTY_FORM = {
   unit: "piece",
   sellingPrice: "",
   taxClass: "VATABLE" as Product["taxClass"],
-  scPwdEligible: false,
+  isScEligible: false,
+  isPwdEligible: false,
+  productType: "" as Product["productType"] | "",
   openingQuantity: "0",
   openingUnitCost: "",
   openingZeroCostReason: "",
@@ -95,6 +101,10 @@ function errorMessage(error: unknown): string {
       "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
     open_shift_required: "Open a cashier shift before finalizing a sale.",
     shift_already_open: "A cashier shift is already open for this account.",
+    product_not_senior_eligible:
+      "This product is not marked eligible for a Senior Citizen benefit.",
+    product_not_pwd_eligible:
+      "This product is not marked eligible for a PWD benefit.",
     insufficient_stock:
       "The requested change exceeds available stock. Refresh and review the cart.",
     customer_encryption_unavailable:
@@ -248,7 +258,9 @@ export function ProductsPage() {
       unit: product.unit,
       sellingPrice: product.sellingPrice,
       taxClass: product.taxClass,
-      scPwdEligible: product.scPwdEligible,
+      isScEligible: product.isScEligible,
+      isPwdEligible: product.isPwdEligible,
+      productType: product.productType ?? "",
       reorderLevel:
         product.reorderLevel === null ? "" : String(product.reorderLevel),
     });
@@ -271,7 +283,9 @@ export function ProductsPage() {
       unit: form.unit,
       sellingPrice: form.sellingPrice,
       taxClass: form.taxClass,
-      scPwdEligible: form.scPwdEligible,
+      isScEligible: form.isScEligible,
+      isPwdEligible: form.isPwdEligible,
+      ...(form.productType ? { productType: form.productType } : {}),
       reorderLevel: form.reorderLevel === "" ? null : Number(form.reorderLevel),
     };
     try {
@@ -392,9 +406,9 @@ export function ProductsPage() {
                         <strong>{product.name}</strong>
                         <small>
                           {product.sku}
-                          {product.barcode
-                            ? ` · ${product.barcode}`
-                            : ""} · {product.unit}
+                          {` · ${product.productType === null ? "Unclassified" : product.productType === "GENERIC" ? "Generic" : "Branded"}`}
+                          {product.barcode ? ` · ${product.barcode}` : ""} ·{" "}
+                          {product.unit}
                         </small>
                       </td>
                       <td>
@@ -568,16 +582,62 @@ export function ProductsPage() {
                 />
               </Field>
             </div>
-            <label className="inventory-checkbox">
-              <input
-                type="checkbox"
-                checked={form.scPwdEligible}
-                onChange={(event) =>
-                  setForm({ ...form, scPwdEligible: event.target.checked })
-                }
-              />
-              <span>Eligible for SC/PWD benefit rules</span>
-            </label>
+            <fieldset className="inventory-radio-group">
+              <legend className="field-label">Product type</legend>
+              <div className="inventory-radio-options">
+                {(
+                  [
+                    ["GENERIC", "Generic"],
+                    ["BRANDED", "Branded"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <label className="inventory-radio-option" key={value}>
+                    <input
+                      type="radio"
+                      name="product-type"
+                      value={value}
+                      checked={form.productType === value}
+                      onChange={() => setForm({ ...form, productType: value })}
+                      required={!editing || form.productType === ""}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              {editing && !form.productType && (
+                <small className="field-hint">
+                  This existing product is unclassified. Choose one to record
+                  its type.
+                </small>
+              )}
+            </fieldset>
+            <div
+              className="inventory-checkbox-group"
+              role="group"
+              aria-label="Benefit eligibility"
+            >
+              <span className="field-label">Benefit eligibility</span>
+              <label className="inventory-checkbox">
+                <input
+                  type="checkbox"
+                  checked={form.isScEligible}
+                  onChange={(event) =>
+                    setForm({ ...form, isScEligible: event.target.checked })
+                  }
+                />
+                <span>Senior Citizen eligible</span>
+              </label>
+              <label className="inventory-checkbox">
+                <input
+                  type="checkbox"
+                  checked={form.isPwdEligible}
+                  onChange={(event) =>
+                    setForm({ ...form, isPwdEligible: event.target.checked })
+                  }
+                />
+                <span>PWD eligible</span>
+              </label>
+            </div>
             {!editing && (
               <>
                 <div className="inventory-form-divider">OPENING STOCK</div>
@@ -1561,6 +1621,7 @@ export function CheckoutPage() {
                     <strong>{product.name}</strong>
                     <small>
                       {product.sku} · {product.unit}
+                      {` · ${product.productType === null ? "Unclassified" : product.productType === "GENERIC" ? "Generic" : "Branded"}`}
                       {product.barcode ? ` · ${product.barcode}` : ""}
                     </small>
                     <span>
@@ -1751,13 +1812,18 @@ export function CheckoutPage() {
                   onChange={(event) => {
                     const next = event.target.value as typeof benefitType;
                     setBenefitType(next);
-                    if (next === "REGULAR")
-                      setCart((current) =>
-                        current.map((line) => ({
-                          ...line,
-                          benefitApplied: false,
-                        })),
-                      );
+                    setCart((current) =>
+                      current.map((line) => ({
+                        ...line,
+                        benefitApplied:
+                          next === "SENIOR_CITIZEN"
+                            ? line.benefitApplied && line.product.isScEligible
+                            : next === "PWD"
+                              ? line.benefitApplied &&
+                                line.product.isPwdEligible
+                              : false,
+                      })),
+                    );
                     invalidatePreview();
                   }}
                 >
@@ -1768,13 +1834,17 @@ export function CheckoutPage() {
               </Field>
               {benefitType !== "REGULAR" && (
                 <div className="checkout-benefit-lines">
-                  <strong>Select eligible cart lines</strong>
+                  <strong>Choose eligible cart lines</strong>
                   {cart.map((line) => (
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
                         type="checkbox"
                         checked={line.benefitApplied}
-                        disabled={!line.product.scPwdEligible}
+                        disabled={
+                          benefitType === "SENIOR_CITIZEN"
+                            ? !line.product.isScEligible
+                            : !line.product.isPwdEligible
+                        }
                         onChange={(event) =>
                           setBenefitForLine(
                             line.product.id,
@@ -1784,7 +1854,11 @@ export function CheckoutPage() {
                       />
                       <span>
                         {line.product.name}
-                        {line.product.scPwdEligible
+                        {(
+                          benefitType === "SENIOR_CITIZEN"
+                            ? line.product.isScEligible
+                            : line.product.isPwdEligible
+                        )
                           ? " · eligible"
                           : " · not eligible"}
                       </span>

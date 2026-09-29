@@ -19,7 +19,8 @@ export type TaxLineInput = {
   unitPriceCentavos: number;
   quantity: number;
   taxClass: SaleTaxClass;
-  scPwdEligible: boolean;
+  isScEligible: boolean;
+  isPwdEligible: boolean;
   benefit: SaleBenefit;
   benefitApplied: boolean;
 };
@@ -86,8 +87,15 @@ export function calculateTaxLine(
   if (input.benefitApplied && input.benefit === "REGULAR") {
     throw new TaxCalculationError("regular_sale_cannot_apply_benefit");
   }
-  if (input.benefitApplied && !input.scPwdEligible) {
-    throw new TaxCalculationError("product_not_benefit_eligible");
+  if (
+    input.benefitApplied &&
+    input.benefit === "SENIOR_CITIZEN" &&
+    !input.isScEligible
+  ) {
+    throw new TaxCalculationError("product_not_senior_eligible");
+  }
+  if (input.benefitApplied && input.benefit === "PWD" && !input.isPwdEligible) {
+    throw new TaxCalculationError("product_not_pwd_eligible");
   }
   if (input.taxClass === "ZERO_RATED" && !policy.allowZeroRated) {
     throw new TaxCalculationError("zero_rated_not_approved");

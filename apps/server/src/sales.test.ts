@@ -90,7 +90,9 @@ async function createProduct(
       unit: "piece",
       sellingPrice: "112.00",
       taxClass: "VATABLE",
-      scPwdEligible: true,
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
       openingQuantity: 5,
       openingUnitCost: "40.00",
       ...overrides,
@@ -205,6 +207,44 @@ describe("checkout, sales, and cashier shifts", () => {
     expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
       quantityOnHand: 5,
       inventoryValue: "200.00",
+    });
+  });
+
+  it("applies benefits only when the product is eligible for that selected benefit", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const product = await createProduct(owner, {
+      sku: "SYN-SC-ONLY",
+      isScEligible: true,
+      isPwdEligible: false,
+    });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const csrf = await csrfFor(cashier);
+
+    const wrongBenefit = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({
+        benefitType: "PWD",
+        items: [{ productId: product.id, quantity: 1, benefitApplied: true }],
+      });
+    expect(wrongBenefit.status).toBe(400);
+    expect(wrongBenefit.body.error).toBe("product_not_pwd_eligible");
+
+    const refreshedCsrf = await csrfFor(cashier);
+    const eligibleBenefit = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", refreshedCsrf)
+      .send({
+        benefitType: "SENIOR_CITIZEN",
+        items: [{ productId: product.id, quantity: 1, benefitApplied: true }],
+      });
+    expect(eligibleBenefit.status, JSON.stringify(eligibleBenefit.body)).toBe(
+      200,
+    );
+    expect(eligibleBenefit.body.lines[0]).toMatchObject({
+      isScEligible: true,
+      isPwdEligible: false,
+      benefitApplied: true,
     });
   });
 
@@ -351,6 +391,9 @@ describe("checkout, sales, and cashier shifts", () => {
       sku: "SYN-SALE-001",
       quantity: 2,
       unitPrice: "112.00",
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
       taxPolicyVersion: "SYNTHETIC-ACCOUNTANT-12-UP-1",
     });
     expect(first.body.sale.lines[0].cogs).toBeUndefined();
@@ -389,7 +432,13 @@ describe("checkout, sales, and cashier shifts", () => {
     const productChange = await owner
       .patch(`/api/products/${product.id}`)
       .set("x-csrf-token", productChangeCsrf)
-      .send({ sellingPrice: "150.00", taxClass: "VAT_EXEMPT" });
+      .send({
+        sellingPrice: "150.00",
+        taxClass: "VAT_EXEMPT",
+        productType: "GENERIC",
+        isScEligible: false,
+        isPwdEligible: false,
+      });
     expect(productChange.status).toBe(200);
     const savedSnapshot = await owner.get(
       `/api/sales/${first.body.sale.transactionId}`,
@@ -397,6 +446,9 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(savedSnapshot.body.sale.lines[0]).toMatchObject({
       unitPrice: "112.00",
       taxClass: "VATABLE",
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
       cogs: "80.00",
     });
     const cashierSnapshot = await cashier.get(

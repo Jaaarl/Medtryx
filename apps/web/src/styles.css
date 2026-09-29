@@ -1166,6 +1166,50 @@ a {
   margin: 0;
   width: 14px;
 }
+.inventory-radio-group {
+  border: 0;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+.inventory-radio-options,
+.inventory-checkbox-group {
+  display: grid;
+  gap: 8px;
+}
+.inventory-radio-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.inventory-radio-option {
+  align-items: center;
+  border: 1px solid #dfe8e4;
+  border-radius: 7px;
+  color: #63786e;
+  display: flex;
+  font-size: 10px;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 9px;
+}
+.inventory-radio-option input {
+  accent-color: #176b5b;
+  margin: 0;
+}
+.inventory-checkbox-group > .field-label {
+  color: #62766d;
+  font-size: 9px;
+  font-weight: 650;
+}
+.inventory-checkbox-group .inventory-checkbox {
+  min-height: 24px;
+}
+.inventory-radio-group .field-hint {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
 .inventory-form-divider {
   border-top: 1px solid #edf1ef;
   color: #90a098;

@@ -152,6 +152,9 @@ type ProductSaleRow = {
   selling_price_centavos: number;
   tax_class: SaleTaxClass;
   sc_pwd_eligible: number;
+  sc_eligible: number;
+  pwd_eligible: number;
+  product_type: "GENERIC" | "BRANDED" | null;
   quantity_on_hand: number;
   inventory_value_centavos: number;
   is_active: number;
@@ -318,7 +321,9 @@ function calculateCart(
     const product = db
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
-                sc_pwd_eligible, quantity_on_hand, inventory_value_centavos, is_active
+                sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+                quantity_on_hand,
+                inventory_value_centavos, is_active
          FROM products WHERE id = ?`,
       )
       .get(item.productId) as ProductSaleRow | undefined;
@@ -335,7 +340,8 @@ function calculateCart(
           unitPriceCentavos: product.selling_price_centavos,
           quantity: item.quantity,
           taxClass: product.tax_class,
-          scPwdEligible: product.sc_pwd_eligible === 1,
+          isScEligible: product.sc_eligible === 1,
+          isPwdEligible: product.pwd_eligible === 1,
           benefit: benefitType,
           benefitApplied: item.benefitApplied,
         },
@@ -396,7 +402,10 @@ function presentCheckout(
       unitPrice: money(line.unitPriceCentavos),
       gross: money(line.grossCentavos),
       taxClass: line.product.tax_class,
+      productType: line.product.product_type,
       scPwdEligible: line.product.sc_pwd_eligible === 1,
+      isScEligible: line.product.sc_eligible === 1,
+      isPwdEligible: line.product.pwd_eligible === 1,
       benefitApplied: line.benefitApplied,
       taxBasis: money(line.taxBasisCentavos),
       vat: money(line.vatCentavos),
@@ -511,7 +520,9 @@ export function getSavedSale(
     .prepare(
       `SELECT id, product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
               quantity, unit_price_centavos, tax_class_snapshot,
-              sc_pwd_eligible_snapshot, benefit_applied, tax_basis_centavos,
+              sc_pwd_eligible_snapshot, sc_eligible_snapshot,
+              pwd_eligible_snapshot, product_type_snapshot,
+              benefit_applied, tax_basis_centavos,
               vat_centavos, vat_removed_centavos, discount_centavos, amount_due_centavos,
               allocated_cogs_centavos, tax_policy_version
        FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
@@ -526,6 +537,9 @@ export function getSavedSale(
     unit_price_centavos: number;
     tax_class_snapshot: SaleTaxClass;
     sc_pwd_eligible_snapshot: number;
+    sc_eligible_snapshot: number;
+    pwd_eligible_snapshot: number;
+    product_type_snapshot: "GENERIC" | "BRANDED" | null;
     benefit_applied: number;
     tax_basis_centavos: number;
     vat_centavos: number;
@@ -561,6 +575,9 @@ export function getSavedSale(
       unitPrice: money(line.unit_price_centavos),
       taxClass: line.tax_class_snapshot,
       scPwdEligible: line.sc_pwd_eligible_snapshot === 1,
+      isScEligible: line.sc_eligible_snapshot === 1,
+      isPwdEligible: line.pwd_eligible_snapshot === 1,
+      productType: line.product_type_snapshot,
       benefitApplied: line.benefit_applied === 1,
       taxBasis: money(line.tax_basis_centavos),
       vat: money(line.vat_centavos),
@@ -911,11 +928,13 @@ export function registerSalesRoutes(
           `INSERT INTO sale_lines
             (id, sale_id, line_number, product_id, product_name_snapshot,
              sku_snapshot, unit_snapshot, quantity, unit_price_centavos,
-             tax_class_snapshot, sc_pwd_eligible_snapshot, benefit_applied,
+             tax_class_snapshot, sc_pwd_eligible_snapshot,
+             sc_eligible_snapshot, pwd_eligible_snapshot, product_type_snapshot,
+             benefit_applied,
              tax_basis_centavos, vat_centavos, vat_removed_centavos, discount_centavos,
              amount_due_centavos, allocated_cogs_centavos,
              tax_policy_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const [index, line] of preview.lines.entries()) {
           const product = db
@@ -973,6 +992,9 @@ export function registerSalesRoutes(
             line.unitPriceCentavos,
             line.product.tax_class,
             line.product.sc_pwd_eligible,
+            line.product.sc_eligible,
+            line.product.pwd_eligible,
+            line.product.product_type,
             line.benefitApplied ? 1 : 0,
             line.taxBasisCentavos,
             line.vatCentavos,

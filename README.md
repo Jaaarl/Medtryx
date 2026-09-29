@@ -31,7 +31,7 @@ The first bootstrap is intentionally a command-line operation so there is no pub
 
 ## Implemented workflows
 
-- Owners can create, search, edit, deactivate, and reactivate products; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history.
+- Owners can create, search, edit, deactivate, and reactivate products; set Generic or Branded type and independent Senior Citizen/PWD eligibility; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history. Existing catalog items are marked unclassified until the owner reviews their type.
 - Cashiers can search active products, build a browser cart, preview server-calculated line taxes/discounts, open and close a cashier shift, and finalize an approved cash or QR-declared sale. Live sale finalization remains blocked until the owner records accountant-approved tax and acquisition-cost policy.
 - Owners can review immutable sale records, reauthenticate to record a linked full reversal, choose stock restoration per line, and reconcile cash refunds, cash-in/out, and non-zero shift variance decisions. Cash refunds require an open drawer with enough expected cash; QR declarations do not change physical cash.
 - Owners can review Manila-day saved-line reports, download formula-safe CSV without customer identifiers, configure the store identity, create two verified backup copies, and restore after owner reauthentication, store-name confirmation, and a verified safety backup. Live backup creation requires absolute local paths and a second physical storage device. Automatic live backups run daily after 02:00 Manila time once the owner has configured the store identity.

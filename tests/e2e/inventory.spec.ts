@@ -26,6 +26,8 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     .getByLabel("SKU (leave blank to generate)")
     .fill("SYN-PILOT-001");
   await ownerPage.getByLabel("Product name").fill("Synthetic Pilot Lotion");
+  await ownerPage.getByLabel("Generic").check();
+  await ownerPage.getByLabel("Senior Citizen eligible").check();
   await ownerPage.getByLabel("Barcode (optional)").fill("SYN-BAR-PILOT-001");
   await ownerPage.getByLabel("Selling price (₱)").fill("10.99");
   await ownerPage.getByLabel("Counted quantity").fill("3");
@@ -36,12 +38,16 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     hasText: "Synthetic Pilot Lotion",
   });
   await expect(productRow).toContainText("SYN-PILOT-001");
+  await expect(productRow).toContainText("Generic");
   await expect(productRow).toContainText("₱5.00");
   await expect(
     ownerPage.getByText(/approved SYNTHETIC-E2E-TAX-12-HALF-UP/i),
   ).toBeVisible();
 
   await productRow.getByRole("button", { name: "Edit" }).click();
+  await expect(ownerPage.getByLabel("Generic")).toBeChecked();
+  await expect(ownerPage.getByLabel("Senior Citizen eligible")).toBeChecked();
+  await expect(ownerPage.getByLabel("PWD eligible")).not.toBeChecked();
   await ownerPage.getByLabel("Selling price (₱)").fill("11.99");
   await ownerPage.getByRole("button", { name: "Save product" }).click();
   await expect(ownerPage.getByText("Product changes saved.")).toBeVisible();
@@ -99,12 +105,26 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const catalogRow = cashierPage
     .locator(".catalog-result")
     .filter({ hasText: "Synthetic Pilot Lotion" });
+  await expect(catalogRow).toContainText("Generic");
   await expect(catalogRow).toContainText("₱11.99 · 5 available");
   await expect(
     cashierPage.getByText(/average cost|inventory value|gross profit/i),
   ).toHaveCount(0);
   await catalogRow.getByRole("button", { name: "Add to cart" }).click();
   await catalogRow.getByRole("button", { name: "Add to cart" }).click();
+  await cashierPage.getByLabel("Sale benefit").selectOption("PWD");
+  await expect(
+    cashierPage.getByRole("checkbox", {
+      name: /Synthetic Pilot Lotion .* not eligible/,
+    }),
+  ).toBeDisabled();
+  await cashierPage.getByLabel("Sale benefit").selectOption("SENIOR_CITIZEN");
+  await expect(
+    cashierPage.getByRole("checkbox", {
+      name: /Synthetic Pilot Lotion .* eligible/,
+    }),
+  ).toBeEnabled();
+  await cashierPage.getByLabel("Sale benefit").selectOption("REGULAR");
   await expect(cashierPage.getByText("₱11.99 × 2")).toBeVisible();
   await expect(cashierPage.getByText("₱23.98")).toBeVisible();
   await cashierPage.getByLabel("Opening cash (₱)").fill("50.00");
@@ -137,12 +157,26 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const savedSale = (await saleResponse.json()) as {
     sale: {
       amountDue: string;
-      lines: Array<{ cogs: string; quantity: number }>;
+      lines: Array<{
+        cogs: string;
+        quantity: number;
+        productType: string;
+        isScEligible: boolean;
+        isPwdEligible: boolean;
+      }>;
     };
   };
   expect(savedSale.sale).toMatchObject({
     amountDue: "23.98",
-    lines: [{ quantity: 2, cogs: "10.80" }],
+    lines: [
+      {
+        quantity: 2,
+        cogs: "10.80",
+        productType: "GENERIC",
+        isScEligible: true,
+        isPwdEligible: false,
+      },
+    ],
   });
 
   await ownerPage.goto("/stock");

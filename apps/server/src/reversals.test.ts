@@ -78,7 +78,9 @@ async function createProduct(owner: Agent) {
       unit: "piece",
       sellingPrice: "112.00",
       taxClass: "VATABLE",
-      scPwdEligible: true,
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
       openingQuantity: 5,
       openingUnitCost: "40.00",
     });

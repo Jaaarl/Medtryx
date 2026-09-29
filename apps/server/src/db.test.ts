@@ -1,0 +1,83 @@
+import Database from "better-sqlite3";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { migrateDatabase, repositoryRoot } from "./db.js";
+
+describe("database migrations", () => {
+  it("preserves legacy combined SC/PWD eligibility as eligibility for both", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      const priorMigrations = readdirSync(migrationsDirectory)
+        .filter((name) => /^000[1-5]_.*\.sql$/u.test(name))
+        .sort();
+      for (const name of priorMigrations) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+      db.prepare(
+        `INSERT INTO products
+          (id, sku, name, unit, selling_price_centavos, tax_class,
+           sc_pwd_eligible, quantity_on_hand, inventory_value_centavos,
+           is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`,
+      ).run(
+        "legacy-both",
+        "SYN-LEGACY-BOTH",
+        "Synthetic legacy eligible product",
+        "piece",
+        100,
+        "VATABLE",
+        1,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
+      db.prepare(
+        `INSERT INTO products
+          (id, sku, name, unit, selling_price_centavos, tax_class,
+           sc_pwd_eligible, quantity_on_hand, inventory_value_centavos,
+           is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)`,
+      ).run(
+        "legacy-none",
+        "SYN-LEGACY-NONE",
+        "Synthetic legacy ineligible product",
+        "piece",
+        100,
+        "VATABLE",
+        0,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      );
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            "SELECT sc_eligible, pwd_eligible, product_type FROM products WHERE id = ?",
+          )
+          .get("legacy-both"),
+      ).toEqual({ sc_eligible: 1, pwd_eligible: 1, product_type: null });
+      expect(
+        db
+          .prepare(
+            "SELECT sc_eligible, pwd_eligible, product_type FROM products WHERE id = ?",
+          )
+          .get("legacy-none"),
+      ).toEqual({ sc_eligible: 0, pwd_eligible: 0, product_type: null });
+    } finally {
+      db.close();
+    }
+  });
+});

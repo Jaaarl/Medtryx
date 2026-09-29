@@ -75,9 +75,9 @@ The server is the source of truth. Shared types help the UI display data, but th
 
 ### Core tables
 
-`users`, `sessions`, `products`, `stock_events`, `sales`, `sale_lines`, `sale_reversals`, `shifts`, `cash_movements`, `audit_events`, and `settings`. Store the current whole-unit stock count, inventory value in centavos, and selling price on `products`; record every stock change as a `stock_event`. A receipt event stores its own unit acquisition cost. Use database constraints for unique SKU, unique optional barcode, unique Medtryx Transaction ID, non-negative stock, and non-negative inventory value.
+`users`, `sessions`, `products`, `stock_events`, `sales`, `sale_lines`, `sale_reversals`, `shifts`, `cash_movements`, `audit_events`, and `settings`. Store the current whole-unit stock count, inventory value in centavos, selling price, generic/branded type, and independent SC/PWD eligibility on `products`; record every stock change as a `stock_event`. A receipt event stores its own unit acquisition cost. Use database constraints for unique SKU, unique optional barcode, unique Medtryx Transaction ID, non-negative stock, and non-negative inventory value.
 
-Each `sale_line` snapshots product name, SKU, unit, quantity, selling price, tax class, SC/PWD eligibility, selected benefit, applicable rule/rounding version, tax, discount, amount due, and the allocated acquisition cost/COGS. Reports read these saved values; a later product edit or receipt never recalculates old sales.
+Each `sale_line` snapshots product name, SKU, unit, generic/branded type, quantity, selling price, tax class, separate SC/PWD eligibility, selected benefit, applicable rule/rounding version, tax, discount, amount due, and the allocated acquisition cost/COGS. Reports read these saved values; a later product edit or receipt never recalculates old sales. Product type and benefit eligibility do not determine tax class or professional policy.
 
 ### Inventory cost and profit
 

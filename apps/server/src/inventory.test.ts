@@ -69,7 +69,9 @@ async function createOpeningProduct(
       unit: "tablet",
       sellingPrice: "70.00",
       taxClass: "VATABLE",
-      scPwdEligible: true,
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
       openingQuantity: 10,
       openingUnitCost: "40.00",
       reorderLevel: 3,
@@ -108,6 +110,11 @@ describe("owner catalog and stock operations", () => {
     expect(created.body.product.inventoryValue).toBe("400.00");
     expect(created.body.product.estimatedUnitGrossProfit).toBe("22.50");
     expect(created.body.product.grossProfitEstimateApproved).toBe(false);
+    expect(created.body.product).toMatchObject({
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
+    });
     expect(
       db
         .prepare(
@@ -124,6 +131,56 @@ describe("owner catalog and stock operations", () => {
       quantity_delta: 10,
       unit_cost_centavos: 4_000,
       inventory_value_delta_centavos: 40_000,
+    });
+  });
+
+  it("requires a product type and preserves independent SC/PWD eligibility on edits", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const missingType = await createOpeningProduct(owner, {
+      sku: "SYN-NO-TYPE",
+      productType: undefined,
+    });
+    expect(missingType.status).toBe(400);
+
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-SC-ONLY",
+      productType: "GENERIC",
+      isScEligible: true,
+      isPwdEligible: false,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.product).toMatchObject({
+      productType: "GENERIC",
+      isScEligible: true,
+      isPwdEligible: false,
+    });
+
+    const token = await csrfFor(owner);
+    const updated = await owner
+      .patch(`/api/products/${created.body.product.id as string}`)
+      .set("x-csrf-token", token)
+      .send({
+        productType: "BRANDED",
+        isScEligible: false,
+        isPwdEligible: true,
+      });
+    expect(updated.status).toBe(200);
+    expect(updated.body.product).toMatchObject({
+      productType: "BRANDED",
+      isScEligible: false,
+      isPwdEligible: true,
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT sc_pwd_eligible, sc_eligible, pwd_eligible, product_type FROM products WHERE id = ?",
+        )
+        .get(created.body.product.id as string),
+    ).toEqual({
+      sc_pwd_eligible: 1,
+      sc_eligible: 0,
+      pwd_eligible: 1,
+      product_type: "BRANDED",
     });
   });
 

@@ -2,28 +2,56 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { dirname, resolve } from "node:path";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const backupRoot = mkdtempSync(join(tmpdir(), "medtryx-e2e-backups-"));
+const testDataDirectory = join(backupRoot, "data");
 const primaryBackupPath = join(backupRoot, "primary");
 const secondaryBackupPath = join(backupRoot, "secondary");
+mkdirSync(testDataDirectory);
 mkdirSync(primaryBackupPath);
 mkdirSync(secondaryBackupPath);
 mkdirSync(join(primaryBackupPath, "test"));
 mkdirSync(join(secondaryBackupPath, "test"));
+
+async function getFreePort() {
+  const server = createServer();
+  const port = await new Promise((resolvePort, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Unable to reserve a local test port."));
+        return;
+      }
+      resolvePort(address.port);
+    });
+  });
+  await new Promise((resolveClose, reject) =>
+    server.close((error) => (error ? reject(error) : resolveClose())),
+  );
+  return port;
+}
+
+const apiPort = await getFreePort();
+const webPort = await getFreePort();
 const testEnvironment = {
   ...process.env,
   APP_ENV: "test",
   COOKIE_SECURE: "false",
   HOST: "127.0.0.1",
-  PORT: "3001",
+  PORT: String(apiPort),
+  MEDTRYX_API_PORT: String(apiPort),
   E2E_EXTERNAL_SERVERS: "1",
   CUSTOMER_ID_ENCRYPTION_KEY: "c3".repeat(32),
+  MEDTRYX_DATA_DIR: testDataDirectory,
   MEDTRYX_BACKUP_PRIMARY_DIR: primaryBackupPath,
   MEDTRYX_BACKUP_SECONDARY_DIR: secondaryBackupPath,
+  MEDTRYX_E2E_BASE_URL: `http://127.0.0.1:${webPort}`,
 };
 const running = [];
 
@@ -72,16 +100,6 @@ async function stop(child) {
 
 let resultCode = 1;
 try {
-  const health = await fetch("http://127.0.0.1:3001/api/health").catch(
-    () => undefined,
-  );
-  const vite = await fetch("http://127.0.0.1:5173/").catch(() => undefined);
-  if (health?.ok || vite?.ok) {
-    throw new Error(
-      "Stop existing Medtryx processes on ports 3001 and 5173 before running browser tests.",
-    );
-  }
-
   const server = launch(
     "API server",
     resolve(root, "apps/server/dist/index.js"),
@@ -91,12 +109,16 @@ try {
   const web = launch(
     "Vite server",
     resolve(root, "node_modules/vite/bin/vite.js"),
-    ["--host", "127.0.0.1"],
+    ["--host", "127.0.0.1", "--port", String(webPort), "--strictPort"],
     resolve(root, "apps/web"),
   );
   await Promise.all([
-    waitForService("API server", server, "http://127.0.0.1:3001/api/health"),
-    waitForService("Vite server", web, "http://127.0.0.1:5173/"),
+    waitForService(
+      "API server",
+      server,
+      `http://127.0.0.1:${apiPort}/api/health`,
+    ),
+    waitForService("Vite server", web, `http://127.0.0.1:${webPort}/`),
   ]);
 
   const playwright = launch(

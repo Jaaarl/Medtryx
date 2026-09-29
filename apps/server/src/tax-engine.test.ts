@@ -18,7 +18,8 @@ describe("line-level decimal tax calculations", () => {
           unitPriceCentavos: 11_200,
           quantity: 1,
           taxClass: "VATABLE",
-          scPwdEligible: true,
+          isScEligible: true,
+          isPwdEligible: true,
           benefit: "REGULAR",
           benefitApplied: false,
         },
@@ -40,7 +41,8 @@ describe("line-level decimal tax calculations", () => {
           unitPriceCentavos: 11_200,
           quantity: 1,
           taxClass: "VATABLE",
-          scPwdEligible: true,
+          isScEligible: true,
+          isPwdEligible: true,
           benefit: "SENIOR_CITIZEN",
           benefitApplied: true,
         },
@@ -63,7 +65,8 @@ describe("line-level decimal tax calculations", () => {
           unitPriceCentavos: 10_000,
           quantity: 1,
           taxClass: "VAT_EXEMPT",
-          scPwdEligible: true,
+          isScEligible: true,
+          isPwdEligible: true,
           benefit: "PWD",
           benefitApplied: true,
         },
@@ -83,7 +86,8 @@ describe("line-level decimal tax calculations", () => {
         unitPriceCentavos: 5,
         quantity: 1,
         taxClass: "VATABLE",
-        scPwdEligible: true,
+        isScEligible: true,
+        isPwdEligible: true,
         benefit: "SENIOR_CITIZEN",
         benefitApplied: true,
       },
@@ -100,7 +104,8 @@ describe("line-level decimal tax calculations", () => {
         unitPriceCentavos: 10_000,
         quantity: 1,
         taxClass: "VATABLE",
-        scPwdEligible: false,
+        isScEligible: false,
+        isPwdEligible: false,
         benefit: "REGULAR",
         benefitApplied: false,
       },
@@ -114,27 +119,43 @@ describe("line-level decimal tax calculations", () => {
     });
   });
 
-  it("rejects benefits on an ineligible line and rejects unapproved zero-rated items", () => {
+  it("checks SC and PWD eligibility separately and rejects unapproved zero-rated items", () => {
     expect(() =>
       calculateTaxLine(
         {
           unitPriceCentavos: 1_000,
           quantity: 1,
           taxClass: "VAT_EXEMPT",
-          scPwdEligible: false,
+          isScEligible: true,
+          isPwdEligible: false,
           benefit: "PWD",
           benefitApplied: true,
         },
         proposedPolicy,
       ),
-    ).toThrow(new TaxCalculationError("product_not_benefit_eligible"));
+    ).toThrow(new TaxCalculationError("product_not_pwd_eligible"));
+    expect(() =>
+      calculateTaxLine(
+        {
+          unitPriceCentavos: 1_000,
+          quantity: 1,
+          taxClass: "VAT_EXEMPT",
+          isScEligible: false,
+          isPwdEligible: true,
+          benefit: "SENIOR_CITIZEN",
+          benefitApplied: true,
+        },
+        proposedPolicy,
+      ),
+    ).toThrow(new TaxCalculationError("product_not_senior_eligible"));
     expect(() =>
       calculateTaxLine(
         {
           unitPriceCentavos: 1_000,
           quantity: 1,
           taxClass: "ZERO_RATED",
-          scPwdEligible: false,
+          isScEligible: false,
+          isPwdEligible: false,
           benefit: "REGULAR",
           benefitApplied: false,
         },
