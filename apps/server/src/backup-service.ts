@@ -26,6 +26,7 @@ import {
 } from "./db.js";
 import { restrictDirectory, restrictFile } from "./secure-fs.js";
 import { restoreIsActive, waitForMutationsToDrain } from "./maintenance.js";
+import { lotLedgerIssues } from "./lot-stock.js";
 
 const backupPurposeSchema = z.enum(["manual", "automatic", "safety"]);
 const storeProfileSchema = z
@@ -254,6 +255,8 @@ function assertDatabaseIntegrity(db: Database.Database): void {
   const foreignKeyErrors = db.pragma("foreign_key_check") as unknown[];
   if (foreignKeyErrors.length > 0)
     throw new BackupError("backup_database_foreign_key_failed");
+  if (lotLedgerIssues(db).length > 0)
+    throw new BackupError("backup_lot_stock_reconciliation_failed");
 }
 
 function validateCustomerCiphertexts(db: Database.Database, key: string): void {
@@ -599,12 +602,16 @@ const restoreTables = [
   "sale_sequences",
   "reversal_sequences",
   "stock_events",
+  "inventory_lots",
+  "lot_reconciliations",
   "shifts",
   "sales",
   "sale_lines",
   "sale_reversals",
   "sale_reversal_lines",
   "cash_movements",
+  "lot_stock_movements",
+  "sale_line_lot_allocations",
   "audit_events",
 ] as const;
 
@@ -618,7 +625,31 @@ function applyRestoredDatabase(
   db.prepare("ATTACH DATABASE ? AS restore_source").run(sourcePath);
   try {
     db.pragma("foreign_keys = OFF");
+    const appendOnlyTriggerSql = db
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name IN (
+           'lot_stock_movements_no_update', 'lot_stock_movements_no_delete',
+           'lot_stock_movements_no_negative_balance',
+           'lot_reconciliations_no_update', 'lot_reconciliations_no_delete',
+           'inventory_lots_identity_immutable', 'inventory_lots_no_delete',
+           'sale_line_lot_allocations_no_update', 'sale_line_lot_allocations_no_delete'
+         ) ORDER BY name`,
+      )
+      .all() as Array<{ sql: string }>;
     const restoreTransaction = db.transaction(() => {
+      for (const triggerName of [
+        "lot_stock_movements_no_update",
+        "lot_stock_movements_no_delete",
+        "lot_stock_movements_no_negative_balance",
+        "lot_reconciliations_no_update",
+        "lot_reconciliations_no_delete",
+        "inventory_lots_identity_immutable",
+        "inventory_lots_no_delete",
+        "sale_line_lot_allocations_no_update",
+        "sale_line_lot_allocations_no_delete",
+      ]) {
+        db.exec(`DROP TRIGGER IF EXISTS main.${triggerName}`);
+      }
       for (const table of [...restoreTables].reverse())
         db.exec(`DELETE FROM main.${table}`);
       for (const table of restoreTables) {
@@ -633,6 +664,7 @@ function applyRestoredDatabase(
         );
       }
       db.prepare("DELETE FROM main.sessions").run();
+      for (const trigger of appendOnlyTriggerSql) db.exec(trigger.sql);
       const activeActor = db
         .prepare("SELECT id FROM main.users WHERE id = ? AND is_active = 1")
         .get(actorUserId) as { id: string } | undefined;

@@ -24,7 +24,10 @@ type Product = {
   isScEligible: boolean;
   isPwdEligible: boolean;
   productType: "GENERIC" | "BRANDED" | null;
+  tracksLots: boolean;
   quantityOnHand: number;
+  unallocatedQuantity: number;
+  saleableQuantity: number;
   reorderLevel: number | null;
   active: boolean;
   latestAcquisitionCost: string | null;
@@ -48,7 +51,30 @@ type CatalogProduct = Pick<
   | "isScEligible"
   | "isPwdEligible"
   | "productType"
-> & { quantityAvailable: number };
+  | "tracksLots"
+> & {
+  quantityAvailable: number;
+  physicalQuantity: number;
+  assignedLots: Array<{
+    lotId: string;
+    lotCode: string;
+    expiryDate: string;
+    quantityAvailable: number;
+  }>;
+};
+
+type InventoryLot = {
+  id: string;
+  productId: string;
+  lotCode: string;
+  expiryDate: string;
+  quarantined: boolean;
+  quantity: number;
+  saleableQuantity: number;
+  sku: string;
+  productName: string;
+  alert: "EXPIRED" | "NEAR_EXPIRY" | null;
+};
 
 type StockEvent = {
   id: string;
@@ -60,6 +86,7 @@ type StockEvent = {
   unitCost: string | null;
   inventoryValueDelta: string;
   reference: string | null;
+  supplier: string | null;
   reason: string | null;
   actorEmail: string | null;
   createdAt: string;
@@ -75,9 +102,13 @@ const EMPTY_FORM = {
   isScEligible: false,
   isPwdEligible: false,
   productType: "" as Product["productType"] | "",
+  tracksLots: false,
   openingQuantity: "0",
   openingUnitCost: "",
   openingZeroCostReason: "",
+  openingLotCode: "",
+  openingExpiryDate: "",
+  openingSupplier: "",
   reorderLevel: "",
 };
 
@@ -93,6 +124,30 @@ function errorMessage(error: unknown): string {
       "Zero-rated products are unavailable until tax settings are approved.",
     product_not_found:
       "That product could not be found. Refresh and try again.",
+    receipt_lot_required:
+      "Enter the lot or batch code and expiry date for this tracked product.",
+    adjustment_lot_required:
+      "Choose the exact lot being adjusted and enter batch details for a new lot.",
+    expiry_disposal_requires_lot:
+      "Choose the exact lot before recording an expiry disposal.",
+    expired_lot_not_allowed:
+      "Expired stock cannot be received or added to saleable inventory.",
+    insufficient_saleable_lot_stock:
+      "There is not enough unexpired, non-quarantined lot stock for this sale.",
+    lot_pick_confirmation_required:
+      "Review and confirm the assigned FEFO lots before finalizing the sale.",
+    insufficient_lot_stock:
+      "The selected lot does not have enough units for this change.",
+    active_lots_require_tracking:
+      "Lot tracking cannot be turned off while physical stock remains.",
+    product_does_not_track_lots:
+      "This product is not configured for lot tracking.",
+    insufficient_unallocated_stock:
+      "The reconciliation quantity exceeds unallocated legacy stock.",
+    returned_lot_not_saleable:
+      "A sold lot is expired or quarantined. Use the write-off treatment.",
+    lot_return_verification_required:
+      "Confirm that the returned items match their saved lots before restocking.",
     unit_locked_after_stock_history:
       "A product unit cannot change after stock history exists.",
     inventory_value_overflow:
@@ -265,6 +320,7 @@ export function ProductsPage() {
       isScEligible: product.isScEligible,
       isPwdEligible: product.isPwdEligible,
       productType: product.productType ?? "",
+      tracksLots: product.tracksLots,
       reorderLevel:
         product.reorderLevel === null ? "" : String(product.reorderLevel),
     });
@@ -289,6 +345,7 @@ export function ProductsPage() {
       taxClass: form.taxClass,
       isScEligible: form.isScEligible,
       isPwdEligible: form.isPwdEligible,
+      tracksLots: form.tracksLots,
       ...(form.productType ? { productType: form.productType } : {}),
       reorderLevel: form.reorderLevel === "" ? null : Number(form.reorderLevel),
     };
@@ -303,6 +360,15 @@ export function ProductsPage() {
           openingQuantity: Number(form.openingQuantity),
           ...(Number(form.openingQuantity) > 0
             ? { openingUnitCost: form.openingUnitCost }
+            : {}),
+          ...(form.tracksLots && Number(form.openingQuantity) > 0
+            ? {
+                openingLotCode: form.openingLotCode.trim(),
+                openingExpiryDate: form.openingExpiryDate,
+                ...(form.openingSupplier.trim()
+                  ? { openingSupplier: form.openingSupplier.trim() }
+                  : {}),
+              }
             : {}),
           ...(Number(form.openingQuantity) > 0 &&
           centsFromMoney(form.openingUnitCost) === 0n
@@ -417,6 +483,12 @@ export function ProductsPage() {
                       </td>
                       <td>
                         {product.quantityOnHand}
+                        {product.tracksLots && (
+                          <small>
+                            {product.saleableQuantity} saleable ·{" "}
+                            {product.unallocatedQuantity} unallocated
+                          </small>
+                        )}
                         {product.reorderLevel !== null &&
                           product.quantityOnHand <= product.reorderLevel && (
                             <span className="low-stock-tag">
@@ -642,6 +714,16 @@ export function ProductsPage() {
                 <span>PWD eligible</span>
               </label>
             </div>
+            <label className="inventory-checkbox">
+              <input
+                type="checkbox"
+                checked={form.tracksLots}
+                onChange={(event) =>
+                  setForm({ ...form, tracksLots: event.target.checked })
+                }
+              />
+              <span>Track lots and expiry for this product</span>
+            </label>
             {!editing && (
               <>
                 <div className="inventory-form-divider">OPENING STOCK</div>
@@ -709,6 +791,63 @@ export function ProductsPage() {
                     />
                   </Field>
                 ) : null}
+                {form.tracksLots && Number(form.openingQuantity) > 0 && (
+                  <>
+                    <Field
+                      id="opening-lot-code"
+                      label="Opening lot / batch code"
+                    >
+                      <input
+                        id="opening-lot-code"
+                        className="text-input"
+                        value={form.openingLotCode}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            openingLotCode: event.target.value,
+                          })
+                        }
+                        required
+                        maxLength={100}
+                      />
+                    </Field>
+                    <Field
+                      id="opening-expiry-date"
+                      label="Expiry date (last saleable day)"
+                    >
+                      <input
+                        id="opening-expiry-date"
+                        className="text-input"
+                        type="date"
+                        min={new Date().toLocaleDateString("en-CA", {
+                          timeZone: "Asia/Manila",
+                        })}
+                        value={form.openingExpiryDate}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            openingExpiryDate: event.target.value,
+                          })
+                        }
+                        required
+                      />
+                    </Field>
+                    <Field id="opening-supplier" label="Supplier (optional)">
+                      <input
+                        id="opening-supplier"
+                        className="text-input"
+                        value={form.openingSupplier}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            openingSupplier: event.target.value,
+                          })
+                        }
+                        maxLength={160}
+                      />
+                    </Field>
+                  </>
+                )}
               </>
             )}
             <button
@@ -747,6 +886,9 @@ export function ProductsPage() {
 export function StockPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [events, setEvents] = useState<StockEvent[]>([]);
+  const [lots, setLots] = useState<InventoryLot[]>([]);
+  const [warningDays, setWarningDays] = useState(30);
+  const [warningDaysInput, setWarningDaysInput] = useState("30");
   const [selectedId, setSelectedId] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -757,11 +899,23 @@ export function StockPage() {
   const [receiptCost, setReceiptCost] = useState("");
   const [zeroCostReason, setZeroCostReason] = useState("");
   const [reference, setReference] = useState("");
+  const [supplier, setSupplier] = useState("");
+  const [receiptLotCode, setReceiptLotCode] = useState("");
+  const [receiptExpiryDate, setReceiptExpiryDate] = useState("");
   const [adjustQty, setAdjustQty] = useState("");
   const [reasonType, setReasonType] = useState("COUNT_CORRECTION");
   const [reason, setReason] = useState("");
   const [adjustCost, setAdjustCost] = useState("");
   const [adjustZeroCostReason, setAdjustZeroCostReason] = useState("");
+  const [adjustLotId, setAdjustLotId] = useState("");
+  const [adjustLotCode, setAdjustLotCode] = useState("");
+  const [adjustExpiryDate, setAdjustExpiryDate] = useState("");
+  const [reconcileLotCode, setReconcileLotCode] = useState("");
+  const [reconcileExpiryDate, setReconcileExpiryDate] = useState("");
+  const [reconcileQuantity, setReconcileQuantity] = useState("");
+  const [reconcileReason, setReconcileReason] = useState("");
+  const [physicalCountConfirmed, setPhysicalCountConfirmed] = useState(false);
+  const [lotStatusReason, setLotStatusReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
   const filteredProducts = lowOnly
     ? products.filter(
@@ -770,6 +924,9 @@ export function StockPage() {
           product.quantityOnHand <= product.reorderLevel,
       )
     : products;
+  const selectedLots = lots.filter(
+    (lot) => lot.productId === selectedId && lot.quantity > 0,
+  );
 
   async function refreshProducts() {
     const result = await api.get<{ products: Product[] }>("/products");
@@ -783,16 +940,29 @@ export function StockPage() {
     const result = await api.get<{ events: StockEvent[] }>(path);
     setEvents(result.events);
   }
+  async function refreshLots() {
+    const result = await api.get<{
+      warningDays: number;
+      lots: InventoryLot[];
+    }>("/stock/lots");
+    setLots(result.lots);
+    setWarningDays(result.warningDays);
+    setWarningDaysInput(String(result.warningDays));
+  }
   useEffect(() => {
     let active = true;
     void Promise.all([
       api.get<{ products: Product[] }>("/products"),
       api.get<{ events: StockEvent[] }>("/stock/events"),
+      api.get<{ warningDays: number; lots: InventoryLot[] }>("/stock/lots"),
     ])
-      .then(([productData, eventData]) => {
+      .then(([productData, eventData, lotData]) => {
         if (!active) return;
         setProducts(productData.products);
         setEvents(eventData.events);
+        setLots(lotData.lots);
+        setWarningDays(lotData.warningDays);
+        setWarningDaysInput(String(lotData.warningDays));
         if (productData.products[0]) setSelectedId(productData.products[0].id);
       })
       .catch(() => {
@@ -837,11 +1007,19 @@ export function StockPage() {
         quantity: Number(receiptQty),
         unitCost: receiptCost,
         ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
+        ...(selected.tracksLots
+          ? { lotCode: receiptLotCode.trim(), expiryDate: receiptExpiryDate }
+          : {}),
         ...(centsFromMoney(receiptCost) === 0n
           ? { zeroCostReason: zeroCostReason.trim() }
           : {}),
       });
-      await Promise.all([refreshProducts(), refreshEvents(selected.id)]);
+      await Promise.all([
+        refreshProducts(),
+        refreshEvents(selected.id),
+        refreshLots(),
+      ]);
       setNotice(
         `Received ${receiptQty} ${selected.unit} for ${selected.name}.`,
       );
@@ -849,6 +1027,9 @@ export function StockPage() {
       setReceiptCost("");
       setReference("");
       setZeroCostReason("");
+      setSupplier("");
+      setReceiptLotCode("");
+      setReceiptExpiryDate("");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -869,20 +1050,110 @@ export function StockPage() {
         reasonType,
         reason: reason.trim(),
         ...(quantityDelta > 0 ? { unitCost: adjustCost } : {}),
+        ...(selected.tracksLots && quantityDelta < 0
+          ? { lotId: adjustLotId }
+          : {}),
+        ...(selected.tracksLots && quantityDelta > 0
+          ? {
+              ...(adjustLotId ? { lotId: adjustLotId } : {}),
+              ...(!adjustLotId
+                ? {
+                    lotCode: adjustLotCode.trim(),
+                    expiryDate: adjustExpiryDate,
+                  }
+                : {}),
+              ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
+            }
+          : {}),
         ...(quantityDelta > 0 && centsFromMoney(adjustCost) === 0n
           ? { zeroCostReason: adjustZeroCostReason.trim() }
           : {}),
       });
-      await Promise.all([refreshProducts(), refreshEvents(selected.id)]);
+      await Promise.all([
+        refreshProducts(),
+        refreshEvents(selected.id),
+        refreshLots(),
+      ]);
       setNotice(`Stock adjustment recorded for ${selected.name}.`);
       setAdjustQty("");
       setReason("");
       setAdjustCost("");
       setAdjustZeroCostReason("");
+      setAdjustLotId("");
+      setAdjustLotCode("");
+      setAdjustExpiryDate("");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveExpiryWarning(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.put<{ warningDays: number }>(
+        "/settings/expiry-warning",
+        { warningDays: Number(warningDaysInput) },
+      );
+      setWarningDays(result.warningDays);
+      setNotice("Expiry warning horizon updated.");
+      await refreshLots();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
+
+  async function reconcileLegacyLot(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post("/stock/lots/reconcile", {
+        productId: selected.id,
+        reason: reconcileReason.trim(),
+        physicalCountConfirmed,
+        allocations: [
+          {
+            lotCode: reconcileLotCode.trim(),
+            expiryDate: reconcileExpiryDate,
+            quantity: Number(reconcileQuantity),
+          },
+        ],
+      });
+      await Promise.all([refreshProducts(), refreshLots()]);
+      setNotice("Verified legacy units were assigned to the recorded lot.");
+      setReconcileLotCode("");
+      setReconcileExpiryDate("");
+      setReconcileQuantity("");
+      setReconcileReason("");
+      setPhysicalCountConfirmed(false);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleQuarantine(lot: InventoryLot) {
+    setError("");
+    setNotice("");
+    try {
+      await api.patch(`/stock/lots/${lot.id}/quarantine`, {
+        quarantined: !lot.quarantined,
+        reason: lotStatusReason.trim(),
+      });
+      await refreshLots();
+      setNotice(
+        lot.quarantined ? "Lot released from quarantine." : "Lot quarantined.",
+      );
+      setLotStatusReason("");
+    } catch (caught) {
+      setError(errorMessage(caught));
     }
   }
 
@@ -1065,6 +1336,46 @@ export function StockPage() {
                     maxLength={200}
                   />
                 </Field>
+                {selected.tracksLots && (
+                  <>
+                    <Field id="receipt-lot-code" label="Lot / batch code">
+                      <input
+                        id="receipt-lot-code"
+                        className="text-input"
+                        value={receiptLotCode}
+                        onChange={(event) =>
+                          setReceiptLotCode(event.target.value)
+                        }
+                        required
+                        maxLength={100}
+                      />
+                    </Field>
+                    <Field
+                      id="receipt-expiry-date"
+                      label="Expiry date (last saleable day)"
+                    >
+                      <input
+                        id="receipt-expiry-date"
+                        className="text-input"
+                        type="date"
+                        value={receiptExpiryDate}
+                        onChange={(event) =>
+                          setReceiptExpiryDate(event.target.value)
+                        }
+                        required
+                      />
+                    </Field>
+                    <Field id="receipt-supplier" label="Supplier (optional)">
+                      <input
+                        id="receipt-supplier"
+                        className="text-input"
+                        value={supplier}
+                        onChange={(event) => setSupplier(event.target.value)}
+                        maxLength={160}
+                      />
+                    </Field>
+                  </>
+                )}
                 {receiptCost !== "" && /^0+(?:\.0{1,2})?$/.test(receiptCost) ? (
                   <Field id="receipt-zero-reason" label="Reason for zero cost">
                     <input
@@ -1123,6 +1434,81 @@ export function StockPage() {
                     required
                   />
                 </Field>
+                {selected.tracksLots && Number(adjustQty) < 0 && (
+                  <Field id="adjust-lot" label="Exact lot being removed">
+                    <select
+                      id="adjust-lot"
+                      className="text-input select-input"
+                      value={adjustLotId}
+                      onChange={(event) => setAdjustLotId(event.target.value)}
+                      required
+                    >
+                      <option value="">Choose a lot</option>
+                      {selectedLots.map((lot) => (
+                        <option key={lot.id} value={lot.id}>
+                          {lot.lotCode} · expires {lot.expiryDate} ·{" "}
+                          {lot.quantity} on hand
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {selected.tracksLots && Number(adjustQty) > 0 && (
+                  <>
+                    <Field
+                      id="adjust-existing-lot"
+                      label="Add to existing lot (optional)"
+                    >
+                      <select
+                        id="adjust-existing-lot"
+                        className="text-input select-input"
+                        value={adjustLotId}
+                        onChange={(event) => setAdjustLotId(event.target.value)}
+                      >
+                        <option value="">Create / find by batch details</option>
+                        {selectedLots.map((lot) => (
+                          <option key={lot.id} value={lot.id}>
+                            {lot.lotCode} · expires {lot.expiryDate}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    {!adjustLotId && (
+                      <>
+                        <Field
+                          id="adjust-lot-code"
+                          label="New lot / batch code"
+                        >
+                          <input
+                            id="adjust-lot-code"
+                            className="text-input"
+                            value={adjustLotCode}
+                            onChange={(event) =>
+                              setAdjustLotCode(event.target.value)
+                            }
+                            required
+                            maxLength={100}
+                          />
+                        </Field>
+                        <Field
+                          id="adjust-expiry-date"
+                          label="Expiry date (last saleable day)"
+                        >
+                          <input
+                            id="adjust-expiry-date"
+                            className="text-input"
+                            type="date"
+                            value={adjustExpiryDate}
+                            onChange={(event) =>
+                              setAdjustExpiryDate(event.target.value)
+                            }
+                            required
+                          />
+                        </Field>
+                      </>
+                    )}
+                  </>
+                )}
                 {Number(adjustQty) > 0 && (
                   <Field id="adjust-cost" label="Unit acquisition cost (₱)">
                     <input
@@ -1183,7 +1569,12 @@ export function StockPage() {
                 <button
                   className="button button-primary create-submit"
                   type="submit"
-                  disabled={saving}
+                  disabled={
+                    saving ||
+                    (selected.tracksLots &&
+                      Number(adjustQty) < 0 &&
+                      !adjustLotId)
+                  }
                 >
                   {saving ? "Saving…" : "Record adjustment"}
                   <CirclePlus size={15} />
@@ -1197,6 +1588,204 @@ export function StockPage() {
           </div>
         </aside>
       </div>
+      <section className="activity-card stock-history-card">
+        <div className="card-heading">
+          <div>
+            <h2>Lots and expiry</h2>
+            <p>
+              Manila date{" "}
+              {lots.length
+                ? new Date().toLocaleDateString("en-CA", {
+                    timeZone: "Asia/Manila",
+                  })
+                : ""}
+              . Expiry is the last saleable day; expired lots stay recorded
+              until disposed.
+            </p>
+          </div>
+          <span className="count-chip">
+            {lots.filter((lot) => lot.alert !== null).length} expiry alerts
+          </span>
+        </div>
+        <form
+          className="inventory-inline-form"
+          onSubmit={(event) => void saveExpiryWarning(event)}
+        >
+          <Field
+            id="expiry-warning-days"
+            label="Near-expiry warning horizon (days)"
+          >
+            <input
+              id="expiry-warning-days"
+              className="text-input"
+              type="number"
+              min="0"
+              max="365"
+              step="1"
+              value={warningDaysInput}
+              onChange={(event) => setWarningDaysInput(event.target.value)}
+              required
+            />
+          </Field>
+          <span className="field-hint">
+            Current horizon: {warningDays} days.
+          </span>
+          <button className="button button-quiet" type="submit">
+            Save horizon
+          </button>
+        </form>
+        <div className="inventory-table-wrap">
+          <table className="inventory-table">
+            <thead>
+              <tr>
+                <th>PRODUCT / LOT</th>
+                <th>EXPIRY</th>
+                <th>PHYSICAL</th>
+                <th>SALEABLE</th>
+                <th>STATUS</th>
+                <th>CONTROL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lots.length ? (
+                lots.map((lot) => (
+                  <tr key={lot.id}>
+                    <td>
+                      <strong>{lot.productName}</strong>
+                      <small>
+                        {lot.sku} · batch {lot.lotCode}
+                      </small>
+                    </td>
+                    <td>{lot.expiryDate}</td>
+                    <td>{lot.quantity}</td>
+                    <td>{lot.saleableQuantity}</td>
+                    <td>
+                      {lot.quarantined
+                        ? "Quarantined"
+                        : lot.alert === "EXPIRED"
+                          ? "Expired"
+                          : lot.alert === "NEAR_EXPIRY"
+                            ? "Near expiry"
+                            : "Saleable"}
+                    </td>
+                    <td>
+                      <button
+                        className="text-action"
+                        disabled={!lotStatusReason.trim()}
+                        onClick={() => void toggleQuarantine(lot)}
+                      >
+                        {lot.quarantined ? "Release" : "Quarantine"}
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="table-loading">
+                    No lots recorded for tracked products.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="inventory-two-fields">
+          <Field id="lot-status-reason" label="Reason for quarantine change">
+            <input
+              id="lot-status-reason"
+              className="text-input"
+              value={lotStatusReason}
+              onChange={(event) => setLotStatusReason(event.target.value)}
+              minLength={3}
+              maxLength={500}
+            />
+          </Field>
+          {selected?.tracksLots && selected.unallocatedQuantity > 0 && (
+            <form
+              className="form-stack inventory-form"
+              onSubmit={(event) => void reconcileLegacyLot(event)}
+            >
+              <strong>Assign verified legacy stock</strong>
+              <small>
+                {selected.unallocatedQuantity} units remain unallocated and
+                cannot be sold while lot tracking is enabled. Confirm a physical
+                count before assigning them.
+              </small>
+              <small>
+                Assignment changes only lot mapping. It distributes the existing
+                SKU value at the current weighted average and does not change
+                total quantity, total value, or the SKU costing method.
+              </small>
+              <Field id="reconcile-lot-code" label="Verified batch code">
+                <input
+                  id="reconcile-lot-code"
+                  className="text-input"
+                  value={reconcileLotCode}
+                  onChange={(event) => setReconcileLotCode(event.target.value)}
+                  required
+                  maxLength={100}
+                />
+              </Field>
+              <Field id="reconcile-expiry-date" label="Printed expiry date">
+                <input
+                  id="reconcile-expiry-date"
+                  className="text-input"
+                  type="date"
+                  value={reconcileExpiryDate}
+                  onChange={(event) =>
+                    setReconcileExpiryDate(event.target.value)
+                  }
+                  required
+                />
+              </Field>
+              <Field id="reconcile-quantity" label="Physical quantity assigned">
+                <input
+                  id="reconcile-quantity"
+                  className="text-input"
+                  type="number"
+                  min="1"
+                  max={selected.unallocatedQuantity}
+                  step="1"
+                  value={reconcileQuantity}
+                  onChange={(event) => setReconcileQuantity(event.target.value)}
+                  required
+                />
+              </Field>
+              <Field id="reconcile-reason" label="Reconciliation note">
+                <input
+                  id="reconcile-reason"
+                  className="text-input"
+                  value={reconcileReason}
+                  onChange={(event) => setReconcileReason(event.target.value)}
+                  required
+                  minLength={3}
+                  maxLength={500}
+                />
+              </Field>
+              <label className="inventory-checkbox">
+                <input
+                  type="checkbox"
+                  checked={physicalCountConfirmed}
+                  onChange={(event) =>
+                    setPhysicalCountConfirmed(event.target.checked)
+                  }
+                  required
+                />
+                <span>
+                  I physically verified the batch label, expiry, and quantity
+                </span>
+              </label>
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={saving || !physicalCountConfirmed}
+              >
+                {saving ? "Recording…" : "Record physical reconciliation"}
+              </button>
+            </form>
+          )}
+        </div>
+      </section>
       <section className="activity-card stock-history-card">
         <div className="card-heading">
           <div>
@@ -1256,6 +1845,9 @@ export function StockPage() {
                     </td>
                     <td>
                       <span>{event.reference ?? "—"}</span>
+                      {event.supplier && (
+                        <small>Supplier: {event.supplier}</small>
+                      )}
                       {event.reason && <small>{event.reason}</small>}
                     </td>
                     <td>{event.actorEmail ?? "—"}</td>
@@ -1294,6 +1886,12 @@ type CheckoutPreview = {
     productId: string;
     name: string;
     quantity: number;
+    assignedLots: Array<{
+      lotId: string;
+      lotCode: string;
+      expiryDate: string;
+      quantity: number;
+    }>;
     gross: string;
     taxBasis: string;
     vat: string;
@@ -1351,6 +1949,7 @@ export function CheckoutPage() {
   const [closingCash, setClosingCash] = useState("0.00");
   const [varianceReason, setVarianceReason] = useState("");
   const [preview, setPreview] = useState<CheckoutPreview | null>(null);
+  const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
   const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1421,6 +2020,7 @@ export function CheckoutPage() {
 
   function invalidatePreview() {
     setPreview(null);
+    setLotPickConfirmed(false);
     setRequestKey("");
     setSaleRecord(null);
     setError("");
@@ -1536,6 +2136,7 @@ export function CheckoutPage() {
         })),
       });
       setPreview(result);
+      setLotPickConfirmed(false);
       setRequestKey(window.crypto.randomUUID());
     } catch (caught) {
       setError(errorMessage(caught));
@@ -1560,6 +2161,21 @@ export function CheckoutPage() {
             productId: line.product.id,
             quantity: line.quantity,
             benefitApplied: line.benefitApplied,
+            ...(line.product.tracksLots
+              ? {
+                  lotAllocations:
+                    preview.lines
+                      .find(
+                        (previewLine) =>
+                          previewLine.productId === line.product.id,
+                      )
+                      ?.assignedLots.map((lot) => ({
+                        lotId: lot.lotId,
+                        quantity: lot.quantity,
+                      })) ?? [],
+                  lotPickConfirmed,
+                }
+              : {}),
           })),
           ...(benefitType === "REGULAR"
             ? {}
@@ -1650,6 +2266,10 @@ export function CheckoutPage() {
                     <span>
                       ₱{product.sellingPrice} · {product.quantityAvailable}{" "}
                       available
+                      {product.tracksLots &&
+                        product.assignedLots.length > 0 && (
+                          <> · {product.assignedLots.length} saleable lot(s)</>
+                        )}
                     </span>
                   </div>
                   <button
@@ -2000,6 +2620,17 @@ export function CheckoutPage() {
                         : ""}{" "}
                       · discount ₱{line.discount}
                     </small>
+                    {line.assignedLots.length > 0 && (
+                      <small>
+                        FEFO pick:{" "}
+                        {line.assignedLots
+                          .map(
+                            (lot) =>
+                              `${lot.lotCode} · exp ${lot.expiryDate} · ${lot.quantity}`,
+                          )
+                          .join("; ")}
+                      </small>
+                    )}
                     <span>Line due ₱{line.amountDue}</span>
                   </div>
                 ))}
@@ -2013,6 +2644,21 @@ export function CheckoutPage() {
                 </span>
                 <strong>₱{preview.totals.amountDue}</strong>
               </div>
+              {cart.some((line) => line.product.tracksLots) && (
+                <label className="inventory-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={lotPickConfirmed}
+                    onChange={(event) =>
+                      setLotPickConfirmed(event.target.checked)
+                    }
+                  />
+                  <span>
+                    I picked and physically confirmed the FEFO lot(s) shown
+                    above
+                  </span>
+                </label>
+              )}
               {preview.paymentMethod === "CASH" &&
                 preview.policy.cashRoundingMode === "NEAREST_25_CENTAVOS" && (
                   <small className="field-hint checkout-rounding-note">
@@ -2028,7 +2674,14 @@ export function CheckoutPage() {
               <button
                 className="button button-primary"
                 type="button"
-                disabled={saving || !policy?.approved || !shift || !requestKey}
+                disabled={
+                  saving ||
+                  !policy?.approved ||
+                  !shift ||
+                  !requestKey ||
+                  (cart.some((line) => line.product.tracksLots) &&
+                    !lotPickConfirmed)
+                }
                 onClick={() => void finalizeSale()}
               >
                 {saving ? "Saving…" : "Confirm sale"}

@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { openDatabase } from "./db.js";
+import { clearLotLedgerForTest } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -23,6 +24,7 @@ let cashierHash: string;
 let activeProductId: string;
 
 async function seedUsers(): Promise<void> {
+  clearLotLedgerForTest(db);
   db.exec(
     "DELETE FROM audit_events; DELETE FROM stock_events; DELETE FROM sessions; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM users;",
   );
@@ -79,6 +81,23 @@ async function createOpeningProduct(
     });
 }
 
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    `${today.year}-${today.month}-${today.day}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 beforeAll(async () => {
   dataDirectory = mkdtempSync(join(tmpdir(), "medtryx-stock-test-"));
   db = openDatabase("test", dataDirectory);
@@ -98,6 +117,263 @@ afterAll(() => {
 });
 
 describe("owner catalog and stock operations", () => {
+  it("requires real lot identifiers for tracked opening stock and preserves receipt snapshots", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const missing = await createOpeningProduct(owner, {
+      tracksLots: true,
+      openingLotCode: undefined,
+      openingExpiryDate: undefined,
+    });
+    expect(missing.status).toBe(400);
+
+    const created = await createOpeningProduct(owner, {
+      tracksLots: true,
+      openingLotCode: "SYN-BATCH-01",
+      openingExpiryDate: manilaDayAfter(30),
+      openingSupplier: "Synthetic distributor",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.product).toMatchObject({
+      tracksLots: true,
+      quantityOnHand: 10,
+      saleableQuantity: 10,
+      unallocatedQuantity: 0,
+    });
+    activeProductId = created.body.product.id as string;
+
+    const token = await csrfFor(owner);
+    const expired = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", token)
+      .send({
+        productId: activeProductId,
+        quantity: 2,
+        unitCost: "45.00",
+        lotCode: "SYN-EXPIRED",
+        expiryDate: manilaDayAfter(-1),
+      });
+    expect(expired.status).toBe(409);
+    expect(expired.body.error).toBe("expired_lot_not_allowed");
+
+    const receiptToken = await csrfFor(owner);
+    const receipt = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", receiptToken)
+      .send({
+        productId: activeProductId,
+        quantity: 3,
+        unitCost: "45.00",
+        lotCode: "SYN-BATCH-02",
+        expiryDate: manilaDayAfter(15),
+        supplier: "Synthetic distributor two",
+        reference: "SYN-PO-REFERENCE",
+      });
+    expect(receipt.status).toBe(201);
+    expect(receipt.body.product).toMatchObject({
+      quantityOnHand: 13,
+      saleableQuantity: 13,
+      inventoryValue: "535.00",
+    });
+    const event = db
+      .prepare(
+        "SELECT unit_cost_centavos, reference, supplier FROM stock_events WHERE event_type = 'RECEIPT'",
+      )
+      .get();
+    expect(event).toEqual({
+      unit_cost_centavos: 4_500,
+      reference: "SYN-PO-REFERENCE",
+      supplier: "Synthetic distributor two",
+    });
+  });
+
+  it("keeps legacy inventory unallocated until owner physical reconciliation without changing value", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner);
+    activeProductId = created.body.product.id as string;
+    const ownerToken = await csrfFor(owner);
+    const tracked = await owner
+      .patch(`/api/products/${activeProductId}`)
+      .set("x-csrf-token", ownerToken)
+      .send({ tracksLots: true });
+    expect(tracked.status).toBe(200);
+    expect(tracked.body.product).toMatchObject({
+      quantityOnHand: 10,
+      inventoryValue: "400.00",
+      saleableQuantity: 0,
+      unallocatedQuantity: 10,
+    });
+    const disableToken = await csrfFor(owner);
+    const disableTracking = await owner
+      .patch(`/api/products/${activeProductId}`)
+      .set("x-csrf-token", disableToken)
+      .send({ tracksLots: false });
+    expect(disableTracking.status).toBe(409);
+    expect(disableTracking.body.error).toBe("active_lots_require_tracking");
+
+    const cashier = await signIn(
+      "cashier.inventory@example.test",
+      cashierPassword,
+    );
+    expect((await cashier.get("/api/stock/lots")).status).toBe(403);
+    const cashierToken = await csrfFor(cashier);
+    expect(
+      await cashier
+        .post("/api/stock/lots/reconcile")
+        .set("x-csrf-token", cashierToken)
+        .send({
+          productId: activeProductId,
+          reason: "Synthetic unauthorized reconciliation",
+          physicalCountConfirmed: true,
+          allocations: [],
+        })
+        .then((response) => response.status),
+    ).toBe(403);
+    expect(
+      (
+        await cashier
+          .patch("/api/stock/lots/not-a-lot/quarantine")
+          .set("x-csrf-token", cashierToken)
+          .send({ quarantined: true, reason: "Synthetic denied action" })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await cashier
+          .put("/api/settings/expiry-warning")
+          .set("x-csrf-token", cashierToken)
+          .send({ warningDays: 14 })
+      ).status,
+    ).toBe(403);
+
+    const reconcileToken = await csrfFor(owner);
+    const reconciliation = await owner
+      .post("/api/stock/lots/reconcile")
+      .set("x-csrf-token", reconcileToken)
+      .send({
+        productId: activeProductId,
+        reason: "Synthetic physical shelf verification",
+        physicalCountConfirmed: true,
+        allocations: [
+          {
+            lotCode: "SYN-VERIFIED-BATCH",
+            expiryDate: manilaDayAfter(60),
+            quantity: 4,
+          },
+        ],
+      });
+    expect(reconciliation.status, JSON.stringify(reconciliation.body)).toBe(
+      201,
+    );
+    const after = await owner.get("/api/products");
+    expect(after.body.products[0]).toMatchObject({
+      quantityOnHand: 10,
+      inventoryValue: "400.00",
+      saleableQuantity: 4,
+      unallocatedQuantity: 6,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT sum(quantity_delta) AS quantity,
+                  sum(inventory_value_delta_centavos) AS value
+           FROM lot_stock_movements WHERE product_id = ?`,
+        )
+        .get(activeProductId),
+    ).toEqual({ quantity: 10, value: 40_000 });
+    expect(
+      db
+        .prepare(
+          `SELECT lot_id, sum(quantity_delta) AS quantity,
+                  sum(inventory_value_delta_centavos) AS value
+           FROM lot_stock_movements WHERE product_id = ?
+           GROUP BY lot_id ORDER BY lot_id IS NOT NULL`,
+        )
+        .all(activeProductId),
+    ).toEqual([
+      { lot_id: null, quantity: 6, value: 24_000 },
+      { lot_id: expect.any(String), quantity: 4, value: 16_000 },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM stock_events WHERE product_id = ?",
+        )
+        .get(activeProductId),
+    ).toEqual({ count: 1 });
+  });
+
+  it("requires exact lot identity for tracked adjustments and never allows a negative lot balance", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      tracksLots: true,
+      openingLotCode: "SYN-DISPOSAL-BATCH",
+      openingExpiryDate: manilaDayAfter(3),
+    });
+    expect(created.status).toBe(201);
+    activeProductId = created.body.product.id as string;
+    const lot = (await owner.get("/api/stock/lots")).body.lots[0] as {
+      id: string;
+      quantity: number;
+    };
+    const excessiveToken = await csrfFor(owner);
+    const excessive = await owner
+      .post("/api/stock/adjustments")
+      .set("x-csrf-token", excessiveToken)
+      .send({
+        productId: activeProductId,
+        quantityDelta: -11,
+        lotId: lot.id,
+        reasonType: "EXPIRY",
+        reason: "Synthetic exact lot expiry write-off",
+      });
+    expect(excessive.status).toBe(409);
+    expect(excessive.body.error).toBe("insufficient_lot_stock");
+
+    const disposalToken = await csrfFor(owner);
+    const disposal = await owner
+      .post("/api/stock/adjustments")
+      .set("x-csrf-token", disposalToken)
+      .send({
+        productId: activeProductId,
+        quantityDelta: -2,
+        lotId: lot.id,
+        reasonType: "EXPIRY",
+        reason: "Synthetic exact lot expiry write-off",
+      });
+    expect(disposal.status).toBe(201);
+    const updatedLot = (await owner.get("/api/stock/lots")).body.lots[0];
+    expect(updatedLot).toMatchObject({ id: lot.id, quantity: 8 });
+    const movement = db
+      .prepare(
+        `SELECT lot_id, movement_type, quantity_delta, reason
+         FROM lot_stock_movements WHERE product_id = ?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get(activeProductId);
+    expect(movement).toMatchObject({
+      lot_id: lot.id,
+      movement_type: "WRITE_OFF",
+      quantity_delta: -2,
+      reason: "EXPIRY: Synthetic exact lot expiry write-off",
+    });
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO lot_stock_movements
+          (id, product_id, lot_id, movement_type, quantity_delta,
+           inventory_value_delta_centavos, reason, created_at)
+         VALUES (?, ?, ?, 'ADJUSTMENT', -9, 0, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          activeProductId,
+          lot.id,
+          "Synthetic direct negative-balance attempt",
+          new Date().toISOString(),
+        ),
+    ).toThrow(/lot_stock_balance_cannot_be_negative/u);
+  });
+
   it("creates opening inventory with a unique SKU and records exact centavo value", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const created = await createOpeningProduct(owner);

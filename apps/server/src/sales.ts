@@ -12,6 +12,12 @@ import {
 } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
 import {
+  allocateFefo,
+  getLotBalances,
+  manilaCalendarDate,
+  writeLotMovement,
+} from "./lot-stock.js";
+import {
   cashRoundingAdjustment,
   calculateTaxLine,
   PROVISIONAL_TAX_POLICY,
@@ -43,6 +49,17 @@ const checkoutItemsSchema = z
         productId: z.uuid(),
         quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY),
         benefitApplied: z.boolean().default(false),
+        lotAllocations: z
+          .array(
+            z
+              .object({
+                lotId: z.uuid(),
+                quantity: z.number().int().positive(),
+              })
+              .strict(),
+          )
+          .optional(),
+        lotPickConfirmed: z.boolean().default(false),
       })
       .strict(),
   )
@@ -163,6 +180,7 @@ type ProductSaleRow = {
   sc_eligible: number;
   pwd_eligible: number;
   product_type: "GENERIC" | "BRANDED" | null;
+  tracks_lots: number;
   quantity_on_hand: number;
   inventory_value_centavos: number;
   is_active: number;
@@ -329,13 +347,16 @@ function calculateCart(
   items: z.infer<typeof checkoutItemsSchema>,
   policy: TaxPolicy,
   paymentMethod: "CASH" | "QR",
+  requireLotConfirmation = false,
 ) {
+  const reservedLots = new Map<string, number>();
+  const today = manilaCalendarDate();
   const lines = items.map((item) => {
     const product = db
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
                 sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
-                quantity_on_hand,
+                quantity_on_hand, tracks_lots,
                 inventory_value_centavos, is_active
          FROM products WHERE id = ?`,
       )
@@ -343,7 +364,35 @@ function calculateCart(
     if (!product || product.is_active !== 1) {
       throw new SalesError(409, "product_unavailable");
     }
-    if (item.quantity > product.quantity_on_hand) {
+    let lotAllocations: ReturnType<typeof allocateFefo> = [];
+    if (product.tracks_lots === 1) {
+      lotAllocations = allocateFefo(
+        db,
+        product.id,
+        item.quantity,
+        reservedLots,
+        today,
+      );
+      if (!lotAllocations.length)
+        throw new SalesError(409, "insufficient_saleable_lot_stock");
+      if (requireLotConfirmation) {
+        const requested = [...(item.lotAllocations ?? [])]
+          .map((allocation) => ({
+            lotId: allocation.lotId,
+            quantity: allocation.quantity,
+          }))
+          .sort((left, right) => left.lotId.localeCompare(right.lotId));
+        const assigned = [...lotAllocations].sort((left, right) =>
+          left.lotId.localeCompare(right.lotId),
+        );
+        if (
+          !item.lotPickConfirmed ||
+          JSON.stringify(requested) !== JSON.stringify(assigned)
+        ) {
+          throw new SalesError(409, "lot_pick_confirmation_required");
+        }
+      }
+    } else if (item.quantity > product.quantity_on_hand) {
       throw new SalesError(409, "insufficient_stock");
     }
     let calculation;
@@ -367,6 +416,7 @@ function calculateCart(
     return {
       product,
       quantity: item.quantity,
+      lotAllocations,
       ...calculation,
       unitPriceCentavos: product.selling_price_centavos,
     };
@@ -409,6 +459,7 @@ function calculateCart(
 }
 
 function presentCheckout(
+  db: Database.Database,
   result: ReturnType<typeof calculateCart>,
   policy: TaxPolicy,
   paymentMethod: "CASH" | "QR",
@@ -439,6 +490,17 @@ function presentCheckout(
       discount: money(line.discountCentavos),
       amountDue: money(line.amountDueCentavos),
       ruleVersion: line.ruleVersion,
+      assignedLots: line.lotAllocations.map((allocation) => {
+        const lot = getLotBalances(db, line.product.id).find(
+          (entry) => entry.id === allocation.lotId,
+        );
+        return {
+          lotId: allocation.lotId,
+          lotCode: lot?.lotCode ?? "Unknown lot",
+          expiryDate: lot?.expiryDate ?? "",
+          quantity: allocation.quantity,
+        };
+      }),
     })),
     totals: {
       subtotal: money(result.subtotalCentavos),
@@ -481,14 +543,15 @@ function createStockEvent(
     actorUserId: string;
     createdAt: string;
   },
-): void {
+): string {
+  const id = randomUUID();
   db.prepare(
     `INSERT INTO stock_events
       (id, product_id, event_type, quantity_delta, unit_cost_centavos,
        inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
      VALUES (?, ?, 'SALE', ?, ?, ?, NULL, NULL, ?, ?)`,
   ).run(
-    randomUUID(),
+    id,
     values.productId,
     values.quantityDelta,
     values.unitCostCentavos,
@@ -496,6 +559,7 @@ function createStockEvent(
     values.actorUserId,
     values.createdAt,
   );
+  return id;
 }
 
 function nextTransactionId(
@@ -611,6 +675,26 @@ export function getSavedSale(
       isPwdEligible: line.pwd_eligible_snapshot === 1,
       productType: line.product_type_snapshot,
       benefitApplied: line.benefit_applied === 1,
+      lotAllocations: (
+        db
+          .prepare(
+            `SELECT a.lot_id, l.lot_code, l.expiry_date, a.quantity
+             FROM sale_line_lot_allocations a
+             JOIN inventory_lots l ON l.id = a.lot_id
+             WHERE a.sale_line_id = ? ORDER BY l.expiry_date, l.lot_code, l.id`,
+          )
+          .all(line.id) as Array<{
+          lot_id: string;
+          lot_code: string;
+          expiry_date: string;
+          quantity: number;
+        }>
+      ).map((lot) => ({
+        lotId: lot.lot_id,
+        lotCode: lot.lot_code,
+        expiryDate: lot.expiry_date,
+        quantity: lot.quantity,
+      })),
       taxBasis: money(line.tax_basis_centavos),
       vat: money(line.vat_centavos),
       vatRemoved: money(line.vat_removed_centavos),
@@ -973,7 +1057,7 @@ export function registerSalesRoutes(
         policy,
         parsed.data.paymentMethod,
       );
-      res.json(presentCheckout(result, policy, parsed.data.paymentMethod));
+      res.json(presentCheckout(db, result, policy, parsed.data.paymentMethod));
     } catch (error) {
       if (!handleSalesError(error, res)) throw error;
     }
@@ -1020,6 +1104,7 @@ export function registerSalesRoutes(
           parsed.data.items,
           policy,
           parsed.data.paymentMethod,
+          true,
         );
         const nowDate = new Date();
         const businessDate = manilaBusinessDate(nowDate);
@@ -1130,7 +1215,7 @@ export function registerSalesRoutes(
           const unitCogs = roundedInteger(
             new Decimal(allocatedCogs).div(line.quantity),
           );
-          createStockEvent(db, {
+          const stockEventId = createStockEvent(db, {
             productId: product.id,
             quantityDelta: -line.quantity,
             unitCostCentavos: unitCogs,
@@ -1138,8 +1223,9 @@ export function registerSalesRoutes(
             actorUserId: req.user!.id,
             createdAt: now,
           });
+          const saleLineId = randomUUID();
           insertLine.run(
-            randomUUID(),
+            saleLineId,
             saleId,
             index + 1,
             line.product.id,
@@ -1163,6 +1249,61 @@ export function registerSalesRoutes(
             line.ruleVersion,
             now,
           );
+          if (line.product.tracks_lots === 1) {
+            let remainingCogs = allocatedCogs;
+            for (const [
+              lotIndex,
+              allocation,
+            ] of line.lotAllocations.entries()) {
+              const allocationCogs =
+                lotIndex === line.lotAllocations.length - 1
+                  ? remainingCogs
+                  : roundedInteger(
+                      new Decimal(allocatedCogs)
+                        .mul(allocation.quantity)
+                        .div(line.quantity),
+                    );
+              remainingCogs -= allocationCogs;
+              db.prepare(
+                `INSERT INTO sale_line_lot_allocations
+                  (id, sale_line_id, lot_id, quantity, allocated_cogs_centavos, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+              ).run(
+                randomUUID(),
+                saleLineId,
+                allocation.lotId,
+                allocation.quantity,
+                allocationCogs,
+                now,
+              );
+              writeLotMovement(db, {
+                productId: line.product.id,
+                lotId: allocation.lotId,
+                type: "SALE",
+                stockEventId,
+                saleLineId,
+                quantityDelta: -allocation.quantity,
+                inventoryValueDeltaCentavos: -allocationCogs,
+                unitCostCentavos: roundedInteger(
+                  new Decimal(allocationCogs).div(allocation.quantity),
+                ),
+                actorUserId: req.user!.id,
+                createdAt: now,
+              });
+            }
+          } else {
+            writeLotMovement(db, {
+              productId: line.product.id,
+              lotId: null,
+              type: "SALE",
+              stockEventId,
+              quantityDelta: -line.quantity,
+              inventoryValueDeltaCentavos: -allocatedCogs,
+              unitCostCentavos: unitCogs,
+              actorUserId: req.user!.id,
+              createdAt: now,
+            });
+          }
         }
 
         if (parsed.data.paymentMethod === "CASH") {
@@ -1189,6 +1330,12 @@ export function registerSalesRoutes(
             cashRoundingMode: policy.cashRoundingMode,
             cashRoundingAdjustmentCentavos:
               preview.cashRoundingAdjustmentCentavos,
+            lotAllocations: preview.lines
+              .filter((line) => line.product.tracks_lots === 1)
+              .map((line) => ({
+                productId: line.product.id,
+                allocations: line.lotAllocations,
+              })),
           },
         });
         return { id: saleId, replayed: false };

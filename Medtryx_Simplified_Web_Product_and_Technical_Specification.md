@@ -1,6 +1,6 @@
 # Medtryx — Simplified Web Product and Technical Specification
 
-**Status:** Proposed replacement scope for a first web release  
+**Status:** Current web product scope, including the three ordered follow-on bundles
 **Market:** One pharmacy in the Philippines  
 **Primary interface:** Responsive web app for a desktop, laptop, or tablet browser  
 **Source:** Simplified from [Medtryx Product and Technical Specification](Medtryx_Product_and_Technical_Specification.md)
@@ -27,10 +27,11 @@ Medtryx is a browser-based pharmacy sales and simple stock system. The owner cre
 | App | Kotlin/Compose app on a HUAWEI tablet, plus a separate iPad dashboard | One responsive web app opened in a browser on any approved device |
 | Server | Tablet hosts the data and dashboard | One store computer hosts the web app and database |
 | Product setup | Many product attributes, effective-date versions, and pack conversions | One simple SKU record with required name, unit, price, tax class, generic/branded type, and separate SC/PWD eligibility |
-| Inventory | Lot-level ledger, expiry dates, automatic lot allocation, pack conversion | One quantity on hand per SKU; simple stock-in and adjustment history |
+| Inventory | Product-level choice of lot/expiry tracking, immutable lot ledger, and FEFO sale allocation | One stock unit per SKU; untracked flow remains for products the owner marks non-expiring |
 | Acquisition cost | Lot/cost snapshots and more detailed margin reporting | Record the unit acquisition cost on each stock receipt; show a weighted-average cost and estimated unit profit per SKU |
-| Expiry | Digital lot and expiry warnings and automatic exclusion from sales | Staff check expiry on the physical product; expired items are removed with a stock adjustment |
-| Bundles and special promotions | Included in the larger plan | Deferred |
+| Expiry | Owner-visible lot balances, expiry warnings, and sale blocking for expired, quarantined, or unassigned tracked stock | Printed expiry date is the last saleable day; expired stock remains until authorized disposal |
+| Virtual bundles | Owner-approved promotion expanded into original component SKUs at checkout | No independent bundle stock or bundle SKU costing |
+| BNPC benefit | Separate 5% product-level benefit under an owner-controlled, versioned policy | Off by default; live use waits for current policy and store-procedure approval |
 | Customer devices | Special iPad pairing and tablet-hosted dashboard | Same browser app with role-based screens |
 
 The original specification remains available for later features. Its implementation-status notes do not describe the status of this proposed web app.
@@ -42,6 +43,7 @@ The original specification remains available for later features. Its implementat
 - Individual staff accounts with cashier and owner permissions.
 - Owner-only product creation and editing; cashier product search during checkout; optional barcode field.
 - Opening stock, stock received with unit acquisition cost, and manual stock adjustments.
+- Optional product-level lot/expiry tracking with owner reconciliation, FEFO sale allocation, expiry alerts, and exact-lot stock history.
 - Checkout with cash or QR as a **declared** settlement method.
 - VATable and catalog VAT-exempt products, with zero-rated products only if the owner has an approved reason to use that class.
 - SC/PWD treatment on individually selected, eligible sale lines.
@@ -51,15 +53,15 @@ The original specification remains available for later features. Its implementat
 - Owner sales reports for an inclusive Manila date range, including a month-to-date shortcut, payment-method and discount totals, current stock and estimated gross profit; CSV export for the same dates.
 - Backup, restore, and a separate test environment or test database before live use.
 
-### Deferred
+### Scope brought forward for the current web app
 
-- Lot or batch numbers, expiry-date database, automatic earliest-expiry allocation, expiry alerts, and recall-by-lot reports.
-- Packs-to-pieces conversion, multiple selling units sharing one stock pool, and lot-specific or FIFO cost allocation.
-- Bundles, promotional discounts, BNPC 5% discount, partial returns, supplier purchasing, and full accounting/expense reports.
+The owner explicitly brought exactly three follow-on features into this implementation: tracked lots and expiry, virtual sales bundles, and the distinct BNPC 5% benefit. They are separate ordered bundles in `IMPLEMENTATION_STATUS.md`; the BNPC live-sale switch stays off until its policy and store workflow receive approval.
+
+Still excluded are pack-to-piece conversion, multiple selling units sharing one stock pool, physical bundle stock, supplier purchasing, partial returns, Android/Room work, cloud hosting, and multiple branches.
 - Payment gateway, QR verification, official invoice generation, electronic invoicing, and customer-facing receipts.
 - Multi-branch synchronization, public online ordering, and a browser offline mode.
 
-Deferring a feature means staff need an operating procedure for it. In particular, the browser must not claim that it has checked a medicine's expiry or lot when it has not.
+Products explicitly marked as lot-tracked require a batch identifier and valid expiry date for opening stock, receipts, and positive adjustments. Products marked non-expiring can keep the untracked stock flow. Existing stock migrates as unallocated: Medtryx never invents a batch or expiry, and tracked unallocated units cannot sell until an owner records an auditable physical reconciliation. Lot tracking does not change weighted-average SKU costing.
 
 ## 4. Users and main screens
 
@@ -110,7 +112,7 @@ The product screen shows the current quantity. A separate stock history shows ev
 
 ### Acquisition cost and unit profit
 
-The **selling price** belongs to the SKU. The **unit acquisition cost** belongs to each opening-stock entry or receipt, because the same SKU can be bought at different prices. Keep the cost on each receipt in history; later receipts must not rewrite earlier costs or prior sales. This is cost tracking, not lot or expiry tracking: Medtryx cannot identify which physical batch a sold unit came from.
+The **selling price** belongs to the SKU. The **unit acquisition cost** belongs to each opening-stock entry or receipt, because the same SKU can be bought at different prices. Keep the cost on each receipt in history; later receipts must not rewrite earlier costs or prior sales. For tracked products, a receipt also saves its verified lot and expiry identity. COGS stays weighted-average at SKU level, so tracking does not imply lot-specific costing.
 
 For the MVP, use a **moving weighted-average cost** for units of the same SKU. When new stock arrives:
 
@@ -128,23 +130,25 @@ At sale finalization, snapshot the weighted-average cost used for each sold line
 
 For management reports, define **estimated gross profit = sale revenue after discounts and excluding output VAT, minus allocated COGS**. A regular sale with no discount may therefore show a different gross-profit figure from the inventory screen's simple price spread. The pharmacy's accountant should approve the cost basis used for acquisitions, including the treatment of supplier VAT and other purchase costs, before treating this report as an accounting figure. This choice of weighted average is consistent with the cost-formula options described in [IAS 2](https://www.ifrs.org/content/dam/ifrs/publications/pdf-standards/english/2022/issued/part-a/ias-2-inventories.pdf?bypass=on); VAT collected on behalf of government is excluded from revenue under the relevant [IFRS for SMEs revenue guidance](https://www.ifrs.org/content/dam/ifrs/supporting-implementation/smes/2025-modules/module-23.pdf).
 
-### Manual expiry procedure for the first release
+### Lot, expiry, and physical picking
 
-- On receipt, staff inspect and organize medicine batches and expiry labels outside Medtryx.
-- Before handing over a medicine, staff check the physical pack's expiry date. The web app cannot verify this.
-- Staff separate expired or damaged items from saleable stock and record the removed quantity as an adjustment with a reason.
-- Staff keep any required batch, expiry, supplier, recall, or disposal records in their existing paper or external process.
-
-This design **does not provide lot traceability or automatic expiry protection**. If the pharmacy needs those capabilities for its operations or compliance, they become a go-live requirement instead of a later enhancement.
+- The owner explicitly selects whether a product requires lot and expiry tracking. This choice is independent of product name, Generic/Branded type, and tax class.
+- Tracked stock requires a nonempty batch identifier and valid, non-expired printed expiry date on opening stock, every receipt, and each positive adjustment. Receipts preserve supplier/reference, acquisition-cost snapshot, actor, and time.
+- Existing quantity and value migrate without fabricated batch identity. The owner may reconcile legacy unallocated units after physically verifying batch, printed expiry, and quantity. Reconciliation preserves SKU quantity and total value, transfers book value to the assigned lots at the current weighted-average SKU cost, and leaves any unresolved units unallocated and unsaleable while tracking is on.
+- Checkout proposes FEFO allocation by earliest expiry with a stable tie-break. It uses the Asia/Manila calendar date, treats the printed expiry as the final saleable day, excludes expired, quarantined, and unassigned stock, and asks the cashier to confirm the physical pick. Finalization rechecks allocation in the sale transaction.
+- Owners see physical and saleable lot balances, expiry alerts, quarantine controls, exact-lot disposal, and an editable warning horizon. Reversal restores stock to its original lot only after physical verification and only while that lot remains saleable; otherwise it records a write-off.
+- Upgrade-copy migration rehearsal, physical opening-stock reconciliation, disposal and reversal practice, and backup/report checks remain release tasks.
 
 ## 7. Checkout, tax, and SC/PWD treatment
 
-1. Cashier searches or scans an existing active inventory product, **adds it to the checkout cart**, enters a whole-unit quantity, and sees the price and available stock. This does not create or edit the product in inventory.
-2. Cashier chooses `REGULAR`, `SENIOR_CITIZEN`, or `PWD` for the sale.
-3. For SC/PWD, cashier records the customer's name, ID type, and ID number, confirms checking the physical ID, and selects **only the eligible lines** receiving the benefit.
-4. Medtryx calculates and shows each line's tax, discount, and amount due, then the total.
-5. Cashier declares `CASH` or `QR`. QR is a staff declaration, not payment verification.
-6. Cashier confirms the sale. Medtryx saves the sale and stock deductions together, then assigns a unique internal transaction ID.
+1. Cashier searches or scans an existing active product or virtual bundle. A bundle expands into component products and quantities; it has no independent stock.
+2. For tracked products, checkout shows FEFO lot assignments. The cashier physically picks and confirms those lots before finalization.
+3. Each component retains its own product identity, tax class, SC/PWD/BNPC eligibility, lot allocation, and sale snapshot. Each line gets at most one selected statutory treatment.
+4. A bundle promotion is allocated proportionally across component regular-price lines. It cannot stack with BNPC; the more favorable permitted component-level treatment is shown before confirmation.
+5. For SC/PWD/BNPC, staff use protected customer identity and physical-ID confirmation. BNPC additionally requires the separate booklet/representative and prior-purchase checks from the approved store procedure; missing evidence means no BNPC benefit.
+6. Medtryx calculates and shows each line's tax, discounts, and amount due, then the total. BNPC keeps the normal VAT class and never uses the SC/PWD VAT-removal formula.
+7. Cashier declares `CASH` or `QR`. QR is a staff declaration, not payment verification.
+8. Cashier confirms the sale. Medtryx revalidates offer dates, stock, lot availability, and policy in one transaction, saves immutable component and benefit snapshots with stock deductions, then assigns a unique internal transaction ID.
 
 The pharmacy is assumed to be VAT-registered and to use VAT-inclusive prices, as stated in the original specification. The rate, approved rounding rule, and product classifications must be confirmed before live use. Use decimal/integer-centavo money calculations; never use binary floating point for stored monetary values. Store each line's price, tax class, benefit selection, calculation, and applied rule at the time of sale so later edits do not change history.
 
@@ -228,10 +232,13 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 10. A second receipt at a different cost changes the average cost but does not silently change the selling price or any earlier sale's cost snapshot.
 11. An access-restricted backup can be restored into a clean test environment with matching sales, stock, inventory-value totals, and readable authorized customer records.
 12. Staff can use checkout on the actual planned desktop/tablet browsers and the pharmacy's private network.
-13. The owner confirms the acquisition-cost basis, manual expiry/lot procedure, tax rules, invoice process, and any required system registration before live use.
+13. Legacy tracked stock can be reconciled only after owner-confirmed physical verification; migration does not invent lot identity or change quantity/value, and unallocated tracked units cannot sell.
 14. At most one cashier shift can be open store-wide, including when separate cashier accounts attempt to open simultaneously; a cashier can open after the active shift closes.
 15. Owners can review shift opener/closer accounts and times, drawer amounts and cash reconciliation; cashier accounts cannot access the owner history endpoint.
 16. With owner-approved nearest-₱0.25 cash rounding enabled, checkout rounds the combined CASH total by the documented table, leaves QR totals and line tax unchanged, and preserves the signed adjustment through sale, full reversal, expected shift cash, reports, and CSV.
+17. Tracked lots enforce Manila FEFO ordering, stable same-expiry tie-breaks, last-saleable-day expiry boundaries, exact-lot disposal, concurrent last-unit safety, and original-lot-only physically verified reversal; reports and backup/restore reconcile lot quantity and value.
+18. Virtual bundles revalidate current owner-approved configuration and dates at finalization, enforce the configured per-sale or promotion-wide limit, expand into component lines, and allocate centavos deterministically so component promotion discounts sum exactly to the approved bundle price.
+19. BNPC eligibility is explicit and independent from tax class and SC/PWD flags. BNPC is off by default; approved use is per selected line, honors verified weekly allowance and evidence, retains normal VAT treatment, does not stack with promotions, and snapshots policy and allowance.
 
 ## 11. Decisions to make before development or launch
 
@@ -245,9 +252,9 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 | Void/return policy | Owner-approved full reversal only | Before checkout release |
 | Cash variance approval threshold | Owner approval for every non-zero variance until configured | Before shift testing |
 | Backup destination and access owner | Unencrypted backup in a restricted server folder plus a separately stored copy | Before pilot |
-| Lot/expiry operations | Physical inspection and external records | Before pilot; promote to software scope if required |
+| Lot/expiry operations | Product-level tracking, owner physical reconciliation, FEFO pick confirmation, exact-lot disposal and reversal | Before live stock migration and pilot |
 | Tax, SC/PWD, rounding, and invoicing rules | Owner and professional review of current requirements | Before live use |
 
 ## 12. Later enhancements, only if the pharmacy needs them
 
-Add lot and expiry tracking when staff need batch-level traceability, automated expiry blocking, or recall reports. That future module would record lots at receipt, choose a lot at sale, and report balances and expiry by lot. Other possible additions are packs-to-pieces conversion, partial returns, promotions, bundles, supplier purchasing, cloud access, and multiple branches. Each addition should be justified by an actual workflow and tested against the simpler first-release data.
+The current follow-on implementation order is lots/expiry, virtual bundles, then BNPC. The BNPC policy and live switch remain approval-gated. Pack-to-piece conversion, physical bundle stock, partial returns, supplier purchasing, cloud access, multiple branches, and Android remain outside this web scope and require separate decisions.

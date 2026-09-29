@@ -20,6 +20,7 @@ import {
   decryptCustomerField,
 } from "./customer-data.js";
 import { openDatabase } from "./db.js";
+import { clearLotLedgerForTest } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -58,6 +59,23 @@ async function postWithCsrf(
   return agent.post(`/api${path}`).set("x-csrf-token", csrf).send(body);
 }
 
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    `${today.year}-${today.month}-${today.day}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 beforeAll(async () => {
   dataDirectory = mkdtempSync(join(tmpdir(), "medtryx-backup-db-"));
   backupDirectory = mkdtempSync(join(tmpdir(), "medtryx-backup-files-"));
@@ -74,6 +92,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearLotLedgerForTest(db);
   for (const path of [primaryDirectory, secondaryDirectory]) {
     rmSync(path, { recursive: true, force: true });
     mkdirSync(path);
@@ -193,6 +212,23 @@ describe("owner-only verified backup and restore", () => {
       transactionId: string;
       businessDate: string;
     };
+    const trackedProductResponse = await postWithCsrf(owner, "/products", {
+      sku: "SYN-BACKUP-LOT-001",
+      name: "Synthetic tracked backup item",
+      unit: "piece",
+      sellingPrice: "20.00",
+      taxClass: "VAT_EXEMPT",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      tracksLots: true,
+      openingQuantity: 2,
+      openingUnitCost: "12.00",
+      openingLotCode: "SYN-BACKUP-BATCH",
+      openingExpiryDate: manilaDayAfter(30),
+    });
+    expect(trackedProductResponse.status).toBe(201);
+    const trackedProductId = trackedProductResponse.body.product.id as string;
 
     const backupResponse = await postWithCsrf(owner, "/backups", {});
     expect(backupResponse.status, JSON.stringify(backupResponse.body)).toBe(
@@ -298,6 +334,38 @@ describe("owner-only verified backup and restore", () => {
       quantity_on_hand: 3,
       inventory_value_centavos: 10_500,
     });
+    const restoredLot = db
+      .prepare(
+        `SELECT l.id, l.lot_code, l.expiry_date,
+                sum(m.quantity_delta) AS quantity
+         FROM inventory_lots l JOIN lot_stock_movements m ON m.lot_id = l.id
+         WHERE l.product_id = ? GROUP BY l.id`,
+      )
+      .get(trackedProductId);
+    expect(restoredLot).toMatchObject({
+      lot_code: "SYN-BACKUP-BATCH",
+      expiry_date: manilaDayAfter(30),
+      quantity: 2,
+    });
+    const restoredLotId = db
+      .prepare("SELECT id FROM inventory_lots WHERE product_id = ?")
+      .get(trackedProductId) as { id: string };
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO lot_stock_movements
+          (id, product_id, lot_id, movement_type, quantity_delta,
+           inventory_value_delta_centavos, reason, created_at)
+         VALUES (?, ?, ?, 'ADJUSTMENT', -3, 0, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          trackedProductId,
+          restoredLotId.id,
+          "Synthetic restored-balance guard check",
+          new Date().toISOString(),
+        ),
+    ).toThrow(/lot_stock_balance_cannot_be_negative/u);
     const restoredSale = await signedInOwner.get(
       `/api/sales/${sale.transactionId}`,
     );
@@ -315,7 +383,7 @@ describe("owner-only verified backup and restore", () => {
       `/api/reports/daily?date=${sale.businessDate}`,
     );
     expect(report.body.report.metrics.grossSales).toBe("112.00");
-    expect(report.body.report.inventory.inventoryValue).toBe("105.00");
+    expect(report.body.report.inventory.inventoryValue).toBe("129.00");
     const restoredBackups = await signedInOwner.get("/api/backups");
     expect(restoredBackups.body.backups).toEqual(
       expect.arrayContaining([

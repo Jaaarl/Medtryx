@@ -19,9 +19,15 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const ownerPage = await ownerContext.newPage();
   await signIn(ownerPage, "owner@example.test", "SyntheticOwnerPassword-48!");
   await ownerPage.goto("/settings");
+  await expect(
+    ownerPage.getByText("An approved policy is active for future sales."),
+  ).toBeVisible();
   await ownerPage
     .getByLabel("Cash total rounding")
     .selectOption("NEAREST_25_CENTAVOS");
+  await expect(ownerPage.getByLabel("Cash total rounding")).toHaveValue(
+    "NEAREST_25_CENTAVOS",
+  );
   await expect(
     ownerPage.getByText(/nearest ₱0\.25 for the final cash total/i),
   ).toBeVisible();
@@ -34,6 +40,11 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
       "Approved policy saved and recorded in the audit history.",
     ),
   ).toBeVisible();
+  const taxPolicyResponse = await ownerContext.request.get("/api/tax-policy");
+  expect(taxPolicyResponse.status()).toBe(200);
+  expect((await taxPolicyResponse.json()).policy.cashRoundingMode).toBe(
+    "NEAREST_25_CENTAVOS",
+  );
   await ownerPage.goto("/products");
   await expect(
     ownerPage.getByRole("heading", { name: "Products", exact: true }),
@@ -44,10 +55,15 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await ownerPage.getByLabel("Product name").fill("Synthetic Pilot Lotion");
   await ownerPage.getByLabel("Generic").check();
   await ownerPage.getByLabel("Senior Citizen eligible").check();
+  await ownerPage.getByLabel("Track lots and expiry for this product").check();
   await ownerPage.getByLabel("Barcode (optional)").fill("SYN-BAR-PILOT-001");
   await ownerPage.getByLabel("Selling price (₱)").fill("10.99");
   await ownerPage.getByLabel("Counted quantity").fill("3");
   await ownerPage.getByLabel("Unit cost (₱)").fill("5.00");
+  await ownerPage.getByLabel("Opening lot / batch code").fill("SYN-OPEN-2030");
+  await ownerPage
+    .getByLabel("Expiry date (last saleable day)")
+    .fill("2030-12-31");
   await ownerPage.getByRole("button", { name: "Create product" }).click();
   await expect(ownerPage.getByText("Product created.")).toBeVisible();
   const productRow = ownerPage.getByRole("row").filter({
@@ -81,6 +97,10 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await stockRow.click();
   await ownerPage.getByLabel("Quantity received").fill("2");
   await ownerPage.getByLabel("Unit acquisition cost (₱)").fill("6.00");
+  await ownerPage.getByLabel("Lot / batch code").fill("SYN-RECEIPT-2031");
+  await ownerPage
+    .getByLabel("Expiry date (last saleable day)")
+    .fill("2031-12-31");
   await ownerPage
     .getByLabel("Reference / supplier note")
     .fill("SYNTHETIC DELIVERY");
@@ -133,6 +153,7 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     .filter({ hasText: "Synthetic Pilot Lotion" });
   await expect(catalogRow).toContainText("Generic");
   await expect(catalogRow).toContainText("₱11.99 · 5 available");
+  await expect(catalogRow).toContainText("2 saleable lot(s)");
   await expect(
     cashierPage.getByText(/average cost|inventory value|gross profit/i),
   ).toHaveCount(0);
@@ -185,6 +206,15 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(
     cashierPage.getByText(/cash rounding adjustment: ₱0\.02/),
   ).toBeVisible();
+  await expect(
+    cashierPage.getByText("FEFO pick: SYN-OPEN-2030 · exp 2030-12-31 · 2"),
+  ).toBeVisible();
+  await expect(
+    cashierPage.getByRole("button", { name: "Confirm sale" }),
+  ).toBeDisabled();
+  await cashierPage
+    .getByLabel("I picked and physically confirmed the FEFO lot(s) shown above")
+    .check();
   await cashierPage.getByRole("button", { name: "Confirm sale" }).click();
   await expect(cashierPage.getByText("Sale saved.")).toBeVisible();
   await expect(
@@ -210,6 +240,11 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
         productType: string;
         isScEligible: boolean;
         isPwdEligible: boolean;
+        lotAllocations: Array<{
+          lotCode: string;
+          expiryDate: string;
+          quantity: number;
+        }>;
       }>;
     };
   };
@@ -224,6 +259,13 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
         productType: "GENERIC",
         isScEligible: true,
         isPwdEligible: false,
+        lotAllocations: [
+          {
+            lotCode: "SYN-OPEN-2030",
+            expiryDate: "2030-12-31",
+            quantity: 2,
+          },
+        ],
       },
     ],
   });
@@ -236,7 +278,9 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   ).toContainText("3");
   const saleStockEvent = ownerPage
     .locator(".stock-history-card .inventory-table tbody tr")
-    .filter({ hasText: "SALE" });
+    .filter({
+      has: ownerPage.getByRole("cell", { name: "SALE", exact: true }),
+    });
   await expect(saleStockEvent).toContainText("SALE");
   await expect(saleStockEvent).toContainText("10.80");
 
@@ -253,6 +297,14 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   ).toBeVisible();
   await ownerPage
     .getByLabel("Returned item is sellable; restore to stock")
+    .check();
+  await expect(
+    ownerPage.getByText(/Original lot\(s\): SYN-OPEN-2030/),
+  ).toBeVisible();
+  await ownerPage
+    .getByLabel(
+      "I physically verified the returned goods match their original lot(s)",
+    )
     .check();
   await ownerPage
     .getByLabel("Reason for reversal")

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { getSavedSale } from "./sales.js";
+import { manilaCalendarDate, writeLotMovement } from "./lot-stock.js";
 
 const moneySchema = z
   .string()
@@ -28,7 +29,15 @@ const reversalSchema = z
     refundMethod: z.enum(["CASH", "QR"]),
     refundShiftId: z.uuid().optional(),
     lines: z
-      .array(z.object({ saleLineId: z.uuid(), restock: z.boolean() }).strict())
+      .array(
+        z
+          .object({
+            saleLineId: z.uuid(),
+            restock: z.boolean(),
+            lotPickVerified: z.boolean().default(false),
+          })
+          .strict(),
+      )
       .min(1)
       .max(100),
   })
@@ -588,7 +597,9 @@ export function registerReversalRoutes(
           const saleLines = db
             .prepare(
               `SELECT id, product_id, quantity, amount_due_centavos,
-                      allocated_cogs_centavos
+                      allocated_cogs_centavos,
+                      EXISTS(SELECT 1 FROM sale_line_lot_allocations a
+                             WHERE a.sale_line_id = sale_lines.id) AS lot_tracked
                FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
             )
             .all(sale.id) as {
@@ -597,15 +608,47 @@ export function registerReversalRoutes(
             quantity: number;
             amount_due_centavos: number;
             allocated_cogs_centavos: number;
+            lot_tracked: number;
           }[];
           const decisionByLine = new Map(
-            parsed.data.lines.map((line) => [line.saleLineId, line.restock]),
+            parsed.data.lines.map((line) => [line.saleLineId, line]),
           );
           if (
             saleLines.length !== parsed.data.lines.length ||
             saleLines.some((line) => !decisionByLine.has(line.id))
           ) {
             throw new ReversalError(400, "reversal_lines_must_match_sale");
+          }
+          for (const line of saleLines) {
+            const decision = decisionByLine.get(line.id)!;
+            if (line.lot_tracked === 1 && decision.restock) {
+              if (!decision.lotPickVerified)
+                throw new ReversalError(
+                  400,
+                  "lot_return_verification_required",
+                );
+              const allocations = db
+                .prepare(
+                  `SELECT l.id, l.expiry_date, l.quarantined
+                   FROM sale_line_lot_allocations a
+                   JOIN inventory_lots l ON l.id = a.lot_id
+                   WHERE a.sale_line_id = ?`,
+                )
+                .all(line.id) as Array<{
+                id: string;
+                expiry_date: string;
+                quarantined: number;
+              }>;
+              const today = manilaCalendarDate();
+              if (
+                allocations.length === 0 ||
+                allocations.some(
+                  (lot) => lot.expiry_date < today || lot.quarantined === 1,
+                )
+              ) {
+                throw new ReversalError(409, "returned_lot_not_saleable");
+              }
+            }
           }
           const lineRefundTotal = saleLines.reduce(
             (total, line) => total + line.amount_due_centavos,
@@ -681,12 +724,20 @@ export function registerReversalRoutes(
           );
           let restoredCogs = 0;
           let writeoffCogs = 0;
+          const reversalLotActions: Array<{
+            saleLineId: string;
+            lotId: string;
+            quantity: number;
+            treatment: "RESTOCK" | "WRITE_OFF";
+          }> = [];
           for (const line of saleLines) {
-            const restock = decisionByLine.get(line.id)!;
+            const decision = decisionByLine.get(line.id)!;
+            const restock = decision.restock;
             const cogsRestored = restock ? line.allocated_cogs_centavos : 0;
             const lineWriteoff = restock ? 0 : line.allocated_cogs_centavos;
+            const reversalLineId = randomUUID();
             insertLine.run(
-              randomUUID(),
+              reversalLineId,
               reversalId,
               line.id,
               line.product_id,
@@ -698,33 +749,84 @@ export function registerReversalRoutes(
               lineWriteoff,
               createdAt,
             );
-            {
-              const update = db
-                .prepare(
-                  `UPDATE products SET quantity_on_hand = quantity_on_hand + ?,
-                     inventory_value_centavos = inventory_value_centavos + ?, updated_at = ?
-                   WHERE id = ? AND quantity_on_hand <= ? AND inventory_value_centavos <= ?`,
-                )
-                .run(
-                  line.quantity,
-                  line.allocated_cogs_centavos,
-                  createdAt,
-                  line.product_id,
-                  Number.MAX_SAFE_INTEGER - line.quantity,
-                  Number.MAX_SAFE_INTEGER - line.allocated_cogs_centavos,
-                );
-              if (update.changes !== 1)
-                throw new ReversalError(409, "inventory_value_overflow");
-              insertStockEvent.run(
-                randomUUID(),
-                line.product_id,
+            const update = db
+              .prepare(
+                `UPDATE products SET quantity_on_hand = quantity_on_hand + ?,
+                   inventory_value_centavos = inventory_value_centavos + ?, updated_at = ?
+                 WHERE id = ? AND quantity_on_hand <= ? AND inventory_value_centavos <= ?`,
+              )
+              .run(
                 line.quantity,
                 line.allocated_cogs_centavos,
-                reversalTransactionId,
-                parsed.data.reason,
-                req.user!.id,
                 createdAt,
+                line.product_id,
+                Number.MAX_SAFE_INTEGER - line.quantity,
+                Number.MAX_SAFE_INTEGER - line.allocated_cogs_centavos,
               );
+            if (update.changes !== 1)
+              throw new ReversalError(409, "inventory_value_overflow");
+            const reversalStockEventId = randomUUID();
+            insertStockEvent.run(
+              reversalStockEventId,
+              line.product_id,
+              line.quantity,
+              line.allocated_cogs_centavos,
+              reversalTransactionId,
+              parsed.data.reason,
+              req.user!.id,
+              createdAt,
+            );
+            const originalLots =
+              line.lot_tracked === 1
+                ? (db
+                    .prepare(
+                      `SELECT lot_id, quantity, allocated_cogs_centavos
+                       FROM sale_line_lot_allocations WHERE sale_line_id = ?`,
+                    )
+                    .all(line.id) as Array<{
+                    lot_id: string;
+                    quantity: number;
+                    allocated_cogs_centavos: number;
+                  }>)
+                : [];
+            if (line.lot_tracked === 1 && originalLots.length === 0)
+              throw new ReversalError(409, "sale_lot_allocation_missing");
+            reversalLotActions.push(
+              ...originalLots.map((lot) => ({
+                saleLineId: line.id,
+                lotId: lot.lot_id,
+                quantity: lot.quantity,
+                treatment: restock
+                  ? ("RESTOCK" as const)
+                  : ("WRITE_OFF" as const),
+              })),
+            );
+            if (originalLots.length) {
+              for (const lot of originalLots) {
+                writeLotMovement(db, {
+                  productId: line.product_id,
+                  lotId: lot.lot_id,
+                  type: "REVERSAL",
+                  stockEventId: reversalStockEventId,
+                  reversalLineId,
+                  quantityDelta: lot.quantity,
+                  inventoryValueDeltaCentavos: lot.allocated_cogs_centavos,
+                  actorUserId: req.user!.id,
+                  createdAt,
+                });
+              }
+            } else {
+              writeLotMovement(db, {
+                productId: line.product_id,
+                lotId: null,
+                type: "REVERSAL",
+                stockEventId: reversalStockEventId,
+                reversalLineId,
+                quantityDelta: line.quantity,
+                inventoryValueDeltaCentavos: line.allocated_cogs_centavos,
+                actorUserId: req.user!.id,
+                createdAt,
+              });
             }
             if (restock) {
               restoredCogs += cogsRestored;
@@ -746,13 +848,14 @@ export function registerReversalRoutes(
                 );
               if (writeoff.changes !== 1)
                 throw new ReversalError(409, "reversal_writeoff_failed");
+              const writeOffStockEventId = randomUUID();
               db.prepare(
                 `INSERT INTO stock_events
                   (id, product_id, event_type, quantity_delta, unit_cost_centavos,
                    inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
                  VALUES (?, ?, 'WRITE_OFF', ?, NULL, ?, ?, ?, ?, ?)`,
               ).run(
-                randomUUID(),
+                writeOffStockEventId,
                 line.product_id,
                 -line.quantity,
                 -lineWriteoff,
@@ -761,6 +864,35 @@ export function registerReversalRoutes(
                 req.user!.id,
                 createdAt,
               );
+              if (originalLots.length) {
+                for (const lot of originalLots) {
+                  writeLotMovement(db, {
+                    productId: line.product_id,
+                    lotId: lot.lot_id,
+                    type: "WRITE_OFF",
+                    stockEventId: writeOffStockEventId,
+                    reversalLineId,
+                    quantityDelta: -lot.quantity,
+                    inventoryValueDeltaCentavos: -lot.allocated_cogs_centavos,
+                    actorUserId: req.user!.id,
+                    createdAt,
+                    reason: parsed.data.reason,
+                  });
+                }
+              } else {
+                writeLotMovement(db, {
+                  productId: line.product_id,
+                  lotId: null,
+                  type: "WRITE_OFF",
+                  stockEventId: writeOffStockEventId,
+                  reversalLineId,
+                  quantityDelta: -line.quantity,
+                  inventoryValueDeltaCentavos: -lineWriteoff,
+                  actorUserId: req.user!.id,
+                  createdAt,
+                  reason: parsed.data.reason,
+                });
+              }
               writeoffCogs += lineWriteoff;
             }
           }
@@ -801,6 +933,7 @@ export function registerReversalRoutes(
               writeoffCentavos: writeoffCogs,
               lineCount: saleLines.length,
               cashShiftId: cashShift?.id ?? null,
+              lotActions: reversalLotActions,
             },
           });
           return { reversalId, reversalTransactionId, createdAt, refundTotal };

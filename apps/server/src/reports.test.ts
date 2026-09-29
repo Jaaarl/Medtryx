@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { openDatabase } from "./db.js";
 import { safeCsvCell } from "./reports.js";
+import { clearLotLedgerForTest } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -44,6 +45,23 @@ async function postWithCsrf(
   return agent.post(`/api${path}`).set("x-csrf-token", csrf).send(body);
 }
 
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    `${today.year}-${today.month}-${today.day}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 beforeAll(async () => {
   dataDirectory = mkdtempSync(join(tmpdir(), "medtryx-reports-test-"));
   db = openDatabase("test", dataDirectory);
@@ -53,6 +71,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearLotLedgerForTest(db);
   db.exec(
     `DELETE FROM sale_reversal_lines;
      DELETE FROM cash_movements;
@@ -293,6 +312,45 @@ describe("daily owner reports and CSV export", () => {
       },
       inventory: { inventoryValue: "160.00" },
     });
+  });
+
+  it("includes current lot alerts and unallocated tracked units in owner reports and CSV", async () => {
+    const owner = await signIn("owner.reports@example.test", ownerPassword);
+    const created = await postWithCsrf(owner, "/products", {
+      sku: "SYN-REPORT-LOT-001",
+      name: "Synthetic report lot item",
+      unit: "piece",
+      sellingPrice: "20.00",
+      taxClass: "VAT_EXEMPT",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      tracksLots: true,
+      openingQuantity: 2,
+      openingUnitCost: "5.00",
+      openingLotCode: "SYN-REPORT-NEAR-EXPIRY",
+      openingExpiryDate: manilaDayAfter(5),
+    });
+    expect(created.status).toBe(201);
+    const today = manilaDayAfter(0);
+    const report = await owner.get(`/api/reports/daily?date=${today}`);
+    expect(report.status).toBe(200);
+    expect(report.body.report.inventory).toMatchObject({
+      expiryWarningDays: 30,
+      nearExpiryLotCount: 1,
+      trackedLots: [
+        expect.objectContaining({
+          lotCode: "SYN-REPORT-NEAR-EXPIRY",
+          physicalQuantity: 2,
+          saleableQuantity: 2,
+          alert: "NEAR_EXPIRY",
+        }),
+      ],
+    });
+    const csv = await owner.get(`/api/reports/daily.csv?date=${today}`);
+    expect(csv.status).toBe(200);
+    expect(csv.text).toContain('"Lot balance"');
+    expect(csv.text).toContain("SYN-REPORT-NEAR-EXPIRY");
   });
 
   it("reports cash rounding separately from line revenue and offsets it on reversal", async () => {

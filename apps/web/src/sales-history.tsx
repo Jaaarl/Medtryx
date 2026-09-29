@@ -39,6 +39,12 @@ type SaleLine = {
   unitPrice: string;
   amountDue: string;
   cogs: string;
+  lotAllocations: Array<{
+    lotId: string;
+    lotCode: string;
+    expiryDate: string;
+    quantity: number;
+  }>;
 };
 
 type SaleDetails = {
@@ -112,6 +118,10 @@ function requestError(error: unknown): string {
   const messages: Record<string, string> = {
     reauthentication_failed: "The owner password was not accepted.",
     sale_already_reversed: "This sale already has a saved full reversal.",
+    lot_return_verification_required:
+      "Confirm the returned items match their original lots before restocking.",
+    returned_lot_not_saleable:
+      "An original lot is expired or quarantined. Choose the write-off treatment.",
     reversal_lines_must_match_sale:
       "Review every sale line and choose whether returned items are sellable.",
     cash_refund_requires_open_shift:
@@ -161,6 +171,7 @@ export function SalesHistoryPage() {
   const [selectedId, setSelectedId] = useState("");
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [restock, setRestock] = useState<Record<string, boolean>>({});
+  const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});
   const [refundMethod, setRefundMethod] = useState<"CASH" | "QR">("CASH");
   const [refundShiftId, setRefundShiftId] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
@@ -244,6 +255,7 @@ export function SalesHistoryPage() {
               result.lines.map((line) => [line.saleLineId, false]),
             ),
           );
+          setLotVerified({});
         }
       })
       .catch(() => {
@@ -301,6 +313,7 @@ export function SalesHistoryPage() {
         lines: sale.lines.map((line) => ({
           saleLineId: line.saleLineId,
           restock: restock[line.saleLineId] === true,
+          lotPickVerified: lotVerified[line.saleLineId] === true,
         })),
       });
       setNotice(
@@ -624,20 +637,55 @@ export function SalesHistoryPage() {
                     <span>
                       Due ₱{line.amountDue} · Saved COGS ₱{line.cogs}
                     </span>
+                    {line.lotAllocations.length > 0 && (
+                      <small>
+                        Original lot(s):{" "}
+                        {line.lotAllocations
+                          .map(
+                            (lot) =>
+                              `${lot.lotCode} · exp ${lot.expiryDate} · ${lot.quantity}`,
+                          )
+                          .join("; ")}
+                      </small>
+                    )}
                     {selectedSummary?.status === "FINALIZED" && (
-                      <label className="inventory-checkbox reversal-restock-choice">
-                        <input
-                          type="checkbox"
-                          checked={restock[line.saleLineId] === true}
-                          onChange={(event) =>
-                            setRestock((current) => ({
-                              ...current,
-                              [line.saleLineId]: event.target.checked,
-                            }))
-                          }
-                        />
-                        <span>Returned item is sellable; restore to stock</span>
-                      </label>
+                      <>
+                        <label className="inventory-checkbox reversal-restock-choice">
+                          <input
+                            type="checkbox"
+                            checked={restock[line.saleLineId] === true}
+                            onChange={(event) =>
+                              setRestock((current) => ({
+                                ...current,
+                                [line.saleLineId]: event.target.checked,
+                              }))
+                            }
+                          />
+                          <span>
+                            Returned item is sellable; restore to stock
+                          </span>
+                        </label>
+                        {restock[line.saleLineId] &&
+                          line.lotAllocations.length > 0 && (
+                            <label className="inventory-checkbox reversal-restock-choice">
+                              <input
+                                type="checkbox"
+                                checked={lotVerified[line.saleLineId] === true}
+                                onChange={(event) =>
+                                  setLotVerified((current) => ({
+                                    ...current,
+                                    [line.saleLineId]: event.target.checked,
+                                  }))
+                                }
+                                required
+                              />
+                              <span>
+                                I physically verified the returned goods match
+                                their original lot(s)
+                              </span>
+                            </label>
+                          )}
+                      </>
                     )}
                   </div>
                 ))}

@@ -5,6 +5,155 @@ import { describe, expect, it } from "vitest";
 import { migrateDatabase, repositoryRoot } from "./db.js";
 
 describe("database migrations", () => {
+  it("upgrades populated stock into unallocated legacy balances without inventing lots", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      for (const name of readdirSync(migrationsDirectory)
+        .filter((entry) => /^000[1-9]_.*\.sql$/u.test(entry))
+        .sort()) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+          (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('legacy-owner', 'legacy-owner@example.test', 'synthetic-hash', 'owner', 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO products
+          (id, sku, name, unit, selling_price_centavos, tax_class,
+           sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+           quantity_on_hand, inventory_value_centavos, is_active, created_at, updated_at)
+         VALUES ('legacy-product', 'SYN-LEGACY-LOT', 'Legacy tracked later', 'piece',
+           500, 'VATABLE', 0, 0, 0, NULL, 4, 700, 1, ?, ?)`,
+      ).run(now, now);
+      for (const [eventId, eventType, qty, value, cost] of [
+        ["legacy-opening", "OPENING", 5, 1_000, 200],
+        ["legacy-sale", "SALE", -1, -300, 300],
+      ] as const) {
+        db.prepare(
+          `INSERT INTO stock_events
+            (id, product_id, event_type, quantity_delta, unit_cost_centavos,
+             inventory_value_delta_centavos, actor_user_id, created_at)
+           VALUES (?, 'legacy-product', ?, ?, ?, ?, 'legacy-owner', ?)`,
+        ).run(eventId, eventType, qty, cost, value, now);
+      }
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            "SELECT quantity_on_hand, inventory_value_centavos, tracks_lots FROM products WHERE id = 'legacy-product'",
+          )
+          .get(),
+      ).toEqual({
+        quantity_on_hand: 4,
+        inventory_value_centavos: 700,
+        tracks_lots: 0,
+      });
+      expect(
+        db
+          .prepare(
+            `SELECT sum(quantity_delta) AS quantity,
+                    sum(inventory_value_delta_centavos) AS value
+             FROM lot_stock_movements WHERE product_id = 'legacy-product' AND lot_id IS NULL`,
+          )
+          .get(),
+      ).toEqual({ quantity: 4, value: 700 });
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM inventory_lots").get(),
+      ).toEqual({ count: 0 });
+      expect(
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM stock_events WHERE product_id = 'legacy-product'",
+          )
+          .get(),
+      ).toEqual({ count: 2 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stops the lot migration without schema changes when the old stock ledger disagrees", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      for (const name of readdirSync(migrationsDirectory)
+        .filter((entry) => /^000[1-9]_.*\.sql$/u.test(entry))
+        .sort()) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+          (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('legacy-owner', 'legacy-owner@example.test', 'synthetic-hash', 'owner', 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO products
+          (id, sku, name, unit, selling_price_centavos, tax_class,
+           sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+           quantity_on_hand, inventory_value_centavos, is_active, created_at, updated_at)
+         VALUES ('legacy-mismatch', 'SYN-LEDGER-MISMATCH', 'Legacy mismatch', 'piece',
+           500, 'VATABLE', 0, 0, 0, NULL, 4, 700, 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO stock_events
+          (id, product_id, event_type, quantity_delta, unit_cost_centavos,
+           inventory_value_delta_centavos, actor_user_id, created_at)
+         VALUES ('legacy-mismatch-event', 'legacy-mismatch', 'OPENING', 3, 200, 600, 'legacy-owner', ?)`,
+      ).run(now);
+
+      expect(() => migrateDatabase(db)).toThrow(
+        /lot_expiry_requires_reconciled_stock/u,
+      );
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM schema_migrations WHERE name LIKE '0010_%'",
+          )
+          .get(),
+      ).toBeUndefined();
+      expect(
+        db
+          .prepare(
+            "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = 'legacy-mismatch'",
+          )
+          .get(),
+      ).toEqual({ quantity_on_hand: 4, inventory_value_centavos: 700 });
+      expect(
+        (db.pragma("table_info(products)") as Array<{ name: string }>).some(
+          (column) => column.name === "tracks_lots",
+        ),
+      ).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
   it("preserves legacy sale totals and defaults their rounding snapshots to none", () => {
     const db = new Database(":memory:");
     try {

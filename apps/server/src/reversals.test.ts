@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { openDatabase } from "./db.js";
+import { clearLotLedgerForTest } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -114,6 +115,23 @@ async function closeShift(
   });
 }
 
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    `${today.year}-${today.month}-${today.day}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 async function sell(
   cashier: Agent,
   productId: string,
@@ -175,6 +193,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearLotLedgerForTest(db);
   db.exec(
     `DELETE FROM sale_reversal_lines;
      DELETE FROM cash_movements;
@@ -218,6 +237,150 @@ afterAll(() => {
 });
 
 describe("owner-approved full-sale reversals and cash movements", () => {
+  it("returns verified sellable stock to its original lots and writes off a quarantined lot", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const firstProduct = await createProduct(owner, {
+      sku: "SYN-LOT-RETURN-A",
+      openingQuantity: 1,
+    });
+    const secondProduct = await createProduct(owner, {
+      sku: "SYN-LOT-RETURN-B",
+      openingQuantity: 1,
+    });
+    const firstTrackingToken = await csrfFor(owner);
+    await owner
+      .patch(`/api/products/${firstProduct.id}`)
+      .set("x-csrf-token", firstTrackingToken)
+      .send({ tracksLots: true });
+    const secondTrackingToken = await csrfFor(owner);
+    await owner
+      .patch(`/api/products/${secondProduct.id}`)
+      .set("x-csrf-token", secondTrackingToken)
+      .send({ tracksLots: true });
+    for (const [productId, lotCode] of [
+      [firstProduct.id, "SYN-ORIGINAL-A"],
+      [secondProduct.id, "SYN-ORIGINAL-B"],
+    ] as const) {
+      const token = await csrfFor(owner);
+      const reconciled = await owner
+        .post("/api/stock/lots/reconcile")
+        .set("x-csrf-token", token)
+        .send({
+          productId,
+          reason: "Synthetic original-lot verification",
+          physicalCountConfirmed: true,
+          allocations: [
+            { lotCode, expiryDate: manilaDayAfter(30), quantity: 1 },
+          ],
+        });
+      expect(reconciled.status).toBe(201);
+    }
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    expect((await openShift(cashier)).status).toBe(201);
+    const previewToken = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", previewToken)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        items: [
+          { productId: firstProduct.id, quantity: 1 },
+          { productId: secondProduct.id, quantity: 1 },
+        ],
+      });
+    expect(preview.status).toBe(200);
+    const saleToken = await csrfFor(cashier);
+    const sale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", saleToken)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        items: preview.body.lines.map(
+          (line: {
+            productId: string;
+            quantity: number;
+            assignedLots: Array<{ lotId: string; quantity: number }>;
+          }) => ({
+            productId: line.productId,
+            quantity: line.quantity,
+            lotAllocations: line.assignedLots.map((lot) => ({
+              lotId: lot.lotId,
+              quantity: lot.quantity,
+            })),
+            lotPickConfirmed: true,
+          }),
+        ),
+      });
+    expect(sale.status).toBe(201);
+    const firstLine = sale.body.sale.lines.find(
+      (line: { productId: string }) => line.productId === firstProduct.id,
+    );
+    const secondLine = sale.body.sale.lines.find(
+      (line: { productId: string }) => line.productId === secondProduct.id,
+    );
+    const quarantineToken = await csrfFor(owner);
+    const quarantine = await owner
+      .patch(`/api/stock/lots/${secondLine.lotAllocations[0].lotId}/quarantine`)
+      .set("x-csrf-token", quarantineToken)
+      .send({ quarantined: true, reason: "Synthetic damaged package hold" });
+    expect(quarantine.status).toBe(200);
+
+    const incompleteVerificationToken = await csrfFor(owner);
+    const incompleteVerification = await owner
+      .post(`/api/sales/${sale.body.sale.transactionId}/reversals`)
+      .set("x-csrf-token", incompleteVerificationToken)
+      .send({
+        ownerPassword,
+        reason: "Synthetic mixed lot return",
+        refundMethod: "QR",
+        lines: [
+          { saleLineId: firstLine.saleLineId, restock: true },
+          { saleLineId: secondLine.saleLineId, restock: false },
+        ],
+      });
+    expect(incompleteVerification.status).toBe(400);
+    expect(incompleteVerification.body.error).toBe(
+      "lot_return_verification_required",
+    );
+
+    const reversalToken = await csrfFor(owner);
+    const reversal = await owner
+      .post(`/api/sales/${sale.body.sale.transactionId}/reversals`)
+      .set("x-csrf-token", reversalToken)
+      .send({
+        ownerPassword,
+        reason: "Synthetic mixed lot return after physical check",
+        refundMethod: "QR",
+        lines: [
+          {
+            saleLineId: firstLine.saleLineId,
+            restock: true,
+            lotPickVerified: true,
+          },
+          { saleLineId: secondLine.saleLineId, restock: false },
+        ],
+      });
+    expect(reversal.status).toBe(201);
+    const lots = await owner.get("/api/stock/lots");
+    expect(
+      lots.body.lots.find(
+        (lot: { id: string }) => lot.id === firstLine.lotAllocations[0].lotId,
+      ),
+    ).toMatchObject({ quantity: 1, saleableQuantity: 1 });
+    expect(
+      lots.body.lots.find(
+        (lot: { id: string }) => lot.id === secondLine.lotAllocations[0].lotId,
+      ),
+    ).toMatchObject({ quantity: 0, quarantined: true });
+  });
+
   it.each([
     ["112.13", "0.12", "112.25", 12],
     ["112.12", "-0.12", "112.00", -12],

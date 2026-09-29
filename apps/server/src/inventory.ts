@@ -6,6 +6,13 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
+import {
+  getLotBalances,
+  manilaCalendarDate,
+  unallocatedBalance,
+  validCalendarDate,
+  writeLotMovement,
+} from "./lot-stock.js";
 
 const MAX_QUANTITY = 1_000_000;
 const PROVISIONAL_VAT_RATE_BASIS_POINTS = 1_200;
@@ -25,6 +32,11 @@ const skuSchema = z
 const unitSchema = z.string().trim().min(1).max(32);
 const optionalNoteSchema = z.string().trim().max(200).optional();
 const reasonSchema = z.string().trim().min(3).max(500);
+const lotCodeSchema = z.string().trim().min(1).max(100);
+const expiryDateSchema = z
+  .string()
+  .refine(validCalendarDate, "invalid_expiry_date");
+const supplierSchema = z.string().trim().max(160).optional();
 
 const createProductSchema = z
   .object({
@@ -35,6 +47,7 @@ const createProductSchema = z
     sellingPrice: moneySchema,
     taxClass: taxClassSchema,
     productType: productTypeSchema,
+    tracksLots: z.boolean().default(false),
     isScEligible: z.boolean(),
     isPwdEligible: z.boolean(),
     openingQuantity: z.number().int().min(0).max(MAX_QUANTITY).default(0),
@@ -47,6 +60,9 @@ const createProductSchema = z
       .nullable()
       .optional(),
     zeroCostReason: reasonSchema.optional(),
+    openingLotCode: lotCodeSchema.optional(),
+    openingExpiryDate: expiryDateSchema.optional(),
+    openingSupplier: supplierSchema,
   })
   .strict()
   .superRefine((value, context) => {
@@ -76,6 +92,21 @@ const createProductSchema = z
         message: "zero_cost_requires_reason",
       });
     }
+    if (value.tracksLots && value.openingQuantity > 0) {
+      if (!value.openingLotCode || !value.openingExpiryDate) {
+        context.addIssue({
+          code: "custom",
+          path: ["openingLotCode"],
+          message: "opening_lot_required",
+        });
+      } else if (value.openingExpiryDate < manilaCalendarDate()) {
+        context.addIssue({
+          code: "custom",
+          path: ["openingExpiryDate"],
+          message: "expired_lot_not_allowed",
+        });
+      }
+    }
   });
 
 const updateProductSchema = z
@@ -86,6 +117,7 @@ const updateProductSchema = z
     sellingPrice: moneySchema.optional(),
     taxClass: taxClassSchema.optional(),
     productType: productTypeSchema.optional(),
+    tracksLots: z.boolean().optional(),
     isScEligible: z.boolean().optional(),
     isPwdEligible: z.boolean().optional(),
     reorderLevel: z
@@ -106,6 +138,9 @@ const receiptSchema = z
     quantity: z.number().int().min(1).max(MAX_QUANTITY),
     unitCost: moneySchema,
     reference: optionalNoteSchema,
+    supplier: supplierSchema,
+    lotCode: lotCodeSchema.optional(),
+    expiryDate: expiryDateSchema.optional(),
     zeroCostReason: reasonSchema.optional(),
   })
   .strict()
@@ -132,6 +167,10 @@ const adjustmentSchema = z
     reasonType: z.enum(["COUNT_CORRECTION", "DAMAGE", "EXPIRY", "DISPOSAL"]),
     reason: reasonSchema,
     reference: optionalNoteSchema,
+    lotId: z.uuid().optional(),
+    lotCode: lotCodeSchema.optional(),
+    expiryDate: expiryDateSchema.optional(),
+    supplier: supplierSchema,
     zeroCostReason: reasonSchema.optional(),
   })
   .strict()
@@ -173,6 +212,7 @@ type ProductRow = {
   sc_eligible: number;
   pwd_eligible: number;
   product_type: "GENERIC" | "BRANDED" | null;
+  tracks_lots: number;
   quantity_on_hand: number;
   inventory_value_centavos: number;
   reorder_level: number | null;
@@ -190,6 +230,7 @@ type StockEventRow = {
   unit_cost_centavos: number | null;
   inventory_value_delta_centavos: number;
   reference: string | null;
+  supplier: string | null;
   reason: string | null;
   created_at: string;
   product_id: string;
@@ -315,6 +356,7 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
     isScEligible: row.sc_eligible === 1,
     isPwdEligible: row.pwd_eligible === 1,
     productType: row.product_type,
+    tracksLots: row.tracks_lots === 1,
     quantityOnHand: row.quantity_on_hand,
     reorderLevel: row.reorder_level,
     active: row.is_active === 1,
@@ -341,7 +383,16 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
 }
 
 function presentProduct(db: Database.Database, row: ProductRow) {
-  return withBaseCost(row, grossProfitPolicy(db));
+  const unallocated = unallocatedBalance(db, row.id);
+  const lots = row.tracks_lots === 1 ? getLotBalances(db, row.id) : [];
+  return {
+    ...withBaseCost(row, grossProfitPolicy(db)),
+    unallocatedQuantity: unallocated.quantity,
+    saleableQuantity:
+      row.tracks_lots === 1
+        ? lots.reduce((sum, lot) => sum + lot.saleableQuantity, 0)
+        : row.quantity_on_hand,
+  };
 }
 
 function baseProductSelect(): string {
@@ -468,6 +519,7 @@ function writeStockEvent(
     unitCostCents: number | null;
     inventoryValueDeltaCents: number;
     reference: string | null;
+    supplier?: string | null;
     reason: string | null;
     actorUserId: string;
     createdAt: string;
@@ -477,8 +529,8 @@ function writeStockEvent(
   db.prepare(
     `INSERT INTO stock_events
       (id, product_id, event_type, quantity_delta, unit_cost_centavos,
-       inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       inventory_value_delta_centavos, reference, supplier, reason, actor_user_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     event.productId,
@@ -487,6 +539,7 @@ function writeStockEvent(
     event.unitCostCents,
     event.inventoryValueDeltaCents,
     event.reference,
+    event.supplier ?? null,
     event.reason,
     event.actorUserId,
     event.createdAt,
@@ -504,7 +557,7 @@ function getStockEvents(
   return db
     .prepare(
       `SELECT e.id, e.event_type, e.quantity_delta, e.unit_cost_centavos,
-              e.inventory_value_delta_centavos, e.reference, e.reason, e.created_at,
+              e.inventory_value_delta_centavos, e.reference, e.supplier, e.reason, e.created_at,
               p.id AS product_id, p.sku, p.name AS product_name, u.email AS actor_email
        FROM stock_events e JOIN products p ON p.id = e.product_id
        LEFT JOIN users u ON u.id = e.actor_user_id
@@ -527,10 +580,66 @@ function presentStockEvent(event: StockEventRow) {
         : money(event.unit_cost_centavos),
     inventoryValueDelta: money(event.inventory_value_delta_centavos),
     reference: event.reference,
+    supplier: event.supplier,
     reason: event.reason,
     actorEmail: event.actor_email,
     createdAt: event.created_at,
   };
+}
+
+function getOrCreateLot(
+  db: Database.Database,
+  input: {
+    productId: string;
+    lotCode: string;
+    expiryDate: string;
+    actorUserId: string;
+    createdAt: string;
+  },
+): string {
+  const existing = db
+    .prepare(
+      "SELECT id FROM inventory_lots WHERE product_id = ? AND lot_code = ? AND expiry_date = ?",
+    )
+    .get(input.productId, input.lotCode, input.expiryDate) as
+    | { id: string }
+    | undefined;
+  if (existing) return existing.id;
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO inventory_lots
+       (id, product_id, lot_code, expiry_date, created_at, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.productId,
+    input.lotCode,
+    input.expiryDate,
+    input.createdAt,
+    input.actorUserId,
+  );
+  return id;
+}
+
+function expiryWarningDays(db: Database.Database): number {
+  const row = db
+    .prepare("SELECT value_json FROM settings WHERE key = 'inventory_expiry'")
+    .get() as { value_json: string } | undefined;
+  if (!row) return 30;
+  try {
+    const parsed = z
+      .object({ warningDays: z.number().int().min(0).max(365) })
+      .safeParse(JSON.parse(row.value_json));
+    return parsed.success ? parsed.data.warningDays : 30;
+  } catch {
+    return 30;
+  }
+}
+
+function addManilaDays(day: string, count: number): string {
+  const date = new Date(`${day}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + count);
+  return date.toISOString().slice(0, 10);
 }
 
 export function registerInventoryRoutes(
@@ -549,19 +658,38 @@ export function registerInventoryRoutes(
       .max(120)
       .safeParse(req.query.q ?? "");
     if (!parsed.success) return bodyValidation(res);
-    const products = listProducts(db, parsed.data, true).map((row) => ({
-      id: row.id,
-      sku: row.sku,
-      name: row.name,
-      barcode: row.barcode,
-      unit: row.unit,
-      sellingPrice: money(row.selling_price_centavos),
-      taxClass: row.tax_class,
-      isScEligible: row.sc_eligible === 1,
-      isPwdEligible: row.pwd_eligible === 1,
-      productType: row.product_type,
-      quantityAvailable: row.quantity_on_hand,
-    }));
+    const today = manilaCalendarDate();
+    const products = listProducts(db, parsed.data, true).map((row) => {
+      const lots =
+        row.tracks_lots === 1 ? getLotBalances(db, row.id, today) : [];
+      const quantityAvailable =
+        row.tracks_lots === 1
+          ? lots.reduce((sum, lot) => sum + lot.saleableQuantity, 0)
+          : row.quantity_on_hand;
+      return {
+        id: row.id,
+        sku: row.sku,
+        name: row.name,
+        barcode: row.barcode,
+        unit: row.unit,
+        sellingPrice: money(row.selling_price_centavos),
+        taxClass: row.tax_class,
+        isScEligible: row.sc_eligible === 1,
+        isPwdEligible: row.pwd_eligible === 1,
+        productType: row.product_type,
+        tracksLots: row.tracks_lots === 1,
+        physicalQuantity: row.quantity_on_hand,
+        quantityAvailable,
+        assignedLots: lots
+          .filter((lot) => lot.saleableQuantity > 0)
+          .map((lot) => ({
+            lotId: lot.id,
+            lotCode: lot.lotCode,
+            expiryDate: lot.expiryDate,
+            quantityAvailable: lot.saleableQuantity,
+          })),
+      };
+    });
     res.json({ products });
   });
 
@@ -572,10 +700,9 @@ export function registerInventoryRoutes(
       .max(120)
       .safeParse(req.query.q ?? "");
     if (!parsed.success) return bodyValidation(res);
-    const policy = grossProfitPolicy(db);
     res.json({
       products: listProducts(db, parsed.data).map((product) =>
-        withBaseCost(product, policy),
+        presentProduct(db, product),
       ),
     });
   });
@@ -620,10 +747,10 @@ export function registerInventoryRoutes(
         db.prepare(
           `INSERT INTO products
             (id, sku, name, barcode, unit, selling_price_centavos, tax_class,
-             sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+             sc_pwd_eligible, sc_eligible, pwd_eligible, product_type, tracks_lots,
              quantity_on_hand, inventory_value_centavos,
              reorder_level, is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         ).run(
           id,
           generatedSku,
@@ -636,6 +763,7 @@ export function registerInventoryRoutes(
           parsed.data.isScEligible ? 1 : 0,
           parsed.data.isPwdEligible ? 1 : 0,
           parsed.data.productType,
+          parsed.data.tracksLots ? 1 : 0,
           parsed.data.openingQuantity,
           inventoryValueCents,
           parsed.data.reorderLevel ?? null,
@@ -643,17 +771,38 @@ export function registerInventoryRoutes(
           now,
         );
         if (parsed.data.openingQuantity > 0 && openingCostCents !== null) {
-          writeStockEvent(db, {
+          const stockEventId = writeStockEvent(db, {
             productId: id,
             type: "OPENING",
             quantityDelta: parsed.data.openingQuantity,
             unitCostCents: openingCostCents,
             inventoryValueDeltaCents: inventoryValueCents,
             reference: null,
+            supplier: parsed.data.openingSupplier ?? null,
             reason:
               openingCostCents === 0
                 ? (parsed.data.zeroCostReason ?? null)
                 : null,
+            actorUserId: req.user!.id,
+            createdAt: now,
+          });
+          const lotId = parsed.data.tracksLots
+            ? getOrCreateLot(db, {
+                productId: id,
+                lotCode: parsed.data.openingLotCode!,
+                expiryDate: parsed.data.openingExpiryDate!,
+                actorUserId: req.user!.id,
+                createdAt: now,
+              })
+            : null;
+          writeLotMovement(db, {
+            productId: id,
+            lotId,
+            type: "OPENING",
+            stockEventId,
+            quantityDelta: parsed.data.openingQuantity,
+            inventoryValueDeltaCentavos: inventoryValueCents,
+            unitCostCentavos: openingCostCents,
             actorUserId: req.user!.id,
             createdAt: now,
           });
@@ -667,6 +816,7 @@ export function registerInventoryRoutes(
             sku: generatedSku,
             name: parsed.data.name,
             productType: parsed.data.productType,
+            tracksLots: parsed.data.tracksLots,
             isScEligible: parsed.data.isScEligible,
             isPwdEligible: parsed.data.isPwdEligible,
             openingQuantity: parsed.data.openingQuantity,
@@ -750,6 +900,24 @@ export function registerInventoryRoutes(
         changes.productType = parsed.data.productType;
       }
       if (
+        parsed.data.tracksLots !== undefined &&
+        parsed.data.tracksLots !== (current.tracks_lots === 1)
+      ) {
+        if (!parsed.data.tracksLots) {
+          const activeLot = db
+            .prepare(
+              `SELECT 1 FROM inventory_lots l
+               JOIN lot_stock_movements m ON m.lot_id = l.id
+               WHERE l.product_id = ? GROUP BY l.id
+               HAVING sum(m.quantity_delta) > 0 LIMIT 1`,
+            )
+            .get(current.id);
+          if (current.quantity_on_hand > 0 || activeLot)
+            throw new InventoryError(409, "active_lots_require_tracking");
+        }
+        changes.tracksLots = parsed.data.tracksLots;
+      }
+      if (
         nextScEligible !== (current.sc_eligible === 1) ||
         nextPwdEligible !== (current.pwd_eligible === 1)
       ) {
@@ -785,6 +953,7 @@ export function registerInventoryRoutes(
         isScEligible: ["sc_eligible", changes.isScEligible ? 1 : 0],
         isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
         productType: ["product_type", String(changes.productType)],
+        tracksLots: ["tracks_lots", changes.tracksLots ? 1 : 0],
         scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
         reorderLevel: ["reorder_level", parsed.data.reorderLevel ?? null],
         active: ["is_active", changes.active ? 1 : 0],
@@ -831,12 +1000,291 @@ export function registerInventoryRoutes(
         (row.reorder_level !== null &&
           row.quantity_on_hand <= row.reorder_level),
     );
-    const policy = grossProfitPolicy(db);
     res.json({
-      products: products.map((product) => withBaseCost(product, policy)),
+      products: products.map((product) => presentProduct(db, product)),
       lowStockCount: products.filter(isLowStock).length,
     });
   });
+
+  router.get("/stock/lots", requireAuth, requireOwner, (_req, res) => {
+    const today = manilaCalendarDate();
+    const warningDays = expiryWarningDays(db);
+    const alertDate = addManilaDays(today, warningDays);
+    const products = db
+      .prepare(
+        `SELECT id, sku, name, tracks_lots, quantity_on_hand,
+                inventory_value_centavos FROM products WHERE tracks_lots = 1
+         ORDER BY name COLLATE NOCASE`,
+      )
+      .all() as Array<{
+      id: string;
+      sku: string;
+      name: string;
+      tracks_lots: number;
+      quantity_on_hand: number;
+      inventory_value_centavos: number;
+    }>;
+    const lots = products.flatMap((product) =>
+      getLotBalances(db, product.id, today).map((lot) => ({
+        ...lot,
+        sku: product.sku,
+        productName: product.name,
+        alert:
+          lot.quantity <= 0
+            ? null
+            : lot.expiryDate < today
+              ? "EXPIRED"
+              : lot.expiryDate <= alertDate
+                ? "NEAR_EXPIRY"
+                : null,
+      })),
+    );
+    res.json({
+      asOf: today,
+      warningDays,
+      lots,
+      unallocated: products.map((product) => ({
+        productId: product.id,
+        sku: product.sku,
+        productName: product.name,
+        quantity: unallocatedBalance(db, product.id).quantity,
+      })),
+      alertCount: lots.filter((lot) => lot.alert !== null).length,
+    });
+  });
+
+  router.get(
+    "/settings/expiry-warning",
+    requireAuth,
+    requireOwner,
+    (_req, res) => {
+      res.json({ warningDays: expiryWarningDays(db) });
+    },
+  );
+
+  router.put(
+    "/settings/expiry-warning",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const parsed = z
+        .object({ warningDays: z.number().int().min(0).max(365) })
+        .strict()
+        .safeParse(req.body);
+      if (!parsed.success || !req.user) return bodyValidation(res);
+      const now = new Date().toISOString();
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO settings (key, value_json, updated_at, updated_by)
+           VALUES ('inventory_expiry', ?, ?, ?)
+           ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json,
+             updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+        ).run(JSON.stringify(parsed.data), now, req.user!.id);
+        writeAuditEvent(db, {
+          actorUserId: req.user!.id,
+          action: "inventory.expiry_warning_updated",
+          entityType: "setting",
+          entityId: "inventory_expiry",
+          details: parsed.data,
+        });
+      })();
+      res.json(parsed.data);
+    },
+  );
+
+  router.post(
+    "/stock/lots/reconcile",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const parsed = z
+        .object({
+          productId: z.uuid(),
+          reason: reasonSchema,
+          physicalCountConfirmed: z.literal(true),
+          allocations: z
+            .array(
+              z
+                .object({
+                  lotCode: lotCodeSchema,
+                  expiryDate: expiryDateSchema,
+                  quantity: z.number().int().min(1).max(MAX_QUANTITY),
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(100),
+        })
+        .strict()
+        .safeParse(req.body);
+      if (!parsed.success || !req.user) return bodyValidation(res);
+      try {
+        const reconciliationId = db.transaction(() => {
+          const product = db
+            .prepare("SELECT id, sku, tracks_lots FROM products WHERE id = ?")
+            .get(parsed.data.productId) as
+            | { id: string; sku: string; tracks_lots: number }
+            | undefined;
+          if (!product) throw new InventoryError(404, "product_not_found");
+          if (product.tracks_lots !== 1)
+            throw new InventoryError(409, "product_does_not_track_lots");
+          const current = unallocatedBalance(db, product.id);
+          const totalQuantity = parsed.data.allocations.reduce(
+            (sum, allocation) => sum + allocation.quantity,
+            0,
+          );
+          if (totalQuantity > current.quantity)
+            throw new InventoryError(409, "insufficient_unallocated_stock");
+          let remainingQuantity = totalQuantity;
+          let remainingValue =
+            totalQuantity === current.quantity
+              ? current.valueCentavos
+              : roundedInteger(
+                  new Decimal(current.valueCentavos)
+                    .mul(totalQuantity)
+                    .div(current.quantity),
+                );
+          const valueAllocations = parsed.data.allocations.map((allocation) => {
+            const valueCentavos =
+              allocation.quantity === remainingQuantity
+                ? remainingValue
+                : roundedInteger(
+                    new Decimal(remainingValue)
+                      .mul(allocation.quantity)
+                      .div(remainingQuantity),
+                  );
+            remainingQuantity -= allocation.quantity;
+            remainingValue -= valueCentavos;
+            return { ...allocation, valueCentavos };
+          });
+          const transferredValue = valueAllocations.reduce(
+            (sum, allocation) => sum + allocation.valueCentavos,
+            0,
+          );
+          const now = new Date().toISOString();
+          const id = randomUUID();
+          db.prepare(
+            `INSERT INTO lot_reconciliations
+              (id, product_id, reason, actor_user_id, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          ).run(id, product.id, parsed.data.reason, req.user!.id, now);
+          writeLotMovement(db, {
+            productId: product.id,
+            lotId: null,
+            type: "RECONCILIATION_OUT",
+            reconciliationId: id,
+            quantityDelta: -totalQuantity,
+            inventoryValueDeltaCentavos: -transferredValue,
+            unitCostCentavos:
+              totalQuantity > 0
+                ? roundedInteger(
+                    new Decimal(transferredValue).div(totalQuantity),
+                  )
+                : null,
+            reason: parsed.data.reason,
+            actorUserId: req.user!.id,
+            createdAt: now,
+          });
+          const insertLotIn = db.prepare(
+            `INSERT INTO lot_stock_movements
+              (id, product_id, lot_id, movement_type, reconciliation_id,
+               quantity_delta, inventory_value_delta_centavos,
+               unit_cost_centavos, reason,
+               actor_user_id, created_at)
+             VALUES (?, ?, ?, 'RECONCILIATION_IN', ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          for (const allocation of valueAllocations) {
+            const lotId = getOrCreateLot(db, {
+              productId: product.id,
+              lotCode: allocation.lotCode,
+              expiryDate: allocation.expiryDate,
+              actorUserId: req.user!.id,
+              createdAt: now,
+            });
+            insertLotIn.run(
+              randomUUID(),
+              product.id,
+              lotId,
+              id,
+              allocation.quantity,
+              allocation.valueCentavos,
+              roundedInteger(
+                new Decimal(allocation.valueCentavos).div(allocation.quantity),
+              ),
+              parsed.data.reason,
+              req.user!.id,
+              now,
+            );
+          }
+          writeAuditEvent(db, {
+            actorUserId: req.user!.id,
+            action: "stock.legacy_lots_reconciled",
+            entityType: "lot_reconciliation",
+            entityId: id,
+            details: {
+              sku: product.sku,
+              physicalCountConfirmed: true,
+              quantity: totalQuantity,
+              reason: parsed.data.reason,
+              allocations: valueAllocations,
+            },
+          });
+          return id;
+        })();
+        res.status(201).json({ reconciliationId, reconciliation: "recorded" });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
+
+  router.patch(
+    "/stock/lots/:id/quarantine",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const lotId = z.uuid().safeParse(req.params.id);
+      const parsed = z
+        .object({ quarantined: z.boolean(), reason: reasonSchema })
+        .strict()
+        .safeParse(req.body);
+      if (!lotId.success || !parsed.success || !req.user)
+        return bodyValidation(res);
+      const lot = db
+        .prepare(
+          "SELECT id, product_id, quarantined FROM inventory_lots WHERE id = ?",
+        )
+        .get(lotId.data) as
+        | { id: string; product_id: string; quarantined: number }
+        | undefined;
+      if (!lot) return res.status(404).json({ error: "lot_not_found" });
+      const now = new Date().toISOString();
+      db.transaction(() => {
+        db.prepare(
+          "UPDATE inventory_lots SET quarantined = ? WHERE id = ?",
+        ).run(parsed.data.quarantined ? 1 : 0, lot.id);
+        writeAuditEvent(db, {
+          actorUserId: req.user!.id,
+          action: parsed.data.quarantined
+            ? "stock.lot_quarantined"
+            : "stock.lot_released_from_quarantine",
+          entityType: "inventory_lot",
+          entityId: lot.id,
+          details: {
+            old: lot.quarantined === 1,
+            quarantined: parsed.data.quarantined,
+            reason: parsed.data.reason,
+            productId: lot.product_id,
+            at: now,
+          },
+        });
+      })();
+      res.json({ lotId: lot.id, quarantined: parsed.data.quarantined });
+    },
+  );
 
   router.get("/stock/events", requireAuth, requireOwner, (req, res) => {
     const productId = req.query.productId;
@@ -876,18 +1324,25 @@ export function registerInventoryRoutes(
         const receipt = db.transaction(() => {
           const product = db
             .prepare(
-              "SELECT id, sku, name, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+              "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
             )
             .get(parsed.data.productId) as
             | {
                 id: string;
                 sku: string;
                 name: string;
+                tracks_lots: number;
                 quantity_on_hand: number;
                 inventory_value_centavos: number;
               }
             | undefined;
           if (!product) throw new InventoryError(404, "product_not_found");
+          if (product.tracks_lots === 1) {
+            if (!parsed.data.lotCode || !parsed.data.expiryDate)
+              throw new InventoryError(400, "receipt_lot_required");
+            if (parsed.data.expiryDate < manilaCalendarDate())
+              throw new InventoryError(409, "expired_lot_not_allowed");
+          }
           const quantity = product.quantity_on_hand + parsed.data.quantity;
           const inventoryValue = product.inventory_value_centavos + valueDelta;
           if (
@@ -899,15 +1354,37 @@ export function registerInventoryRoutes(
           db.prepare(
             "UPDATE products SET quantity_on_hand = ?, inventory_value_centavos = ?, updated_at = ? WHERE id = ?",
           ).run(quantity, inventoryValue, now, product.id);
-          writeStockEvent(db, {
+          const stockEventId = writeStockEvent(db, {
             productId: product.id,
             type: "RECEIPT",
             quantityDelta: parsed.data.quantity,
             unitCostCents: costCents,
             inventoryValueDeltaCents: valueDelta,
             reference: parsed.data.reference || null,
+            supplier: parsed.data.supplier || null,
             reason:
               costCents === 0 ? (parsed.data.zeroCostReason ?? null) : null,
+            actorUserId: req.user!.id,
+            createdAt: now,
+          });
+          const lotId =
+            product.tracks_lots === 1
+              ? getOrCreateLot(db, {
+                  productId: product.id,
+                  lotCode: parsed.data.lotCode!,
+                  expiryDate: parsed.data.expiryDate!,
+                  actorUserId: req.user!.id,
+                  createdAt: now,
+                })
+              : null;
+          writeLotMovement(db, {
+            productId: product.id,
+            lotId,
+            type: "RECEIPT",
+            stockEventId,
+            quantityDelta: parsed.data.quantity,
+            inventoryValueDeltaCentavos: valueDelta,
+            unitCostCentavos: costCents,
             actorUserId: req.user!.id,
             createdAt: now,
           });
@@ -921,6 +1398,9 @@ export function registerInventoryRoutes(
               quantity: parsed.data.quantity,
               unitCostCentavos: costCents,
               reference: parsed.data.reference ?? null,
+              supplier: parsed.data.supplier ?? null,
+              lotCode: parsed.data.lotCode ?? null,
+              expiryDate: parsed.data.expiryDate ?? null,
             },
           });
           return product.id;
@@ -949,12 +1429,13 @@ export function registerInventoryRoutes(
         const adjustment = db.transaction(() => {
           const product = db
             .prepare(
-              "SELECT id, sku, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+              "SELECT id, sku, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
             )
             .get(parsed.data.productId) as
             | {
                 id: string;
                 sku: string;
+                tracks_lots: number;
                 quantity_on_hand: number;
                 inventory_value_centavos: number;
               }
@@ -963,6 +1444,59 @@ export function registerInventoryRoutes(
           const now = new Date().toISOString();
           const increasing = parsed.data.quantityDelta > 0;
           const absoluteDelta = Math.abs(parsed.data.quantityDelta);
+          let lotId: string | null = null;
+          let lotCode: string | null = parsed.data.lotCode ?? null;
+          let lotExpiryDate: string | null = parsed.data.expiryDate ?? null;
+          if (product.tracks_lots === 1) {
+            if (increasing) {
+              if (parsed.data.lotId) {
+                const lot = db
+                  .prepare(
+                    "SELECT id, lot_code, expiry_date FROM inventory_lots WHERE id = ? AND product_id = ?",
+                  )
+                  .get(parsed.data.lotId, product.id) as
+                  | { id: string; lot_code: string; expiry_date: string }
+                  | undefined;
+                if (!lot) throw new InventoryError(404, "lot_not_found");
+                lotId = lot.id;
+                lotCode = lot.lot_code;
+                lotExpiryDate = lot.expiry_date;
+              } else {
+                if (!lotCode || !lotExpiryDate)
+                  throw new InventoryError(400, "adjustment_lot_required");
+                lotId = getOrCreateLot(db, {
+                  productId: product.id,
+                  lotCode,
+                  expiryDate: lotExpiryDate,
+                  actorUserId: req.user!.id,
+                  createdAt: now,
+                });
+              }
+              if (lotExpiryDate! < manilaCalendarDate())
+                throw new InventoryError(409, "expired_lot_not_allowed");
+            } else {
+              if (!parsed.data.lotId)
+                throw new InventoryError(400, "adjustment_lot_required");
+              const lot = db
+                .prepare(
+                  "SELECT id, lot_code, expiry_date FROM inventory_lots WHERE id = ? AND product_id = ?",
+                )
+                .get(parsed.data.lotId, product.id) as
+                | { id: string; lot_code: string; expiry_date: string }
+                | undefined;
+              if (!lot) throw new InventoryError(404, "lot_not_found");
+              const balance = getLotBalances(db, product.id).find(
+                (entry) => entry.id === lot.id,
+              );
+              if (!balance || absoluteDelta > balance.quantity)
+                throw new InventoryError(409, "insufficient_lot_stock");
+              lotId = lot.id;
+              lotCode = lot.lot_code;
+              lotExpiryDate = lot.expiry_date;
+            }
+          } else if (parsed.data.lotId) {
+            throw new InventoryError(409, "product_does_not_track_lots");
+          }
           let valueDelta: number;
           let unitCost: number;
           if (increasing) {
@@ -1010,13 +1544,26 @@ export function registerInventoryRoutes(
             parsed.data.reasonType,
           );
           const reason = `${parsed.data.reasonType}: ${parsed.data.reason}`;
-          writeStockEvent(db, {
+          const stockEventId = writeStockEvent(db, {
             productId: product.id,
             type: isWriteOff ? "WRITE_OFF" : "ADJUSTMENT",
             quantityDelta: parsed.data.quantityDelta,
             unitCostCents: unitCost,
             inventoryValueDeltaCents: valueDelta,
             reference: parsed.data.reference || null,
+            supplier: parsed.data.supplier || null,
+            reason,
+            actorUserId: req.user!.id,
+            createdAt: now,
+          });
+          writeLotMovement(db, {
+            productId: product.id,
+            lotId,
+            type: isWriteOff ? "WRITE_OFF" : "ADJUSTMENT",
+            stockEventId,
+            quantityDelta: parsed.data.quantityDelta,
+            inventoryValueDeltaCentavos: valueDelta,
+            unitCostCentavos: unitCost,
             reason,
             actorUserId: req.user!.id,
             createdAt: now,
@@ -1032,6 +1579,9 @@ export function registerInventoryRoutes(
               inventoryValueDeltaCentavos: valueDelta,
               reason,
               reference: parsed.data.reference ?? null,
+              lotId,
+              lotCode,
+              expiryDate: lotExpiryDate,
             },
           });
           return product.id;
@@ -1069,6 +1619,7 @@ function currentValues(
       isScEligible: row.sc_eligible === 1,
       isPwdEligible: row.pwd_eligible === 1,
       productType: row.product_type,
+      tracksLots: row.tracks_lots === 1,
       reorderLevel: row.reorder_level,
       active: row.is_active === 1,
     };

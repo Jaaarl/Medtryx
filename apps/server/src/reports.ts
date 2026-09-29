@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import express from "express";
 import { z } from "zod";
 import { requireAuthentication, requireRole } from "./auth.js";
+import { getLotBalances, manilaCalendarDate } from "./lot-stock.js";
 
 const dateSchema = z
   .string()
@@ -237,7 +238,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
 
   const productRows = db
     .prepare(
-      `SELECT id, sku, name, unit, quantity_on_hand, reorder_level,
+      `SELECT id, sku, name, unit, tracks_lots, quantity_on_hand, reorder_level,
               inventory_value_centavos, is_active
        FROM products ORDER BY name COLLATE NOCASE`,
     )
@@ -246,6 +247,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     sku: string;
     name: string;
     unit: string;
+    tracks_lots: number;
     quantity_on_hand: number;
     reorder_level: number | null;
     inventory_value_centavos: number;
@@ -263,6 +265,71 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     (sum, product) => sum + BigInt(product.inventory_value_centavos),
     0n,
   );
+  const asOf = manilaCalendarDate();
+  const warningSetting = db
+    .prepare("SELECT value_json FROM settings WHERE key = 'inventory_expiry'")
+    .get() as { value_json: string } | undefined;
+  let warningDays = 30;
+  if (warningSetting) {
+    try {
+      const configured = JSON.parse(warningSetting.value_json) as {
+        warningDays?: unknown;
+      };
+      if (
+        typeof configured.warningDays === "number" &&
+        Number.isInteger(configured.warningDays) &&
+        configured.warningDays >= 0 &&
+        configured.warningDays <= 365
+      )
+        warningDays = configured.warningDays;
+    } catch {
+      warningDays = 30;
+    }
+  }
+  const warningEnd = new Date(`${asOf}T00:00:00.000Z`);
+  warningEnd.setUTCDate(warningEnd.getUTCDate() + warningDays);
+  const warningEndDay = warningEnd.toISOString().slice(0, 10);
+  const trackedLots = productRows
+    .filter((product) => product.tracks_lots === 1)
+    .flatMap((product) =>
+      getLotBalances(db, product.id, asOf).map((lot) => ({
+        sku: product.sku,
+        productName: product.name,
+        lotCode: lot.lotCode,
+        expiryDate: lot.expiryDate,
+        physicalQuantity: lot.quantity,
+        saleableQuantity: lot.saleableQuantity,
+        quarantined: lot.quarantined,
+        alert:
+          lot.quantity <= 0
+            ? null
+            : lot.expiryDate < asOf
+              ? "EXPIRED"
+              : lot.expiryDate <= warningEndDay
+                ? "NEAR_EXPIRY"
+                : null,
+      })),
+    );
+  const unallocatedTrackedStock = productRows
+    .filter((product) => product.tracks_lots === 1)
+    .map((product) => {
+      const row = db
+        .prepare(
+          `SELECT coalesce(sum(quantity_delta), 0) AS quantity
+           FROM lot_stock_movements WHERE product_id = ? AND lot_id IS NULL`,
+        )
+        .get(product.id) as { quantity: number };
+      return { sku: product.sku, name: product.name, quantity: row.quantity };
+    })
+    .filter((product) => product.quantity !== 0);
+  const lotWriteOffRows = db
+    .prepare(
+      `SELECT coalesce(sum(-quantity_delta), 0) AS quantity
+       FROM lot_stock_movements WHERE lot_id IS NOT NULL
+         AND movement_type = 'WRITE_OFF' AND quantity_delta < 0
+         AND created_at >= ? AND created_at < ?`,
+    )
+    .get(window.start, window.end) as { quantity: number };
   const reversalCount = reversalRows.length;
   const total = (key: string) => money(totals[key] ?? 0n);
   const estimatedGrossProfit =
@@ -292,6 +359,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       cashOut: total("cashOut"),
       cogs: total("cogs"),
       writeOffValue: total("writeOffValue"),
+      lotWriteOffQuantity: String(lotWriteOffRows.quantity),
       netCashImpact: money(
         (totals.cashSales ?? 0n) -
           (totals.cashRefunds ?? 0n) +
@@ -313,6 +381,15 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
         reorderLevel: product.reorder_level,
         inventoryValue: money(BigInt(product.inventory_value_centavos)),
       })),
+      asOf,
+      expiryWarningDays: warningDays,
+      trackedLots,
+      unallocatedTrackedStock,
+      expiredLotCount: trackedLots.filter((lot) => lot.alert === "EXPIRED")
+        .length,
+      nearExpiryLotCount: trackedLots.filter(
+        (lot) => lot.alert === "NEAR_EXPIRY",
+      ).length,
     },
     notes: [
       "Net sales exclude output VAT and subtract line discounts and full reversals recorded during the selected Manila business-date range.",
@@ -321,6 +398,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       "Cash and QR are staff-declared settlement methods, not payment verification.",
       "Cash rounding adjustments are reported separately and do not change saved line tax, net-sales, or estimated gross-profit figures.",
       "Inventory value and low-stock counts show current balances, not historical end-of-day balances.",
+      "Lot balances and expiry alerts are current Manila-date balances; unallocated legacy units are excluded from saleable stock until physically reconciled.",
     ],
   };
 }
@@ -350,12 +428,23 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ["Payments", "Cash-out", report.metrics.cashOut],
     ["Inventory", "COGS", report.metrics.cogs],
     ["Inventory", "Write-off value", report.metrics.writeOffValue],
+    ["Inventory", "Lot disposal quantity", report.metrics.lotWriteOffQuantity],
     ["Profit", "Estimated gross profit", report.metrics.estimatedGrossProfit],
     ["Inventory", "Current inventory value", report.inventory.inventoryValue],
     [
       "Inventory",
       "Current low-stock product count",
       report.inventory.lowStockCount,
+    ],
+    [
+      "Inventory",
+      "Expired lot count (current)",
+      report.inventory.expiredLotCount,
+    ],
+    [
+      "Inventory",
+      "Near-expiry lot count (current)",
+      report.inventory.nearExpiryLotCount,
     ],
     ["Sales", "Full reversal count", report.reversalCount],
   ];
@@ -364,6 +453,20 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
       "Low stock",
       `${product.sku} ${product.name} (${product.unit})`,
       `${product.quantityOnHand} / reorder ${product.reorderLevel}`,
+    ]);
+  }
+  for (const lot of report.inventory.trackedLots) {
+    rows.push([
+      "Lot balance",
+      `${lot.sku} ${lot.productName} batch ${lot.lotCode} exp ${lot.expiryDate}`,
+      `physical ${lot.physicalQuantity} / saleable ${lot.saleableQuantity} / ${lot.alert ?? (lot.quarantined ? "QUARANTINED" : "OK")}`,
+    ]);
+  }
+  for (const product of report.inventory.unallocatedTrackedStock) {
+    rows.push([
+      "Unallocated tracked stock",
+      `${product.sku} ${product.name}`,
+      product.quantity,
     ]);
   }
   return [["Section", "Metric", "Value"], ...rows]

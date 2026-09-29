@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { decryptCustomerField } from "./customer-data.js";
 import { openDatabase } from "./db.js";
+import { clearLotLedgerForTest } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -29,6 +30,7 @@ let secondCashierHash: string;
 type Agent = ReturnType<typeof request.agent>;
 
 async function seedUsers(): Promise<void> {
+  clearLotLedgerForTest(db);
   db.exec(
     "DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
   );
@@ -165,6 +167,23 @@ async function postSale(
         },
       ],
     });
+}
+
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    `${today.year}-${today.month}-${today.day}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 beforeAll(async () => {
@@ -846,6 +865,275 @@ describe("checkout, sales, and cashier shifts", () => {
           .get() as { count: number }
       ).count,
     ).toBe(1);
+  });
+
+  it("assigns tracked lines FEFO with a stable same-expiry tie-break and rechecks the lots atomically", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-FEFO-001",
+      openingQuantity: 1,
+      openingUnitCost: "10.00",
+    });
+    const trackingCsrf = await csrfFor(owner);
+    const tracking = await owner
+      .patch(`/api/products/${product.id}`)
+      .set("x-csrf-token", trackingCsrf)
+      .send({ tracksLots: true });
+    expect(tracking.status).toBe(200);
+    const ownerCsrf = await csrfFor(owner);
+    const first = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        productId: product.id,
+        quantity: 1,
+        unitCost: "30.00",
+        lotCode: "SYN-BATCH-B",
+        expiryDate: manilaDayAfter(20),
+      });
+    expect(first.status).toBe(201);
+    const secondCsrf = await csrfFor(owner);
+    const second = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", secondCsrf)
+      .send({
+        productId: product.id,
+        quantity: 1,
+        unitCost: "20.00",
+        lotCode: "SYN-BATCH-A",
+        expiryDate: manilaDayAfter(20),
+      });
+    expect(second.status).toBe(201);
+
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const csrf = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        items: [{ productId: product.id, quantity: 2 }],
+      });
+    expect(preview.status).toBe(200);
+    expect(preview.body.lines[0].assignedLots).toEqual([
+      expect.objectContaining({ lotCode: "SYN-BATCH-A", quantity: 1 }),
+      expect.objectContaining({ lotCode: "SYN-BATCH-B", quantity: 1 }),
+    ]);
+
+    const unconfirmedToken = await csrfFor(cashier);
+    const unconfirmed = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", unconfirmedToken)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        items: [
+          {
+            productId: product.id,
+            quantity: 2,
+            lotAllocations: preview.body.lines[0].assignedLots.map(
+              (lot: { lotId: string; quantity: number }) => ({
+                lotId: lot.lotId,
+                quantity: lot.quantity,
+              }),
+            ),
+            lotPickConfirmed: false,
+          },
+        ],
+      });
+    expect(unconfirmed.status, JSON.stringify(unconfirmed.body)).toBe(409);
+    expect(unconfirmed.body.error).toBe("lot_pick_confirmation_required");
+
+    const saleToken = await csrfFor(cashier);
+    const sale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", saleToken)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        items: [
+          {
+            productId: product.id,
+            quantity: 2,
+            lotAllocations: preview.body.lines[0].assignedLots.map(
+              (lot: { lotId: string; quantity: number }) => ({
+                lotId: lot.lotId,
+                quantity: lot.quantity,
+              }),
+            ),
+            lotPickConfirmed: true,
+          },
+        ],
+      });
+    expect(sale.status).toBe(201);
+    expect(sale.body.sale.lines[0].lotAllocations).toHaveLength(2);
+    expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
+      quantityOnHand: 1,
+      unallocatedQuantity: 1,
+      saleableQuantity: 0,
+      inventoryValue: "20.00",
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT sum(quantity_delta) AS quantity, sum(inventory_value_delta_centavos) AS value FROM lot_stock_movements WHERE product_id = ?",
+        )
+        .get(product.id),
+    ).toEqual({ quantity: 1, value: 2_000 });
+  });
+
+  it("excludes both expired lots and unallocated tracked units from checkout availability", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const product = await createProduct(owner, {
+      sku: "SYN-EXPIRED-001",
+      openingQuantity: 2,
+    });
+    const ownerCsrf = await csrfFor(owner);
+    await owner
+      .patch(`/api/products/${product.id}`)
+      .set("x-csrf-token", ownerCsrf)
+      .send({ tracksLots: true });
+    const reconcileCsrf = await csrfFor(owner);
+    const reconcile = await owner
+      .post("/api/stock/lots/reconcile")
+      .set("x-csrf-token", reconcileCsrf)
+      .send({
+        productId: product.id,
+        reason: "Synthetic verified physical expiry test",
+        physicalCountConfirmed: true,
+        allocations: [
+          {
+            lotCode: "SYN-ALREADY-EXPIRED",
+            expiryDate: manilaDayAfter(-1),
+            quantity: 1,
+          },
+        ],
+      });
+    expect(reconcile.status).toBe(201);
+    const reconcileTodayToken = await csrfFor(owner);
+    const reconcileToday = await owner
+      .post("/api/stock/lots/reconcile")
+      .set("x-csrf-token", reconcileTodayToken)
+      .send({
+        productId: product.id,
+        reason: "Synthetic printed expiry date is today",
+        physicalCountConfirmed: true,
+        allocations: [
+          {
+            lotCode: "SYN-EXPIRES-TODAY",
+            expiryDate: manilaDayAfter(0),
+            quantity: 1,
+          },
+        ],
+      });
+    expect(reconcileToday.status).toBe(201);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const catalog = await cashier.get("/api/catalog");
+    expect(catalog.body.products[0]).toMatchObject({
+      physicalQuantity: 2,
+      quantityAvailable: 1,
+      assignedLots: [expect.objectContaining({ lotCode: "SYN-EXPIRES-TODAY" })],
+    });
+    const previewToken = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", previewToken)
+      .send({
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(preview.status).toBe(200);
+    expect(preview.body.lines[0].assignedLots).toEqual([
+      expect.objectContaining({
+        lotCode: "SYN-EXPIRES-TODAY",
+        expiryDate: manilaDayAfter(0),
+        quantity: 1,
+      }),
+    ]);
+    const tooManyToken = await csrfFor(cashier);
+    const tooMany = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", tooManyToken)
+      .send({
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 2 }],
+      });
+    expect(tooMany.status).toBe(409);
+    expect(tooMany.body.error).toBe("insufficient_saleable_lot_stock");
+  });
+
+  it("serializes two tracked sales competing for the same final lot unit", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-LOT-LAST-001",
+      openingQuantity: 0,
+      openingUnitCost: undefined,
+      tracksLots: true,
+    });
+    const receiptToken = await csrfFor(owner);
+    const receipt = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", receiptToken)
+      .send({
+        productId: product.id,
+        quantity: 1,
+        unitCost: "40.00",
+        lotCode: "SYN-LOT-LAST",
+        expiryDate: manilaDayAfter(20),
+      });
+    expect(receipt.status, JSON.stringify(receipt.body)).toBe(201);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const previewToken = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", previewToken)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(preview.status).toBe(200);
+    const lots = preview.body.lines[0].assignedLots.map(
+      (lot: { lotId: string; quantity: number }) => ({
+        lotId: lot.lotId,
+        quantity: lot.quantity,
+      }),
+    );
+    const concurrentSaleToken = await csrfFor(cashier);
+    const save = () =>
+      cashier
+        .post("/api/sales")
+        .set("x-csrf-token", concurrentSaleToken)
+        .send({
+          benefitType: "REGULAR",
+          paymentMethod: "QR",
+          requestKey: randomUUID(),
+          items: [
+            {
+              productId: product.id,
+              quantity: 1,
+              lotAllocations: lots,
+              lotPickConfirmed: true,
+            },
+          ],
+        });
+    const [first, second] = await Promise.all([save(), save()]);
+    expect(
+      [first.status, second.status].filter((status) => status === 201),
+    ).toHaveLength(1);
+    expect(
+      [first.status, second.status].filter((status) => status === 409),
+    ).toHaveLength(1);
+    expect(
+      (await owner.get("/api/products")).body.products[0].saleableQuantity,
+    ).toBe(0);
   });
 
   it("rolls sale, stock, value, and ID back together after a database failure", async () => {
