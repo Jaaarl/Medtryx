@@ -57,7 +57,7 @@ The repository baseline already exists as commit `1e05374` (`Initial Docs`), con
 
 ## Long-horizon feedback follow-up
 
-- Feedback F3/F4 complete in code: migration 0008 enforces one open shift across the whole store, checkout blocks a second cashier while it is open, and owners have a shift-history screen with opening/closing accounts and times plus drawer sales and reconciliation. API and browser authorization are covered.
+- Feedback F3/F4 complete in code: migration 0008 enforces one open shift across the whole store, checkout blocks a second cashier while it is open, and owners have a shift-history screen with opening/closing accounts and times plus drawer sales and reconciliation. API and browser authorization are covered. Bundle commit: `2583517`.
 - Synthetic verification: focused migration/sales tests 14 passed and the full unit/API suite passes 50 tests; the browser suite passes 4 Chromium flows; typecheck, lint, format check, and build pass. Work ran on Node.js 22.17.0; repeat on the target Node.js 24 runtime before release.
 - Existing database upgrade gate: migration 0008 fails atomically if two or more shifts are open. It does not alter or close them. The owner must reconcile real cash drawers and close the corresponding shifts before retrying against a verified backup.
 - F5 date-range reports remain the next software bundle. Earlier progress notes that name another next bundle are historical and superseded by this follow-up.
