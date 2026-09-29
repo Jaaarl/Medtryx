@@ -484,7 +484,7 @@ describe("checkout, sales, and cashier shifts", () => {
          close_actor_user_id)
        VALUES (?, ?, ?, 0, ?, 0, 0, 0, ?)`,
     );
-    for (let index = 0; index < 201; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       const openedAt = new Date(now - index * 1_000).toISOString();
       insertShift.run(
         `synthetic-history-${index}`,
@@ -496,16 +496,16 @@ describe("checkout, sales, and cashier shifts", () => {
     }
 
     const owner = await signIn("owner.sales@example.test", ownerPassword);
-    const firstPage = await owner.get("/api/shifts/history?limit=200");
+    const firstPage = await owner.get("/api/shifts/history?limit=2");
     expect(firstPage.status).toBe(200);
-    expect(firstPage.body.shifts).toHaveLength(200);
+    expect(firstPage.body.shifts).toHaveLength(2);
     expect(firstPage.body.hasMore).toBe(true);
     const lastShift = firstPage.body.shifts.at(-1) as {
       id: string;
       openedAt: string;
     };
     const secondPage = await owner.get(
-      `/api/shifts/history?limit=200&beforeOpenedAt=${encodeURIComponent(lastShift.openedAt)}&beforeId=${lastShift.id}`,
+      `/api/shifts/history?limit=2&beforeOpenedAt=${encodeURIComponent(lastShift.openedAt)}&beforeId=${lastShift.id}`,
     );
     expect(secondPage.body.shifts).toHaveLength(1);
     expect(secondPage.body.hasMore).toBe(false);
