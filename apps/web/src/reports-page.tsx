@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { api } from "./api";
 
-type DailyReport = {
+type SalesReport = {
   businessDate: string;
+  startDate: string;
+  endDate: string;
   timeZone: string;
   generatedAt: string;
   metrics: Record<string, string>;
@@ -81,22 +83,27 @@ const metricGroups: Array<{
   },
 ];
 
-async function fetchDailyReport(day: string): Promise<DailyReport> {
-  const result = await api.get<{ report: DailyReport }>(
-    `/reports/daily?date=${encodeURIComponent(day)}`,
+async function fetchReport(
+  startDate: string,
+  endDate: string,
+): Promise<SalesReport> {
+  const query = new URLSearchParams({ startDate, endDate });
+  const result = await api.get<{ report: SalesReport }>(
+    `/reports/range?${query}`,
   );
   return result.report;
 }
 
 export function ReportsPage() {
-  const [date, setDate] = useState(todayInManila);
-  const [report, setReport] = useState<DailyReport | null>(null);
+  const [startDate, setStartDate] = useState(todayInManila);
+  const [endDate, setEndDate] = useState(todayInManila);
+  const [report, setReport] = useState<SalesReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function loadReport(selectedDate = date) {
+  async function loadReport(selectedStart = startDate, selectedEnd = endDate) {
     try {
-      setReport(await fetchDailyReport(selectedDate));
+      setReport(await fetchReport(selectedStart, selectedEnd));
       setError("");
     } catch {
       setReport(null);
@@ -108,7 +115,7 @@ export function ReportsPage() {
 
   useEffect(() => {
     let active = true;
-    void fetchDailyReport(date)
+    void fetchReport(startDate, endDate)
       .then((nextReport) => {
         if (active) {
           setReport(nextReport);
@@ -127,12 +134,20 @@ export function ReportsPage() {
     return () => {
       active = false;
     };
-  }, [date]);
+  }, [startDate, endDate]);
 
   function downloadCsv() {
     window.location.assign(
-      `/api/reports/daily.csv?date=${encodeURIComponent(date)}`,
+      `/api/reports/range.csv?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
     );
+  }
+
+  function selectMonthToDate() {
+    const today = todayInManila();
+    setLoading(true);
+    setError("");
+    setStartDate(`${today.slice(0, 7)}-01`);
+    setEndDate(today);
   }
 
   const metricValue = (key: string) =>
@@ -145,24 +160,46 @@ export function ReportsPage() {
       <div className="page-heading">
         <div>
           <div className="eyebrow">OWNER REPORTING</div>
-          <h1>Daily reports</h1>
-          <p>Saved sales, tax, cash declarations, and inventory estimates.</p>
+          <h1>Sales reports</h1>
+          <p>Review saved sales and cash activity for any Manila date range.</p>
         </div>
         <div className="report-actions">
           <label className="report-date-field">
-            <span className="field-label">Manila business date</span>
+            <span className="field-label">Start date</span>
             <input
-              aria-label="Manila business date"
+              aria-label="Start date"
               className="text-input"
               type="date"
-              value={date}
+              value={startDate}
               onChange={(event) => {
                 setLoading(true);
                 setError("");
-                setDate(event.target.value);
+                setStartDate(event.target.value);
               }}
             />
           </label>
+          <label className="report-date-field">
+            <span className="field-label">End date</span>
+            <input
+              aria-label="End date"
+              className="text-input"
+              type="date"
+              value={endDate}
+              onChange={(event) => {
+                setLoading(true);
+                setError("");
+                setEndDate(event.target.value);
+              }}
+            />
+          </label>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={selectMonthToDate}
+            disabled={loading}
+          >
+            Month to date
+          </button>
           <button
             className="button button-secondary"
             type="button"
@@ -191,12 +228,12 @@ export function ReportsPage() {
           {error}
         </div>
       )}
-      {loading && <div className="table-loading">Loading daily report…</div>}
+      {loading && <div className="table-loading">Loading report…</div>}
       {report && !loading && (
         <>
           <div className="report-summary-strip">
             <div>
-              <span>REPORT DATE</span>
+              <span>REPORT PERIOD</span>
               <strong>{report.businessDate}</strong>
             </div>
             <div>
@@ -233,7 +270,9 @@ export function ReportsPage() {
             <div className="card-heading">
               <div>
                 <h2>Current low stock</h2>
-                <p>Current balances shown with today’s selected report.</p>
+                <p>
+                  Current balances shown beside the selected period's activity.
+                </p>
               </div>
               <span className="count-chip">
                 {report.inventory.lowStock.length} products

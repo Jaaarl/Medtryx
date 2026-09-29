@@ -111,6 +111,20 @@ describe("daily owner reports and CSV export", () => {
     expect((await request(app).get("/api/reports/daily")).status).toBe(401);
     expect((await cashier.get("/api/reports/daily")).status).toBe(403);
     expect((await cashier.get("/api/reports/daily.csv")).status).toBe(403);
+    expect(
+      (
+        await cashier.get(
+          "/api/reports/range?startDate=2026-01-01&endDate=2026-01-31",
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await cashier.get(
+          "/api/reports/range.csv?startDate=2026-01-01&endDate=2026-01-31",
+        )
+      ).status,
+    ).toBe(403);
 
     const configured = await postWithCsrf(owner, "/settings/tax-policy", {
       confirmApproved: true,
@@ -183,6 +197,13 @@ describe("daily owner reports and CSV export", () => {
         ],
       },
     });
+    const sameDayRange = await owner.get(
+      `/api/reports/range?startDate=${sale.businessDate}&endDate=${sale.businessDate}`,
+    );
+    expect(sameDayRange.status).toBe(200);
+    expect(sameDayRange.body.report.metrics).toEqual(
+      reportResponse.body.report.metrics,
+    );
     const line = db
       .prepare(
         `SELECT quantity, unit_price_centavos, tax_basis_centavos, vat_centavos,
@@ -274,10 +295,157 @@ describe("daily owner reports and CSV export", () => {
     });
   });
 
-  it("rejects invalid business dates", async () => {
+  it("aggregates inclusive Manila date ranges and exports the same period", async () => {
+    const owner = await signIn("owner.reports@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.reports@example.test",
+      cashierPassword,
+    );
+    const configured = await postWithCsrf(owner, "/settings/tax-policy", {
+      confirmApproved: true,
+      version: "SYNTHETIC-RANGE-REPORT-TAX",
+      vatRateBasisPoints: 1_200,
+      seniorDiscountBasisPoints: 2_000,
+      pwdDiscountBasisPoints: 2_000,
+      vatInclusivePrices: true,
+      allowZeroRated: false,
+      roundingMode: "HALF_UP",
+      approvalReference: "Synthetic date-range report test policy",
+      costBasisDescription: "Synthetic weighted-average acquisition cost",
+    });
+    expect(configured.status).toBe(200);
+    const productResponse = await postWithCsrf(owner, "/products", {
+      sku: "SYN-RANGE-001",
+      name: "Synthetic range report product",
+      unit: "piece",
+      sellingPrice: "112.00",
+      taxClass: "VATABLE",
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
+      openingQuantity: 5,
+      openingUnitCost: "40.00",
+    });
+    expect(productResponse.status).toBe(201);
+    const productId = productResponse.body.product.id as string;
+    expect(
+      (await postWithCsrf(cashier, "/shifts", { openingCash: "100.00" }))
+        .status,
+    ).toBe(201);
+
+    async function createSale(paymentMethod: "CASH" | "QR") {
+      const response = await postWithCsrf(cashier, "/sales", {
+        benefitType: "REGULAR",
+        items: [{ productId, quantity: 1 }],
+        paymentMethod,
+        requestKey: randomUUID(),
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      return response.body.sale as { transactionId: string };
+    }
+
+    const outsideBefore = await createSale("CASH");
+    const startSale = await createSale("QR");
+    const endSale = await createSale("CASH");
+    const outsideAfter = await createSale("QR");
+    const setBusinessDate = db.prepare(
+      "UPDATE sales SET business_date = ? WHERE transaction_id = ?",
+    );
+    setBusinessDate.run("2026-04-29", outsideBefore.transactionId);
+    setBusinessDate.run("2026-04-30", startSale.transactionId);
+    setBusinessDate.run("2026-05-01", endSale.transactionId);
+    setBusinessDate.run("2026-05-02", outsideAfter.transactionId);
+
+    const saleDetails = await owner.get(
+      `/api/sales/${startSale.transactionId}`,
+    );
+    const reversal = await postWithCsrf(
+      owner,
+      `/sales/${startSale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "Synthetic cross-day report reversal",
+        refundMethod: "QR",
+        lines: [
+          {
+            saleLineId: saleDetails.body.sale.lines[0].saleLineId,
+            restock: true,
+          },
+        ],
+      },
+    );
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    db.prepare("UPDATE sale_reversals SET created_at = ? WHERE id = ?").run(
+      "2026-05-01T04:00:00.000Z",
+      reversal.body.reversal.id,
+    );
+
+    const rangePath =
+      "/api/reports/range?startDate=2026-04-30&endDate=2026-05-01";
+    const rangeResponse = await owner.get(rangePath);
+    expect(rangeResponse.status).toBe(200);
+    expect(rangeResponse.body.report).toMatchObject({
+      businessDate: "2026-04-30 to 2026-05-01",
+      startDate: "2026-04-30",
+      endDate: "2026-05-01",
+      reversalCount: 1,
+      metrics: {
+        grossSales: "112.00",
+        cashSales: "112.00",
+        qrSales: "112.00",
+        qrRefunds: "112.00",
+        netCashImpact: "112.00",
+        estimatedGrossProfit: "60.00",
+      },
+    });
+    const firstDay = await owner.get("/api/reports/daily?date=2026-04-30");
+    const lastDay = await owner.get("/api/reports/daily?date=2026-05-01");
+    expect(firstDay.body.report.metrics.grossSales).toBe("112.00");
+    expect(lastDay.body.report.metrics.grossSales).toBe("0.00");
+    expect(
+      Number(firstDay.body.report.metrics.grossSales) +
+        Number(lastDay.body.report.metrics.grossSales),
+    ).toBe(Number(rangeResponse.body.report.metrics.grossSales));
+
+    const csv = await owner.get(
+      "/api/reports/range.csv?startDate=2026-04-30&endDate=2026-05-01",
+    );
+    expect(csv.status).toBe(200);
+    expect(csv.headers["content-disposition"]).toContain(
+      "medtryx-report-2026-04-30-to-2026-05-01.csv",
+    );
+    expect(csv.text).toContain(
+      '"Report","Manila business dates","2026-04-30 to 2026-05-01"',
+    );
+    expect(csv.text).toContain('"Payments","Cash declared sales","112.00"');
+    expect(csv.text).toContain('"Payments","QR refunds","112.00"');
+  });
+
+  it("rejects invalid business dates and report ranges", async () => {
     const owner = await signIn("owner.reports@example.test", ownerPassword);
     expect((await owner.get("/api/reports/daily?date=2026-02-30")).status).toBe(
       400,
     );
+    expect(
+      (
+        await owner.get(
+          "/api/reports/range?startDate=2026-04-31&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await owner.get(
+          "/api/reports/range?startDate=2026-05-02&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await owner.get(
+          "/api/reports/range.csv?startDate=2026-05-01&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(200);
   });
 });

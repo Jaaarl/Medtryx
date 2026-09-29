@@ -47,9 +47,13 @@ function todayInManila(now = new Date()): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function utcWindowForManilaDay(day: string): { start: string; end: string } {
-  const start = new Date(`${day}T00:00:00+08:00`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+function utcWindowForManilaRange(
+  startDay: string,
+  endDay: string,
+): { start: string; end: string } {
+  const start = new Date(`${startDay}T00:00:00+08:00`);
+  const end = new Date(`${endDay}T00:00:00+08:00`);
+  end.setTime(end.getTime() + 24 * 60 * 60 * 1000);
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
@@ -72,15 +76,15 @@ export function safeCsvCell(value: string | number): string {
   return `"${normalized.replaceAll('"', '""')}"`;
 }
 
-function reportRows(db: Database.Database, day: string) {
-  const window = utcWindowForManilaDay(day);
+function reportRows(db: Database.Database, startDay: string, endDay: string) {
+  const window = utcWindowForManilaRange(startDay, endDay);
   const totals: Record<string, bigint> = {};
   const sales = db
     .prepare(
       `SELECT payment_method, amount_due_centavos FROM sales
-       WHERE business_date = ?`,
+       WHERE business_date >= ? AND business_date <= ?`,
     )
-    .all(day) as {
+    .all(startDay, endDay) as {
     payment_method: "CASH" | "QR";
     amount_due_centavos: number;
   }[];
@@ -99,9 +103,9 @@ function reportRows(db: Database.Database, day: string) {
               sl.vat_centavos, sl.vat_removed_centavos, sl.discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos
        FROM sale_lines sl JOIN sales s ON s.id = sl.sale_id
-       WHERE s.business_date = ?`,
+       WHERE s.business_date >= ? AND s.business_date <= ?`,
     )
-    .all(day) as SaleLineRow[];
+    .all(startDay, endDay) as SaleLineRow[];
   for (const line of saleLines) {
     const gross = BigInt(line.quantity) * BigInt(line.unit_price_centavos);
     add(totals, "grossSales", gross);
@@ -250,7 +254,9 @@ function reportRows(db: Database.Database, day: string) {
   const estimatedGrossProfit =
     (totals.netSalesExcludingVat ?? 0n) - (totals.cogs ?? 0n);
   return {
-    businessDate: day,
+    businessDate: startDay === endDay ? startDay : `${startDay} to ${endDay}`,
+    startDate: startDay,
+    endDate: endDay,
     timeZone: "Asia/Manila",
     generatedAt: new Date().toISOString(),
     metrics: {
@@ -294,8 +300,8 @@ function reportRows(db: Database.Database, day: string) {
       })),
     },
     notes: [
-      "Net sales exclude output VAT and subtract line discounts and full reversals recorded on this Manila business date.",
-      "COGS follows saved sale-line acquisition-cost allocations; full reversals offset the original saved COGS on the reversal date.",
+      "Net sales exclude output VAT and subtract line discounts and full reversals recorded during the selected Manila business-date range.",
+      "COGS follows saved sale-line acquisition-cost allocations; full reversals offset the original saved COGS on their recorded date.",
       "Estimated gross profit excludes separate stock write-offs and operating expenses.",
       "Cash and QR are staff-declared settlement methods, not payment verification.",
       "Inventory value and low-stock counts show current balances, not historical end-of-day balances.",
@@ -305,7 +311,7 @@ function reportRows(db: Database.Database, day: string) {
 
 function csvForReport(report: ReturnType<typeof reportRows>): string {
   const rows: Array<[string, string, string | number]> = [
-    ["Report", "Manila business date", report.businessDate],
+    ["Report", "Manila business dates", report.businessDate],
     ["Sales", "Gross sales", report.metrics.grossSales],
     ["Sales", "Net sales excluding VAT", report.metrics.netSalesExcludingVat],
     ["Tax", "VATable sales base", report.metrics.vatableSalesBase],
@@ -357,6 +363,36 @@ export function registerReportRoutes(
         : dateSchema.safeParse(value);
     return parsed;
   };
+  const readRange = (startValue: unknown, endValue: unknown) => {
+    const start = dateSchema.safeParse(startValue);
+    const end = dateSchema.safeParse(endValue);
+    if (!start.success || !end.success || start.data > end.data) return null;
+    return { start: start.data, end: end.data };
+  };
+
+  router.get("/reports/range", requireAuth, requireOwner, (req, res) => {
+    const range = readRange(req.query.startDate, req.query.endDate);
+    if (!range) {
+      res.status(400).json({ error: "invalid_report_range" });
+      return;
+    }
+    res.json({ report: reportRows(db, range.start, range.end) });
+  });
+
+  router.get("/reports/range.csv", requireAuth, requireOwner, (req, res) => {
+    const range = readRange(req.query.startDate, req.query.endDate);
+    if (!range) {
+      res.status(400).json({ error: "invalid_report_range" });
+      return;
+    }
+    const report = reportRows(db, range.start, range.end);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="medtryx-report-${range.start}-to-${range.end}.csv"`,
+    );
+    res.send(csvForReport(report));
+  });
 
   router.get("/reports/daily", requireAuth, requireOwner, (req, res) => {
     const day = readDate(req.query.date);
@@ -364,7 +400,7 @@ export function registerReportRoutes(
       res.status(400).json({ error: "invalid_report_date" });
       return;
     }
-    res.json({ report: reportRows(db, day.data) });
+    res.json({ report: reportRows(db, day.data, day.data) });
   });
 
   router.get("/reports/daily.csv", requireAuth, requireOwner, (req, res) => {
@@ -373,7 +409,7 @@ export function registerReportRoutes(
       res.status(400).json({ error: "invalid_report_date" });
       return;
     }
-    const report = reportRows(db, day.data);
+    const report = reportRows(db, day.data, day.data);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
       "Content-Disposition",

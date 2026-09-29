@@ -48,7 +48,7 @@ The original specification remains available for later features. Its implementat
 - Automatic, unique **Medtryx Transaction ID**.
 - Full-sale void/reversal with owner approval and reason.
 - Basic cashier shift and cash count.
-- Daily sales, payment-method, discount, current-stock, and estimated gross-profit reports; CSV export.
+- Owner sales reports for an inclusive Manila date range, including a month-to-date shortcut, payment-method and discount totals, current stock and estimated gross profit; CSV export for the same dates.
 - Backup, restore, and a separate test environment or test database before live use.
 
 ### Deferred
@@ -162,7 +162,7 @@ The app generates an ID such as `MTX-20260927-000123`. Staff do not enter the ma
 
 **Shifts:** Only one shift (the store's single cash register) may be open at a time across all cashier accounts. The opening cashier records opening cash, then closes with an actual cash count. Expected cash is opening cash plus cash sales minus cash refunds and recorded cash-out, plus any recorded cash-in. QR-declared sales do not enter expected physical cash. Show the variance and require a reason for a non-zero variance; owner approval may be required by store policy. Owners can review opening/closing account names and times, opening float, cash and QR sales, refunds and cash movements, expected cash, actual count, and variance. Cashier access remains limited to their own current shift.
 
-**Reports:** Filter by Manila business date and show gross and net sales, VATable and VAT-exempt amounts, VAT, SC and PWD discounts separately, cash and QR declarations, voids, COGS, estimated gross profit, current/low stock, and inventory value. Export CSV with safe spreadsheet escaping. Reports are internal records and must reconcile to stored sale, reversal, and stock records. Keep stock write-offs separate from COGS and gross profit.
+**Reports:** Select inclusive start and end dates in the `Asia/Manila` time zone; a one-day range remains the daily view, and **Month to date** selects the first of the current Manila month through today. Show gross and net sales, VATable and VAT-exempt amounts, VAT, SC and PWD discounts separately, cash and QR declarations, reversals, COGS, estimated gross profit, current/low stock, and inventory value. Attribute sales to their saved Manila business date; attribute reversals and cash movements to their event date. Current stock and inventory value are current balances, not historical end-of-period balances. Export a formula-safe CSV for the same selected range. Reports are internal records and must reconcile to stored sale, reversal, and stock records. Keep stock write-offs separate from COGS and gross profit.
 
 ## 9. Web architecture and deployment
 
@@ -212,7 +212,7 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 6. Product price or tax changes do not alter prior sales or reports.
 7. A cashier cannot create, edit, or deactivate an inventory product, import products, edit stock, change classifications or prices, or change finalized sales through the interface or direct API calls. Only the owner can create inventory products.
 8. An approved void remains linked to the original sale and does not erase it.
-9. Daily reports reconcile sales, COGS, gross profit, and stock value with saved sale lines and stock events; cash totals exclude QR declarations.
+9. Inclusive Manila date-range reports reconcile saved sales and reversal activity across date boundaries; CSV totals match the selected interval, cash totals exclude QR declarations, and current stock is clearly labeled as a current balance.
 10. A second receipt at a different cost changes the average cost but does not silently change the selling price or any earlier sale's cost snapshot.
 11. An access-restricted backup can be restored into a clean test environment with matching sales, stock, inventory-value totals, and readable authorized customer records.
 12. Staff can use checkout on the actual planned desktop/tablet browsers and the pharmacy's private network.

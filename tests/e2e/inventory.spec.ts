@@ -315,23 +315,34 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const cashierReportDenied =
     await cashierContext.request.get("/api/reports/daily");
   expect(cashierReportDenied.status()).toBe(403);
+  const cashierRangeReportDenied = await cashierContext.request.get(
+    "/api/reports/range?startDate=2026-04-30&endDate=2026-05-01",
+  );
+  expect(cashierRangeReportDenied.status()).toBe(403);
   const cashierBackupDenied = await cashierContext.request.get(
     "/api/backups/status",
   );
   expect(cashierBackupDenied.status()).toBe(403);
   await ownerPage.goto("/reports");
   await expect(
-    ownerPage.getByRole("heading", { name: "Daily reports", exact: true }),
+    ownerPage.getByRole("heading", { name: "Sales reports", exact: true }),
   ).toBeVisible();
   await expect(ownerPage.getByText("Current inventory value")).toBeVisible();
   await expect(
     ownerPage.getByText("Full reversals", { exact: true }),
   ).toBeVisible();
+  await ownerPage.getByLabel("Start date").fill("2026-04-30");
+  await ownerPage.getByLabel("End date").fill("2026-05-01");
+  await expect(
+    ownerPage.getByText("2026-04-30 to 2026-05-01", { exact: true }),
+  ).toBeVisible();
   const reportDownload = ownerPage.waitForEvent("download");
   await ownerPage.getByRole("button", { name: "Export CSV" }).click();
   expect((await reportDownload).suggestedFilename()).toMatch(
-    /^medtryx-daily-\d{4}-\d{2}-\d{2}\.csv$/,
+    /^medtryx-report-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/,
   );
+  await ownerPage.getByRole("button", { name: "Month to date" }).click();
+  await expect(ownerPage.getByLabel("Start date")).toHaveValue(/-01$/);
 
   await ownerPage.goto("/backups");
   await expect(
