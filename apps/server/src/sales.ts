@@ -290,7 +290,7 @@ function handleSalesError(error: unknown, res: Response): boolean {
   }
   if (
     error instanceof Error &&
-    error.message.includes("shifts_one_open_per_cashier_idx")
+    error.message.includes("shifts_one_open_store_idx")
   ) {
     res.status(409).json({ error: "shift_already_open" });
     return true;
@@ -682,6 +682,9 @@ export function registerSalesRoutes(
 
   router.get("/shifts/current", requireAuth, (req, res) => {
     const shift = shiftForCashier(db, req.user!.id);
+    const registerOpen = Boolean(
+      db.prepare("SELECT 1 FROM shifts WHERE closed_at IS NULL LIMIT 1").get(),
+    );
     res.json({
       shift: shift
         ? {
@@ -691,6 +694,118 @@ export function registerSalesRoutes(
             expectedCash: money(shift.expected_cash_centavos),
           }
         : null,
+      registerOpen,
+    });
+  });
+
+  router.get("/shifts/history", requireAuth, requireOwner, (req, res) => {
+    const limit = z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .safeParse(req.query.limit ?? "200");
+    const beforeOpenedAt = z
+      .string()
+      .datetime()
+      .optional()
+      .safeParse(req.query.beforeOpenedAt);
+    const beforeId = z
+      .string()
+      .min(1)
+      .max(100)
+      .optional()
+      .safeParse(req.query.beforeId);
+    if (
+      !limit.success ||
+      !beforeOpenedAt.success ||
+      !beforeId.success ||
+      Boolean(beforeOpenedAt.data) !== Boolean(beforeId.data)
+    ) {
+      return validationFailure(res);
+    }
+    const rows = db
+      .prepare(
+        `SELECT s.id, s.opened_at, s.closed_at, s.opening_cash_centavos,
+                s.expected_cash_centavos, s.actual_cash_count_centavos,
+                s.variance_centavos, opened.email AS opened_by_email,
+                closed.email AS closed_by_email,
+                COALESCE(sales.cash_sales_centavos, 0) AS cash_sales_centavos,
+                COALESCE(sales.qr_sales_centavos, 0) AS qr_sales_centavos,
+                COALESCE(movements.cash_refunds_centavos, 0) AS cash_refunds_centavos,
+                COALESCE(movements.cash_in_centavos, 0) AS cash_in_centavos,
+                COALESCE(movements.cash_out_centavos, 0) AS cash_out_centavos
+         FROM shifts s
+         JOIN users opened ON opened.id = s.cashier_user_id
+         LEFT JOIN users closed ON closed.id = s.close_actor_user_id
+         LEFT JOIN (
+           SELECT shift_id,
+                  SUM(CASE WHEN payment_method = 'CASH' THEN amount_due_centavos ELSE 0 END)
+                    AS cash_sales_centavos,
+                  SUM(CASE WHEN payment_method = 'QR' THEN amount_due_centavos ELSE 0 END)
+                    AS qr_sales_centavos
+           FROM sales GROUP BY shift_id
+         ) sales ON sales.shift_id = s.id
+         LEFT JOIN (
+           SELECT shift_id,
+                  SUM(CASE WHEN movement_type = 'CASH_REFUND' THEN -amount_delta_centavos ELSE 0 END)
+                    AS cash_refunds_centavos,
+                  SUM(CASE WHEN movement_type = 'CASH_IN' THEN amount_delta_centavos ELSE 0 END)
+                    AS cash_in_centavos,
+                  SUM(CASE WHEN movement_type = 'CASH_OUT' THEN -amount_delta_centavos ELSE 0 END)
+                    AS cash_out_centavos
+           FROM cash_movements GROUP BY shift_id
+         ) movements ON movements.shift_id = s.id
+         WHERE (? IS NULL OR s.opened_at < ? OR (s.opened_at = ? AND s.id < ?))
+         ORDER BY s.opened_at DESC, s.id DESC LIMIT ?`,
+      )
+      .all(
+        beforeOpenedAt.data ?? null,
+        beforeOpenedAt.data ?? null,
+        beforeOpenedAt.data ?? null,
+        beforeId.data ?? null,
+        limit.data + 1,
+      ) as {
+      id: string;
+      opened_at: string;
+      closed_at: string | null;
+      opening_cash_centavos: number;
+      expected_cash_centavos: number | null;
+      actual_cash_count_centavos: number | null;
+      variance_centavos: number | null;
+      opened_by_email: string;
+      closed_by_email: string | null;
+      cash_sales_centavos: number;
+      qr_sales_centavos: number;
+      cash_refunds_centavos: number;
+      cash_in_centavos: number;
+      cash_out_centavos: number;
+    }[];
+    res.json({
+      shifts: rows.slice(0, limit.data).map((row) => ({
+        id: row.id,
+        status: row.closed_at === null ? "OPEN" : "CLOSED",
+        openedAt: row.opened_at,
+        closedAt: row.closed_at,
+        openedByEmail: row.opened_by_email,
+        closedByEmail: row.closed_by_email,
+        openingCash: money(row.opening_cash_centavos),
+        cashSales: money(row.cash_sales_centavos),
+        qrSales: money(row.qr_sales_centavos),
+        cashRefunds: money(row.cash_refunds_centavos),
+        cashIn: money(row.cash_in_centavos),
+        cashOut: money(row.cash_out_centavos),
+        expectedCash: money(
+          row.expected_cash_centavos ?? row.opening_cash_centavos,
+        ),
+        actualCashCount:
+          row.actual_cash_count_centavos === null
+            ? null
+            : money(row.actual_cash_count_centavos),
+        variance:
+          row.variance_centavos === null ? null : money(row.variance_centavos),
+      })),
+      hasMore: rows.length > limit.data,
     });
   });
 
@@ -702,7 +817,11 @@ export function registerSalesRoutes(
       const now = new Date().toISOString();
       const openingCashCentavos = parseMoney(parsed.data.openingCash);
       db.transaction(() => {
-        if (shiftForCashier(db, req.user!.id)) {
+        if (
+          db
+            .prepare("SELECT 1 FROM shifts WHERE closed_at IS NULL LIMIT 1")
+            .get()
+        ) {
           throw new SalesError(409, "shift_already_open");
         }
         db.prepare(

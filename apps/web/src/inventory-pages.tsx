@@ -100,7 +100,8 @@ function errorMessage(error: unknown): string {
     tax_policy_not_approved:
       "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
     open_shift_required: "Open a cashier shift before finalizing a sale.",
-    shift_already_open: "A cashier shift is already open for this account.",
+    shift_already_open:
+      "Only one cash register may be open at a time. Ask the active cashier to close the shift.",
     product_not_senior_eligible:
       "This product is not marked eligible for a Senior Citizen benefit.",
     product_not_pwd_eligible:
@@ -1333,6 +1334,7 @@ export function CheckoutPage() {
   const [customerIdChecked, setCustomerIdChecked] = useState(false);
   const [policy, setPolicy] = useState<TaxPolicySummary | null>(null);
   const [shift, setShift] = useState<CurrentShift | null>(null);
+  const [registerOpen, setRegisterOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("0.00");
   const [closingCash, setClosingCash] = useState("0.00");
   const [varianceReason, setVarianceReason] = useState("");
@@ -1372,12 +1374,15 @@ export function CheckoutPage() {
     let active = true;
     void Promise.all([
       api.get<{ policy: TaxPolicySummary }>("/tax-policy"),
-      api.get<{ shift: CurrentShift | null }>("/shifts/current"),
+      api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
+        "/shifts/current",
+      ),
     ])
       .then(([policyResult, shiftResult]) => {
         if (!active) return;
         setPolicy(policyResult.policy);
         setShift(shiftResult.shift);
+        setRegisterOpen(shiftResult.registerOpen);
         if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       })
       .catch(() => {
@@ -1467,6 +1472,7 @@ export function CheckoutPage() {
         openingCash,
       });
       setShift(result.shift);
+      setRegisterOpen(true);
       setClosingCash(result.shift.expectedCash);
       setNotice("Cashier shift opened.");
     } catch (caught) {
@@ -1490,6 +1496,7 @@ export function CheckoutPage() {
           : {}),
       });
       setShift(null);
+      setRegisterOpen(false);
       setPreview(null);
       setRequestKey("");
       setNotice("Cashier shift closed.");
@@ -1556,12 +1563,15 @@ export function CheckoutPage() {
       setPreview(null);
       setRequestKey("");
       const [shiftResult, catalogResult] = await Promise.all([
-        api.get<{ shift: CurrentShift | null }>("/shifts/current"),
+        api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
+          "/shifts/current",
+        ),
         api.get<{ products: CatalogProduct[] }>(
           `/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`,
         ),
       ]);
       setShift(shiftResult.shift);
+      setRegisterOpen(shiftResult.registerOpen);
       if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       setProducts(catalogResult.products);
       setNotice(result.replayed ? "Saved sale recovered." : "Sale saved.");
@@ -1730,6 +1740,12 @@ export function CheckoutPage() {
               onSubmit={(event) => void openCurrentShift(event)}
             >
               <h3>Open a cashier shift</h3>
+              {registerOpen && (
+                <p className="register-in-use-note" role="status">
+                  The single cash register is already open. Wait for the active
+                  cashier to close the shift before opening it.
+                </p>
+              )}
               <p>
                 Enter the physical cash placed in the drawer. QR declarations
                 are not counted as cash.
@@ -1741,6 +1757,7 @@ export function CheckoutPage() {
                   inputMode="decimal"
                   value={openingCash}
                   onChange={(event) => setOpeningCash(event.target.value)}
+                  disabled={registerOpen}
                   required
                   pattern="[0-9]+(\.[0-9]{1,2})?"
                 />
@@ -1748,7 +1765,7 @@ export function CheckoutPage() {
               <button
                 className="button button-primary"
                 type="submit"
-                disabled={saving}
+                disabled={saving || registerOpen}
               >
                 {saving ? "Opening…" : "Open shift"}
               </button>

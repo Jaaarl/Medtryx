@@ -46,6 +46,8 @@ npm run db:create-owner
 npm run build
 ```
 
+Before applying a release that adds the single-register constraint to an existing database, make a verified backup and rehearse the migration on a restored copy. Migration `0008_single_store_register.sql` requires zero or one open shift. If the existing database has more than one, the migration fails atomically: it does not close shifts or change their counts, and the earlier per-cashier constraint remains in place. Stop the upgrade, have each cashier close the correct drawer using its physical cash count and the owner's reconciliation procedure, verify that no shift remains open, create a fresh verified backup, then retry the migration. Never resolve this by inventing a count or deleting a shift.
+
 Set `MEDTRYX_OWNER_EMAIL` and a unique `MEDTRYX_OWNER_PASSWORD` in the restricted environment file for the one-time owner bootstrap, then remove the bootstrap password. Run database migration/bootstrap commands under the same dedicated operating-system account that will run the service; folder ACLs are restricted to the account executing these commands, local administrators, and system account. The server must run as a service under that same account. `deploy/medtryx.service.example` provides a Linux systemd template; fill in the real paths and service identity. On Windows, configure the selected Windows service manager or Task Scheduler to run `node apps/server/dist/index.js` at startup under the dedicated service account.
 
 ## Caddy and browser trust
@@ -96,4 +98,5 @@ The following require the owner's actual site and cannot be inferred from reposi
 - physical confirmation that database storage is local and the secondary backup is separate owner-controlled media;
 - local HTTPS certificate trust and checkout/owner workflows on every planned browser device;
 - owner/accountant/professional approval of tax, discount, supplier-cost, invoicing, privacy, retention, and any registration requirements;
+- if an existing database contains multiple open shifts, the owner must reconcile the active physical drawers and approve the counts before the single-register migration can be applied;
 - manual expiry/lot, invoice, outage, and recovery procedures and staff training.

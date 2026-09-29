@@ -55,6 +55,13 @@ The repository baseline already exists as commit `1e05374` (`Initial Docs`), con
 - **Pending operational rehearsal — staff procedures:** recovery, manual expiry/lot, manual invoice, outage, and update steps are documented, but staff training and parallel manual checks have not happened.
 - **Runtime pending:** repeat the full suite and live preflight using Node.js 24 LTS before site setup.
 
+## Long-horizon feedback follow-up
+
+- Feedback F3/F4 complete in code: migration 0008 enforces one open shift across the whole store, checkout blocks a second cashier while it is open, and owners have a shift-history screen with opening/closing accounts and times plus drawer sales and reconciliation. API and browser authorization are covered.
+- Synthetic verification: focused migration/sales tests 14 passed and the full unit/API suite passes 50 tests; the browser suite passes 4 Chromium flows; typecheck, lint, format check, and build pass. Work ran on Node.js 22.17.0; repeat on the target Node.js 24 runtime before release.
+- Existing database upgrade gate: migration 0008 fails atomically if two or more shifts are open. It does not alter or close them. The owner must reconcile real cash drawers and close the corresponding shifts before retrying against a verified backup.
+- F5 date-range reports remain the next software bundle. Earlier progress notes that name another next bundle are historical and superseded by this follow-up.
+
 ## Next session
 
-Bundle 5 is complete. Bundle 6 cannot finish without site/owner inputs and physical checks. Needed: host OS and service account, stable LAN name/address and firewall/network plan, planned browser/device list, two owner-controlled backup locations on separate physical storage, and the owner's accountant/professional tax/cost/invoice/privacy decisions. Do not deploy live or load real customer data until those gates are evidenced.
+Implement and verify feedback F5, then continue the existing bundle 6 release gates. Needed for release: host OS and service account, stable LAN name/address and firewall/network plan, planned browser/device list, two owner-controlled backup locations on separate physical storage, and the owner's accountant/professional tax/cost/invoice/privacy decisions. If a live database has multiple active shifts, the owner must reconcile those physical drawers before applying migration 0008. Do not deploy live or load real customer data until those gates are evidenced.

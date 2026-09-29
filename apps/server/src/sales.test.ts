@@ -15,13 +15,16 @@ process.env.CUSTOMER_ID_ENCRYPTION_KEY = "b2".repeat(32);
 
 const ownerPassword = "SyntheticSalesOwner-65!";
 const cashierPassword = "SyntheticSalesCashier-83!";
+const secondCashierPassword = "SyntheticSecondCashier-57!";
 let dataDirectory: string;
 let db: ReturnType<typeof openDatabase>;
 let app: ReturnType<typeof createApp>;
 let ownerId: string;
 let cashierId: string;
+let secondCashierId: string;
 let ownerHash: string;
 let cashierHash: string;
+let secondCashierHash: string;
 
 type Agent = ReturnType<typeof request.agent>;
 
@@ -32,12 +35,22 @@ async function seedUsers(): Promise<void> {
   const now = new Date().toISOString();
   ownerId = randomUUID();
   cashierId = randomUUID();
+  secondCashierId = randomUUID();
   db.prepare(
     "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'owner', 1, ?, ?)",
   ).run(ownerId, "owner.sales@example.test", ownerHash, now, now);
   db.prepare(
     "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'cashier', 1, ?, ?)",
   ).run(cashierId, "cashier.sales@example.test", cashierHash, now, now);
+  db.prepare(
+    "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'cashier', 1, ?, ?)",
+  ).run(
+    secondCashierId,
+    "second.cashier.sales@example.test",
+    secondCashierHash,
+    now,
+    now,
+  );
 }
 
 async function signIn(email: string, password: string): Promise<Agent> {
@@ -156,6 +169,9 @@ beforeAll(async () => {
   app = createApp(db);
   ownerHash = await argon2.hash(ownerPassword, { type: argon2.argon2id });
   cashierHash = await argon2.hash(cashierPassword, { type: argon2.argon2id });
+  secondCashierHash = await argon2.hash(secondCashierPassword, {
+    type: argon2.argon2id,
+  });
 });
 
 beforeEach(async () => {
@@ -272,12 +288,17 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toBe(true);
   });
 
-  it("opens one shift per cashier and requires a reason for a cash variance", async () => {
+  it("opens one store-wide shift and requires a reason for a cash variance", async () => {
     const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const secondCashier = await signIn(
+      "second.cashier.sales@example.test",
+      secondCashierPassword,
+    );
     const opened = await openShift(cashier, "100.00");
     expect(opened.status).toBe(201);
     expect(opened.body.shift.expectedCash).toBe("100.00");
     expect((await openShift(cashier)).body.error).toBe("shift_already_open");
+    expect((await openShift(secondCashier)).status).toBe(409);
 
     const shiftId = opened.body.shift.id as string;
     const csrf = await csrfFor(cashier);
@@ -304,6 +325,7 @@ describe("checkout, sales, and cashier shifts", () => {
       varianceApprovalStatus: "PENDING",
     });
     expect((await cashier.get("/api/shifts/current")).body.shift).toBeNull();
+    expect((await openShift(secondCashier, "20.00")).status).toBe(201);
 
     const cashierCsrf = await csrfFor(cashier);
     const cashierApproval = await cashier
@@ -362,6 +384,135 @@ describe("checkout, sales, and cashier shifts", () => {
       variance_approval_status: "APPROVED",
       variance_centavos: -200,
     });
+  });
+
+  it("allows only one of two simultaneous cashier shift opens", async () => {
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const secondCashier = await signIn(
+      "second.cashier.sales@example.test",
+      secondCashierPassword,
+    );
+    const opened = await Promise.all([
+      openShift(cashier, "10.00"),
+      openShift(secondCashier, "20.00"),
+    ]);
+    expect(opened.map((response) => response.status).sort()).toEqual([
+      201, 409,
+    ]);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM shifts WHERE closed_at IS NULL",
+          )
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
+  });
+
+  it("shows owners shift accounts and money totals while denying cashiers", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const opened = await openShift(cashier, "50.00");
+    expect(opened.status).toBe(201);
+
+    expect(
+      (
+        await postSale(cashier, {
+          productId: product.id,
+          quantity: 1,
+          paymentMethod: "CASH",
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await postSale(cashier, {
+          productId: product.id,
+          quantity: 1,
+          paymentMethod: "QR",
+        })
+      ).status,
+    ).toBe(201);
+
+    const cashierDenied = await cashier.get("/api/shifts/history");
+    expect(cashierDenied.status).toBe(403);
+    const openHistory = await owner.get("/api/shifts/history");
+    expect(openHistory.status).toBe(200);
+    expect(openHistory.body.shifts[0]).toMatchObject({
+      id: opened.body.shift.id,
+      status: "OPEN",
+      openedByEmail: "cashier.sales@example.test",
+      closedByEmail: null,
+      openingCash: "50.00",
+      cashSales: "112.00",
+      qrSales: "112.00",
+      cashRefunds: "0.00",
+      cashIn: "0.00",
+      cashOut: "0.00",
+      expectedCash: "162.00",
+      actualCashCount: null,
+      variance: null,
+    });
+
+    const shiftId = opened.body.shift.id as string;
+    const closeCsrf = await csrfFor(cashier);
+    const closed = await cashier
+      .post(`/api/shifts/${shiftId}/close`)
+      .set("x-csrf-token", closeCsrf)
+      .send({ actualCashCount: "162.00" });
+    expect(closed.status).toBe(200);
+    const closedHistory = await owner.get("/api/shifts/history");
+    expect(closedHistory.body.shifts[0]).toMatchObject({
+      status: "CLOSED",
+      openedByEmail: "cashier.sales@example.test",
+      closedByEmail: "cashier.sales@example.test",
+      expectedCash: "162.00",
+      actualCashCount: "162.00",
+      variance: "0.00",
+    });
+  });
+
+  it("paginates the complete owner shift history and validates cursors", async () => {
+    const now = Date.now();
+    const insertShift = db.prepare(
+      `INSERT INTO shifts
+        (id, cashier_user_id, opened_at, opening_cash_centavos, closed_at,
+         expected_cash_centavos, actual_cash_count_centavos, variance_centavos,
+         close_actor_user_id)
+       VALUES (?, ?, ?, 0, ?, 0, 0, 0, ?)`,
+    );
+    for (let index = 0; index < 201; index += 1) {
+      const openedAt = new Date(now - index * 1_000).toISOString();
+      insertShift.run(
+        `synthetic-history-${index}`,
+        cashierId,
+        openedAt,
+        openedAt,
+        ownerId,
+      );
+    }
+
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const firstPage = await owner.get("/api/shifts/history?limit=200");
+    expect(firstPage.status).toBe(200);
+    expect(firstPage.body.shifts).toHaveLength(200);
+    expect(firstPage.body.hasMore).toBe(true);
+    const lastShift = firstPage.body.shifts.at(-1) as {
+      id: string;
+      openedAt: string;
+    };
+    const secondPage = await owner.get(
+      `/api/shifts/history?limit=200&beforeOpenedAt=${encodeURIComponent(lastShift.openedAt)}&beforeId=${lastShift.id}`,
+    );
+    expect(secondPage.body.shifts).toHaveLength(1);
+    expect(secondPage.body.hasMore).toBe(false);
+    expect(secondPage.body.shifts[0].id).not.toBe(firstPage.body.shifts[0].id);
+    expect(
+      (await owner.get("/api/shifts/history?beforeOpenedAt=invalid")).status,
+    ).toBe(400);
   });
 
   it("commits sale, snapshots, COGS, stock value, cash, and ID atomically and replays idempotently", async () => {
@@ -566,7 +717,7 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toBe("50.00");
   });
 
-  it("allows only one cashier to sell a shared last unit", async () => {
+  it("allows only one simultaneous sale of the shared last unit on one shift", async () => {
     const owner = await signIn("owner.sales@example.test", ownerPassword);
     await configureApprovedPolicy(owner);
     const product = await createProduct(owner, {
@@ -577,23 +728,11 @@ describe("checkout, sales, and cashier shifts", () => {
       "cashier.sales@example.test",
       cashierPassword,
     );
-    const secondCashierId = randomUUID();
-    const now = new Date().toISOString();
-    db.prepare(
-      "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'cashier', 1, ?, ?)",
-    ).run(
-      secondCashierId,
-      "cashier2.sales@example.test",
-      cashierHash,
-      now,
-      now,
-    );
     const cashierB = await signIn(
-      "cashier2.sales@example.test",
+      "cashier.sales@example.test",
       cashierPassword,
     );
     expect((await openShift(cashierA)).status).toBe(201);
-    expect((await openShift(cashierB)).status).toBe(201);
     const [first, second] = await Promise.all([
       postSale(cashierA, { productId: product.id, quantity: 1 }),
       postSale(cashierB, { productId: product.id, quantity: 1 }),

@@ -1,6 +1,6 @@
 # Medtryx web application
 
-Medtryx is being built in roadmap bundles for one pharmacy on one local server. Product scope and release gates are in the [simplified specification](Medtryx_Simplified_Web_Product_and_Technical_Specification.md) and [implementation roadmap](Medtryx_Web_Tech_Stack_and_Roadmap.md). Current progress and decisions are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+Medtryx is being built in roadmap bundles for one pharmacy on one local server. Product scope and release gates are in the [simplified specification](Medtryx_Simplified_Web_Product_and_Technical_Specification.md) and [implementation roadmap](Medtryx_Web_Tech_Stack_and_Roadmap.md). Current progress and decisions are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md); numbered follow-up feedback and verification evidence are tracked in [FEEDBACK_IMPLEMENTATION_STATUS.md](FEEDBACK_IMPLEMENTATION_STATUS.md).
 
 ## Local development
 
@@ -32,8 +32,9 @@ The first bootstrap is intentionally a command-line operation so there is no pub
 ## Implemented workflows
 
 - Owners can create, search, edit, deactivate, and reactivate products; set Generic or Branded type and independent Senior Citizen/PWD eligibility; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history. Existing catalog items are marked unclassified until the owner reviews their type.
-- Cashiers can search active products, build a browser cart, preview server-calculated line taxes/discounts, open and close a cashier shift, and finalize an approved cash or QR-declared sale. Live sale finalization remains blocked until the owner records accountant-approved tax and acquisition-cost policy.
+- Cashiers can search active products, build a browser cart, preview server-calculated line taxes/discounts, and use the single store-wide cash register shift. A second cashier account cannot open a shift until the current one closes. Cashiers can finalize an approved cash or QR-declared sale. Live sale finalization remains blocked until the owner records accountant-approved tax and acquisition-cost policy.
 - Owners can review immutable sale records, reauthenticate to record a linked full reversal, choose stock restoration per line, and reconcile cash refunds, cash-in/out, and non-zero shift variance decisions. Cash refunds require an open drawer with enough expected cash; QR declarations do not change physical cash.
+- Owners can review shift history with opening and closing accounts/times, opening float, cash and QR sales, refunds, expected and counted cash, and variance. This owner-only history does not replace physical drawer counts or site reconciliation.
 - Owners can review Manila-day saved-line reports, download formula-safe CSV without customer identifiers, configure the store identity, create two verified backup copies, and restore after owner reauthentication, store-name confirmation, and a verified safety backup. Live backup creation requires absolute local paths and a second physical storage device. Automatic live backups run daily after 02:00 Manila time once the owner has configured the store identity.
 - Product gross-profit figures remain estimates. Before approval is recorded, they use a labeled provisional 12% VAT-inclusive assumption; afterward they use the owner's recorded approved tax settings and cost basis, while excluding benefit discounts and operating costs. Checkout is blocked until the owner records accountant-approved tax and cost settings. The test database alone has a clearly synthetic policy fixture. See [implementation status](IMPLEMENTATION_STATUS.md) for pending decisions and release checks.
 

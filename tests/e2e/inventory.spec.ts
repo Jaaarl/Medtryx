@@ -94,6 +94,16 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   });
   expect(cashierCreated.status()).toBe(201);
 
+  const secondCashierCreated = await ownerContext.request.post("/api/users", {
+    data: {
+      email: "inventory.second.cashier@example.test",
+      password: "SyntheticInventorySecondCashier-39!",
+      role: "cashier",
+    },
+    headers: { "x-csrf-token": csrf.token },
+  });
+  expect(secondCashierCreated.status()).toBe(201);
+
   const cashierContext = await browser.newContext();
   const cashierPage = await cashierContext.newPage();
   await signIn(
@@ -130,6 +140,19 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await cashierPage.getByLabel("Opening cash (₱)").fill("50.00");
   await cashierPage.getByRole("button", { name: "Open shift" }).click();
   await expect(cashierPage.getByText("Cashier shift opened.")).toBeVisible();
+  const secondCashierContext = await browser.newContext();
+  const secondCashierPage = await secondCashierContext.newPage();
+  await signIn(
+    secondCashierPage,
+    "inventory.second.cashier@example.test",
+    "SyntheticInventorySecondCashier-39!",
+  );
+  await expect(
+    secondCashierPage.getByText(/The single cash register is already open/),
+  ).toBeVisible();
+  await expect(
+    secondCashierPage.getByRole("button", { name: "Open shift" }),
+  ).toBeDisabled();
   await expect(
     cashierPage.getByText(/Approved tax profile: SYNTHETIC-E2E-TAX-12-HALF-UP/),
   ).toBeVisible();
@@ -266,6 +289,22 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(
     ownerPage.getByText("No non-zero variances need review."),
   ).toBeVisible();
+  const cashierHistoryDenied = await cashierContext.request.get(
+    "/api/shifts/history",
+  );
+  expect(cashierHistoryDenied.status()).toBe(403);
+  await ownerPage.goto("/shifts");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Shift history", exact: true }),
+  ).toBeVisible();
+  const shiftHistoryRow = ownerPage
+    .getByRole("row")
+    .filter({ hasText: "inventory.cashier@example.test" });
+  await expect(shiftHistoryRow).toContainText("CLOSED");
+  await expect(shiftHistoryRow).toContainText("50.00");
+  await expect(shiftHistoryRow).toContainText("23.98");
+  await expect(shiftHistoryRow).toContainText("48.00");
+  await expect(shiftHistoryRow).toContainText("-2.00");
   await ownerPage.goto("/stock");
   const restoredRow = ownerPage
     .locator(".stock-list-card .inventory-table tbody tr")
@@ -328,6 +367,76 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   ).toBeVisible();
   await expect(ownerPage).toHaveURL(/\/login$/);
   await signIn(ownerPage, "owner@example.test", "SyntheticOwnerPassword-48!");
+  await secondCashierContext.close();
   await cashierContext.close();
   await ownerContext.close();
+});
+
+test("owner can page through older shift history", async ({ page }) => {
+  await page.route(/\/api\/shifts\/history/u, async (route) => {
+    const isOlderPage = new URL(route.request().url()).searchParams.has(
+      "beforeOpenedAt",
+    );
+    const shifts = !isOlderPage
+      ? Array.from({ length: 200 }, (_, index) => ({
+          id: `synthetic-history-${index}`,
+          status: "CLOSED",
+          openedAt: new Date(
+            Date.UTC(2026, 0, 2) - index * 60_000,
+          ).toISOString(),
+          closedAt: new Date(
+            Date.UTC(2026, 0, 2) - index * 60_000 + 30_000,
+          ).toISOString(),
+          openedByEmail: "history.cashier@example.test",
+          closedByEmail: "history.cashier@example.test",
+          openingCash: "50.00",
+          cashSales: "10.00",
+          qrSales: "0.00",
+          cashRefunds: "0.00",
+          cashIn: "0.00",
+          cashOut: "0.00",
+          expectedCash: "60.00",
+          actualCashCount: "60.00",
+          variance: "0.00",
+        }))
+      : [
+          {
+            id: "synthetic-history-older",
+            status: "CLOSED",
+            openedAt: "2025-01-01T00:00:00.000Z",
+            closedAt: "2025-01-01T00:30:00.000Z",
+            openedByEmail: "older.history.cashier@example.test",
+            closedByEmail: "older.history.cashier@example.test",
+            openingCash: "25.00",
+            cashSales: "5.00",
+            qrSales: "0.00",
+            cashRefunds: "0.00",
+            cashIn: "0.00",
+            cashOut: "0.00",
+            expectedCash: "30.00",
+            actualCashCount: "30.00",
+            variance: "0.00",
+          },
+        ];
+    await route.fulfill({
+      json: { shifts, hasMore: !isOlderPage },
+    });
+  });
+
+  await signIn(page, "owner@example.test", "SyntheticOwnerPassword-48!");
+  await page.goto("/shifts");
+  await expect(
+    page.getByRole("heading", { name: "Shift history", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".shift-history-table tbody tr")).toHaveCount(200);
+  await page.getByRole("button", { name: "Load older shifts" }).click();
+  await expect(page.locator(".shift-history-table tbody tr")).toHaveCount(201);
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "older.history.cashier@example.test" }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("button", { name: "Load older shifts" }),
+  ).toHaveCount(0);
 });

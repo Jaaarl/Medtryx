@@ -65,12 +65,12 @@ Deferring a feature means staff need an operating procedure for it. In particula
 
 | Role | Can do |
 | --- | --- |
-| Cashier | Sign in, open/close own shift, search **existing active products** and add them to a checkout cart, make sales, see stock availability and selling prices, record cash or QR declaration. Cannot create or edit an inventory product. |
-| Owner | Everything a cashier can do, plus create/edit/deactivate inventory products, receive/adjust stock, view acquisition cost and profit estimates, approve voids, view reports, export data, and manage users and backups. |
+| Cashier | Sign in, open/close the store's single cash-register shift, search **existing active products** and add them to a checkout cart, make sales, see stock availability and selling prices, record cash or QR declaration. Cannot create or edit an inventory product. |
+| Owner | Everything a cashier can do, plus create/edit/deactivate inventory products, receive/adjust stock, view acquisition cost and profit estimates, approve voids, review shift opening/closing history and cash reconciliation, view reports, export data, and manage users and backups. |
 
 An optional read-only role can be added if someone needs report access without editing rights. All protected actions are checked on the server, not only hidden in the browser interface.
 
-Main screens: **Login**, **Checkout**, **Products**, **Stock**, **Sales History**, **Shift Close**, **Reports**, and **Settings/Backup**. Cashiers search the catalog from **Checkout**; product creation and stock management screens are owner-only. The same checkout works on desktop and tablet widths; large touch targets and keyboard/barcode-scanner input are supported where available.
+Main screens: **Login**, **Checkout**, **Products**, **Stock**, **Sales History**, **Shift Close**, owner-only **Shift History**, **Reports**, and **Settings/Backup**. Cashiers search the catalog from **Checkout**; product creation and stock management screens are owner-only. The same checkout works on desktop and tablet widths; large touch targets and keyboard/barcode-scanner input are supported where available.
 
 ## 5. Products: minimum useful catalog
 
@@ -160,7 +160,7 @@ The app generates an ID such as `MTX-20260927-000123`. Staff do not enter the ma
 
 **Voids:** A finalized sale is never edited or deleted. The owner reauthenticates, enters a reason, and creates a linked full-sale reversal. The reversal offsets sales totals and handles stock according to whether the item is physically sellable. Partial returns and exchanges are deferred.
 
-**Shifts:** The cashier records opening cash, then closes with an actual cash count. Expected cash is opening cash plus cash sales minus cash refunds and recorded cash-out, plus any recorded cash-in. QR-declared sales do not enter expected physical cash. Show the variance and require a reason for a non-zero variance; owner approval may be required by store policy.
+**Shifts:** Only one shift (the store's single cash register) may be open at a time across all cashier accounts. The opening cashier records opening cash, then closes with an actual cash count. Expected cash is opening cash plus cash sales minus cash refunds and recorded cash-out, plus any recorded cash-in. QR-declared sales do not enter expected physical cash. Show the variance and require a reason for a non-zero variance; owner approval may be required by store policy. Owners can review opening/closing account names and times, opening float, cash and QR sales, refunds and cash movements, expected cash, actual count, and variance. Cashier access remains limited to their own current shift.
 
 **Reports:** Filter by Manila business date and show gross and net sales, VATable and VAT-exempt amounts, VAT, SC and PWD discounts separately, cash and QR declarations, voids, COGS, estimated gross profit, current/low stock, and inventory value. Export CSV with safe spreadsheet escaping. Reports are internal records and must reconcile to stored sale, reversal, and stock records. Keep stock write-offs separate from COGS and gross profit.
 
@@ -217,6 +217,8 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 11. An access-restricted backup can be restored into a clean test environment with matching sales, stock, inventory-value totals, and readable authorized customer records.
 12. Staff can use checkout on the actual planned desktop/tablet browsers and the pharmacy's private network.
 13. The owner confirms the acquisition-cost basis, manual expiry/lot procedure, tax rules, invoice process, and any required system registration before live use.
+14. At most one cashier shift can be open store-wide, including when separate cashier accounts attempt to open simultaneously; a cashier can open after the active shift closes.
+15. Owners can review shift opener/closer accounts and times, drawer amounts and cash reconciliation; cashier accounts cannot access the owner history endpoint.
 
 ## 11. Decisions to make before development or launch
 

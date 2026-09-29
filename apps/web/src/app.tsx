@@ -15,6 +15,7 @@ import {
   ArrowRight,
   Boxes,
   ClipboardList,
+  Clock,
   DatabaseBackup,
   KeyRound,
   LayoutDashboard,
@@ -32,6 +33,7 @@ import { useAuth } from "./auth-context";
 import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
 import { SalesHistoryPage } from "./sales-history";
 import { ReportsPage } from "./reports-page";
+import { ShiftHistoryPage } from "./shift-history-page";
 import { BackupsPage } from "./backups-page";
 import { TaxPolicySettings } from "./tax-policy-settings";
 
@@ -47,6 +49,7 @@ const navigation = [
     ownerOnly: true,
   },
   { to: "/reports", label: "Reports", icon: LayoutDashboard, ownerOnly: true },
+  { to: "/shifts", label: "Shift history", icon: Clock, ownerOnly: true },
   {
     to: "/backups",
     label: "Backups",
@@ -727,6 +730,7 @@ export function App() {
             <Route path="stock" element={<StockPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route path="shifts" element={<ShiftHistoryPage />} />
             <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

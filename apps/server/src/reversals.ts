@@ -118,7 +118,7 @@ function handleReversalError(error: unknown, res: Response): boolean {
   }
   if (
     error instanceof Error &&
-    error.message.includes("shifts_one_open_per_cashier_idx")
+    error.message.includes("shifts_one_open_store_idx")
   ) {
     res.status(409).json({ error: "shift_already_open" });
     return true;

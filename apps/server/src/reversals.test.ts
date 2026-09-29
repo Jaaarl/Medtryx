@@ -96,6 +96,16 @@ async function openShift(agent: Agent, openingCash = "100.00") {
     .send({ openingCash });
 }
 
+async function closeShift(
+  agent: Agent,
+  shiftId: string,
+  actualCashCount: string,
+) {
+  return postWithCsrf(agent, `/api/shifts/${shiftId}/close`, {
+    actualCashCount,
+  });
+}
+
 async function sell(
   cashier: Agent,
   productId: string,
@@ -208,8 +218,18 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       "cashier.reversals@example.test",
       cashierPassword,
     );
-    await openShift(cashier, "200.00");
+    const cashierShift = await openShift(cashier, "200.00");
+    expect(cashierShift.status).toBe(201);
     const sale = await sell(cashier, product.id);
+    expect(
+      (
+        await closeShift(
+          cashier,
+          cashierShift.body.shift.id as string,
+          "312.00",
+        )
+      ).status,
+    ).toBe(200);
     const ownerShift = await openShift(owner, "300.00");
     expect(ownerShift.status).toBe(201);
     const shiftId = ownerShift.body.shift.id as string;
@@ -423,8 +443,18 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       "cashier.reversals@example.test",
       cashierPassword,
     );
-    await openShift(cashier, "200.00");
+    const cashierShift = await openShift(cashier, "200.00");
+    expect(cashierShift.status).toBe(201);
     const sale = await sell(cashier, product.id);
+    expect(
+      (
+        await closeShift(
+          cashier,
+          cashierShift.body.shift.id as string,
+          "312.00",
+        )
+      ).status,
+    ).toBe(200);
     const ownerDetails = await owner.get(`/api/sales/${sale.transactionId}`);
     const basePayload = {
       ownerPassword,

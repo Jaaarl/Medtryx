@@ -1505,6 +1505,15 @@ a {
   line-height: 1.5;
   margin: -5px 0 0;
 }
+.register-in-use-note {
+  background: #fff4e7;
+  border: 1px solid #f0dfc7;
+  border-radius: 7px;
+  color: #916329;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 9px 11px;
+}
 .checkout-shift-form > .button,
 .checkout-options > .button,
 .checkout-preview > .button {
@@ -2046,6 +2055,9 @@ a {
   color: #8b9893;
   display: block;
   margin-top: 8px;
+}
+.shift-history-table {
+  min-width: 1100px;
 }
 .backups-page {
   display: grid;
