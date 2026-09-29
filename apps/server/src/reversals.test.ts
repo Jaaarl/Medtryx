@@ -7,7 +7,10 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { openDatabase } from "./db.js";
-import { clearLotLedgerForTest } from "./test-ledger.js";
+import {
+  clearBnpcLedgerForTest,
+  clearLotLedgerForTest,
+} from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -193,6 +196,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearBnpcLedgerForTest(db);
   clearLotLedgerForTest(db);
   db.exec(
     `DELETE FROM sale_reversal_lines;

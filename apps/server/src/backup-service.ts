@@ -267,6 +267,15 @@ function assertDatabaseIntegrity(db: Database.Database): void {
     .get() as { count: number };
   if (hasBundleTables.count === 4 && bundleSnapshotIssues(db).length > 0)
     throw new BackupError("backup_bundle_snapshot_failed");
+  const hasBnpcTables = db
+    .prepare(
+      `SELECT count(*) AS count FROM sqlite_master
+       WHERE type = 'table' AND name IN (
+         'bnpc_policy_versions', 'sale_bnpc_snapshots', 'bnpc_usage_events')`,
+    )
+    .get() as { count: number };
+  if (hasBnpcTables.count === 3 && bnpcSnapshotIssues(db).length > 0)
+    throw new BackupError("backup_bnpc_snapshot_failed");
 }
 
 function bundleSnapshotIssues(db: Database.Database): string[] {
@@ -323,7 +332,9 @@ function bundleSnapshotIssues(db: Database.Database): string[] {
               c.promotional_discount_applied_centavos,
               sl.quantity AS line_quantity, sl.unit_price_centavos,
               sl.bundle_promotion_discount_centavos, sl.benefit_applied,
-              s.benefit_type, c.selected_statutory_treatment
+              s.benefit_type, c.selected_statutory_treatment,
+              c.benefit_treatment_snapshot AS component_treatment_snapshot,
+              sl.benefit_treatment_snapshot AS line_treatment_snapshot
        FROM sale_bundle_component_snapshots c
        JOIN sale_bundle_snapshots b ON b.id = c.sale_bundle_snapshot_id
        JOIN sales_bundle_version_components vc
@@ -347,6 +358,8 @@ function bundleSnapshotIssues(db: Database.Database): string[] {
     benefit_applied: number;
     benefit_type: string;
     selected_statutory_treatment: string;
+    component_treatment_snapshot: string | null;
+    line_treatment_snapshot: string;
   }>;
   for (const row of componentRows) {
     if (
@@ -359,14 +372,120 @@ function bundleSnapshotIssues(db: Database.Database): string[] {
         BigInt(row.regular_unit_price_centavos) * BigInt(row.total_quantity) ||
       row.bundle_promotion_discount_centavos !==
         row.promotional_discount_applied_centavos ||
+      (row.component_treatment_snapshot !== null &&
+        row.component_treatment_snapshot !==
+          row.selected_statutory_treatment) ||
+      row.line_treatment_snapshot !== row.selected_statutory_treatment ||
       (row.selected_statutory_treatment === "REGULAR"
         ? row.benefit_applied !== 0
-        : row.benefit_applied !== 1 ||
-          row.benefit_type !== row.selected_statutory_treatment)
+        : row.selected_statutory_treatment === "BNPC"
+          ? row.benefit_applied !== 0
+          : row.benefit_applied !== 1 ||
+            row.benefit_type !== row.selected_statutory_treatment)
     ) {
       issues.push(`bundle_component:${row.id}`);
     }
   }
+  return issues;
+}
+
+function bnpcSnapshotIssues(db: Database.Database): string[] {
+  const issues: string[] = [];
+  const rows = db
+    .prepare(
+      `SELECT b.sale_id, b.holder_key_hmac, b.week_start_date,
+              b.local_purchase_applied_centavos, b.bnpc_discount_centavos,
+              s.bnpc_discount_centavos AS sale_discount,
+              COALESCE(SUM(sl.bnpc_discount_centavos), 0) AS line_discount,
+              COUNT(DISTINCT e.id) AS sale_event_count,
+              COALESCE(MAX(e.qualifying_purchase_delta_centavos), 0) AS event_purchase,
+              COALESCE(MAX(e.bnpc_discount_delta_centavos), 0) AS event_discount,
+              p.weekly_purchase_limit_centavos,
+              p.weekly_discount_limit_centavos
+       FROM sale_bnpc_snapshots b
+       JOIN sales s ON s.id = b.sale_id
+       JOIN bnpc_policy_versions p ON p.id = b.bnpc_policy_version_id
+       LEFT JOIN sale_lines sl ON sl.sale_id = s.id
+       LEFT JOIN bnpc_usage_events e
+         ON e.sale_id = s.id AND e.event_type = 'SALE'
+       GROUP BY b.sale_id`,
+    )
+    .all() as Array<{
+    sale_id: string;
+    holder_key_hmac: string;
+    week_start_date: string;
+    local_purchase_applied_centavos: number;
+    bnpc_discount_centavos: number;
+    sale_discount: number;
+    line_discount: number;
+    sale_event_count: number;
+    event_purchase: number;
+    event_discount: number;
+    weekly_purchase_limit_centavos: number;
+    weekly_discount_limit_centavos: number;
+  }>;
+  for (const row of rows) {
+    if (
+      !/^[a-f0-9]{64}$/u.test(row.holder_key_hmac) ||
+      !/^\d{4}-\d{2}-\d{2}$/u.test(row.week_start_date) ||
+      row.sale_discount !== row.bnpc_discount_centavos ||
+      row.line_discount !== row.bnpc_discount_centavos ||
+      row.sale_event_count !== 1 ||
+      row.event_purchase !== row.local_purchase_applied_centavos ||
+      row.event_discount !== row.bnpc_discount_centavos ||
+      row.local_purchase_applied_centavos >
+        row.weekly_purchase_limit_centavos ||
+      row.bnpc_discount_centavos > row.weekly_discount_limit_centavos
+    ) {
+      issues.push(`bnpc_sale:${row.sale_id}`);
+    }
+  }
+  const lines = db
+    .prepare(
+      `SELECT sl.id, sl.bnpc_discount_centavos, sl.bnpc_eligible_snapshot,
+              sl.bnpc_category_snapshot, sl.bnpc_policy_version,
+              sl.benefit_treatment_snapshot, s.id AS sale_id,
+              b.id AS snapshot_id, p.id AS policy_id
+       FROM sale_lines sl JOIN sales s ON s.id = sl.sale_id
+       LEFT JOIN sale_bnpc_snapshots b ON b.sale_id = s.id
+       LEFT JOIN bnpc_policy_versions p ON p.id = sl.bnpc_policy_version
+       WHERE sl.bnpc_discount_centavos > 0 OR sl.bnpc_policy_version IS NOT NULL`,
+    )
+    .all() as Array<{
+    id: string;
+    bnpc_discount_centavos: number;
+    bnpc_eligible_snapshot: number;
+    bnpc_category_snapshot: string | null;
+    bnpc_policy_version: string | null;
+    benefit_treatment_snapshot: string;
+    sale_id: string;
+    snapshot_id: string | null;
+    policy_id: string | null;
+  }>;
+  for (const line of lines) {
+    if (
+      (line.bnpc_discount_centavos > 0 &&
+        (line.benefit_treatment_snapshot !== "BNPC" ||
+          line.bnpc_eligible_snapshot !== 1 ||
+          !line.bnpc_category_snapshot ||
+          !line.snapshot_id ||
+          !line.policy_id)) ||
+      (line.bnpc_policy_version !== null &&
+        (!line.snapshot_id || !line.policy_id))
+    ) {
+      issues.push(`bnpc_line:${line.id}`);
+    }
+  }
+  const unmatchedEvents = db
+    .prepare(
+      `SELECT e.id FROM bnpc_usage_events e
+       LEFT JOIN sale_bnpc_snapshots b ON b.sale_id = e.sale_id
+       LEFT JOIN sale_reversals r ON r.id = e.reversal_id AND r.sale_id = e.sale_id
+       WHERE (e.event_type = 'SALE' AND b.sale_id IS NULL)
+          OR (e.event_type = 'REVERSAL' AND (b.sale_id IS NULL OR r.id IS NULL))`,
+    )
+    .all() as Array<{ id: string }>;
+  for (const event of unmatchedEvents) issues.push(`bnpc_event:${event.id}`);
   return issues;
 }
 
@@ -708,6 +827,7 @@ const restoreTables = [
   "schema_migrations",
   "users",
   "settings",
+  "bnpc_policy_versions",
   "product_sku_sequence",
   "products",
   "sale_sequences",
@@ -717,6 +837,7 @@ const restoreTables = [
   "lot_reconciliations",
   "shifts",
   "sales",
+  "sale_bnpc_snapshots",
   "sales_bundles",
   "sales_bundle_versions",
   "sales_bundle_version_components",
@@ -724,6 +845,7 @@ const restoreTables = [
   "sale_lines",
   "sale_bundle_component_snapshots",
   "sale_reversals",
+  "bnpc_usage_events",
   "sale_reversal_lines",
   "cash_movements",
   "lot_stock_movements",
@@ -754,7 +876,10 @@ function applyRestoredDatabase(
            'sales_bundle_version_components_no_delete',
            'sale_bundle_snapshots_no_update', 'sale_bundle_snapshots_no_delete',
            'sale_bundle_component_snapshots_no_update',
-           'sale_bundle_component_snapshots_no_delete'
+           'sale_bundle_component_snapshots_no_delete',
+           'bnpc_policy_versions_no_update', 'bnpc_policy_versions_no_delete',
+           'sale_bnpc_snapshots_no_update', 'sale_bnpc_snapshots_no_delete',
+           'bnpc_usage_events_no_update', 'bnpc_usage_events_no_delete'
          ) ORDER BY name`,
       )
       .all() as Array<{ sql: string }>;
@@ -777,6 +902,12 @@ function applyRestoredDatabase(
         "sale_bundle_snapshots_no_delete",
         "sale_bundle_component_snapshots_no_update",
         "sale_bundle_component_snapshots_no_delete",
+        "bnpc_policy_versions_no_update",
+        "bnpc_policy_versions_no_delete",
+        "sale_bnpc_snapshots_no_update",
+        "sale_bnpc_snapshots_no_delete",
+        "bnpc_usage_events_no_update",
+        "bnpc_usage_events_no_delete",
       ]) {
         db.exec(`DROP TRIGGER IF EXISTS main.${triggerName}`);
       }

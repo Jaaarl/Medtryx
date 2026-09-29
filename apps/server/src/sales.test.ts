@@ -9,6 +9,7 @@ import { createApp } from "./app.js";
 import { decryptCustomerField } from "./customer-data.js";
 import { openDatabase } from "./db.js";
 import {
+  clearBnpcLedgerForTest,
   clearBundleLedgerForTest,
   clearLotLedgerForTest,
 } from "./test-ledger.js";
@@ -33,10 +34,11 @@ let secondCashierHash: string;
 type Agent = ReturnType<typeof request.agent>;
 
 async function seedUsers(): Promise<void> {
+  clearBnpcLedgerForTest(db);
   clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   db.exec(
-    "DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
+    "DELETE FROM sale_reversal_lines; DELETE FROM cash_movements; DELETE FROM sale_reversals; DELETE FROM reversal_sequences; DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
   );
   const now = new Date().toISOString();
   ownerId = randomUUID();
@@ -99,6 +101,51 @@ async function configureApprovedPolicy(
   expect(response.status, JSON.stringify(response.body)).toBe(200);
 }
 
+async function configureBnpcPolicy(owner: Agent, version = randomUUID()) {
+  const csrf = await csrfFor(owner);
+  const response = await owner
+    .post("/api/settings/bnpc-policy")
+    .set("x-csrf-token", csrf)
+    .send({
+      version: `SYNTHETIC-BNPC-${version}`,
+      effectiveFrom: "2024-03-25",
+      sourceTitle: "Synthetic review of JAO No. 24-02",
+      sourceUrl:
+        "https://ncda.gov.ph/wp-content/uploads/2024/04/JAO-DTI-DA-DOE-No.-240-02-S2024.pdf",
+      reviewedAt: manilaDayAfter(0),
+      discountRateBasisPoints: 500,
+      weeklyPurchaseLimit: "2500.00",
+      weeklyDiscountLimit: "125.00",
+      noCarryover: true,
+      minimumKindsAtPurchaseLimit: 4,
+      storeEligibilityConfirmed: true,
+      approvalReference: "Synthetic test-only owner/accountant approval",
+      enabled: true,
+      confirmOwnerReview: true,
+      confirmAccountantApproval: true,
+    });
+  expect(response.status, JSON.stringify(response.body)).toBe(201);
+  return response.body.policy as { versionId: string; version: string };
+}
+
+function syntheticBnpcChecks(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    bookletChecked: true,
+    priorPurchaseConfirmed: true,
+    externalPurchaseAmount: "0.00",
+    externalDiscountUsedAmount: "0.00",
+    representativePurchase: false,
+    representativeDocumentsChecked: false,
+    authorizationLetterIssuedDate: null,
+    prescriptionApplicable: false,
+    prescriptionChecked: false,
+    fourKindsChecked: false,
+    ...overrides,
+  };
+}
+
 async function createProduct(
   owner: Agent,
   overrides: Record<string, unknown> = {},
@@ -116,6 +163,7 @@ async function createProduct(
       productType: "BRANDED",
       isScEligible: true,
       isPwdEligible: true,
+      bnpcPrescriptionRequired: false,
       openingQuantity: 5,
       openingUnitCost: "40.00",
       ...overrides,
@@ -198,6 +246,365 @@ beforeAll(async () => {
   cashierHash = await argon2.hash(cashierPassword, { type: argon2.argon2id });
   secondCashierHash = await argon2.hash(secondCashierPassword, {
     type: argon2.argon2id,
+  });
+});
+
+describe("BNPC checkout", () => {
+  it("keeps policy off until an owner records an approved, store-eligible version", async () => {
+    await seedUsers();
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await owner.get("/api/bnpc-policy")).body.policy.enabled).toBe(
+      false,
+    );
+    expect((await cashier.get("/api/settings/bnpc-policy")).status).toBe(403);
+    expect(
+      (await cashier.post("/api/settings/bnpc-policy").send({ enabled: true }))
+        .status,
+    ).toBe(403);
+
+    const version = await configureBnpcPolicy(owner);
+    const current = await owner.get("/api/settings/bnpc-policy");
+    expect(current.body.policy).toMatchObject({
+      enabled: true,
+      storeEligibilityConfirmed: true,
+      version: version.version,
+      weeklyPurchaseLimit: "2500.00",
+      weeklyDiscountLimit: "125.00",
+    });
+    expect(() =>
+      db
+        .prepare("UPDATE bnpc_policy_versions SET enabled = 0 WHERE id = ?")
+        .run(version.versionId),
+    ).toThrow(/immutable/u);
+    const audit = await owner.get("/api/audit?limit=20");
+    expect(
+      audit.body.events.some(
+        (event: { action: string }) =>
+          event.action === "settings.bnpc_policy.enabled",
+      ),
+    ).toBe(true);
+  });
+
+  it("prices mixed carts per line, keeps VAT, stores only a keyed holder reference, and reverses usage", async () => {
+    await seedUsers();
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    await configureBnpcPolicy(owner);
+    const covered = await createProduct(owner, {
+      sku: "SYN-BNPC-COVERED",
+      name: "Synthetic covered item",
+      bnpcEligible: true,
+      bnpcCategory: "BASIC_NECESSITY",
+      bnpcSource: "Synthetic DTI/DA covered-goods list review",
+      bnpcReviewReference: "Synthetic signed classification BNPC-01",
+      isScEligible: false,
+      isPwdEligible: false,
+    });
+    const regular = await createProduct(owner, {
+      sku: "SYN-BNPC-REGULAR",
+      name: "Synthetic ineligible item",
+      isScEligible: false,
+      isPwdEligible: false,
+    });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier, "500.00")).status).toBe(201);
+    const checks = syntheticBnpcChecks();
+    const noBookletToken = await csrfFor(cashier);
+    const saleBody = {
+      benefitType: "PWD",
+      paymentMethod: "CASH",
+      customerIdNumber: "SYN-PRIVATE-ID-9000",
+      bnpcChecks: checks,
+      items: [
+        { productId: covered.id, quantity: 1, benefitTreatment: "BNPC" },
+        { productId: regular.id, quantity: 1, benefitTreatment: "REGULAR" },
+      ],
+    };
+    const noBooklet = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noBookletToken)
+      .send({
+        ...saleBody,
+        bnpcChecks: syntheticBnpcChecks({ bookletChecked: false }),
+      });
+    expect(noBooklet.status, JSON.stringify(noBooklet.body)).toBe(409);
+    expect(noBooklet.body.error).toBe("bnpc_evidence_required");
+
+    const invalidProduct = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noBookletToken)
+      .send({
+        ...saleBody,
+        items: [
+          { productId: regular.id, quantity: 1, benefitTreatment: "BNPC" },
+        ],
+      });
+    expect(invalidProduct.status).toBe(409);
+    expect(invalidProduct.body.error).toBe("product_not_bnpc_eligible");
+
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noBookletToken)
+      .send(saleBody);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.lines[0]).toMatchObject({
+      benefitTreatment: "BNPC",
+      bnpcEligible: true,
+      bnpcCategory: "BASIC_NECESSITY",
+      bnpcDiscount: "5.60",
+      taxBasis: "95.00",
+      vat: "11.40",
+      vatRemoved: "0.00",
+      amountDue: "106.40",
+    });
+    expect(preview.body.lines[1]).toMatchObject({
+      benefitTreatment: "REGULAR",
+      bnpcEligible: false,
+      bnpcDiscount: "0.00",
+      vatRemoved: "0.00",
+    });
+    expect(preview.body.totals).toMatchObject({
+      bnpcDiscount: "5.60",
+      bnpcQualifyingPurchase: "112.00",
+    });
+
+    const sale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", noBookletToken)
+      .send({
+        ...saleBody,
+        requestKey: randomUUID(),
+        customerName: "Synthetic BNPC Holder",
+        customerIdType: "Synthetic holder ID",
+        customerIdChecked: true,
+      });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    expect(JSON.stringify(sale.body)).not.toContain("SYN-PRIVATE-ID-9000");
+    expect(sale.body.sale.bnpcDiscount).toBe("5.60");
+    expect(sale.body.sale.lines[0]).toMatchObject({
+      benefitTreatment: "BNPC",
+      bnpcCategory: "BASIC_NECESSITY",
+      bnpcDiscount: "5.60",
+    });
+    expect(sale.body.sale.lines[0].cogs).toBeUndefined();
+
+    const snapshot = db
+      .prepare(
+        `SELECT holder_key_hmac, week_start_date,
+                local_purchase_applied_centavos, bnpc_discount_centavos
+         FROM sale_bnpc_snapshots WHERE sale_id = ?`,
+      )
+      .get(sale.body.sale.id) as {
+      holder_key_hmac: string;
+      week_start_date: string;
+      local_purchase_applied_centavos: number;
+      bnpc_discount_centavos: number;
+    };
+    expect(snapshot.holder_key_hmac).toMatch(/^[a-f0-9]{64}$/u);
+    expect(snapshot.local_purchase_applied_centavos).toBe(11_200);
+    expect(snapshot.bnpc_discount_centavos).toBe(560);
+    expect(snapshot.week_start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+
+    const reportPath = `/api/reports/daily?date=${sale.body.sale.businessDate}`;
+    const report = await owner.get(reportPath);
+    expect(report.body.report.metrics.bnpcDiscounts).toBe("5.60");
+    expect(report.body.report.bnpcSales[0]).toMatchObject({
+      holderType: "PWD",
+      localPurchaseApplied: "112.00",
+      discount: "5.60",
+      verifiedPurchaseAllowance: "2500.00",
+      verifiedDiscountAllowance: "125.00",
+      taxBasis: "95.00",
+      vat: "11.40",
+      vatRemoved: "0.00",
+      localStoreOnly: true,
+    });
+    const csv = await owner.get(
+      `/api/reports/daily.csv?date=${sale.body.sale.businessDate}`,
+    );
+    expect(csv.text).toContain(
+      '"Discounts","BNPC 5% (net of full reversals)","5.60"',
+    );
+    expect(csv.text).not.toContain("SYN-PRIVATE-ID-9000");
+    expect(csv.text).not.toContain(snapshot.holder_key_hmac);
+
+    const details = await owner.get(
+      `/api/sales/${sale.body.sale.transactionId}`,
+    );
+    const ownerCsrf = await csrfFor(owner);
+    const reversal = await owner
+      .post(`/api/sales/${sale.body.sale.transactionId}/reversals`)
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        ownerPassword,
+        reason: "Synthetic BNPC full reversal",
+        refundMethod: "QR",
+        lines: details.body.sale.lines.map((line: { saleLineId: string }) => ({
+          saleLineId: line.saleLineId,
+          restock: true,
+        })),
+      });
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    expect(
+      db
+        .prepare(
+          `SELECT event_type, qualifying_purchase_delta_centavos,
+                  bnpc_discount_delta_centavos
+           FROM bnpc_usage_events ORDER BY sequence`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        event_type: "SALE",
+        qualifying_purchase_delta_centavos: 11_200,
+        bnpc_discount_delta_centavos: 560,
+      },
+      {
+        event_type: "REVERSAL",
+        qualifying_purchase_delta_centavos: -11_200,
+        bnpc_discount_delta_centavos: -560,
+      },
+    ]);
+    const netReport = await owner.get(reportPath);
+    expect(netReport.body.report.metrics.bnpcDiscounts).toBe("0.00");
+  });
+
+  it("requires four-kind booklet confirmation at the full weekly cap and records local usage", async () => {
+    await seedUsers();
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    await configureBnpcPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-BNPC-FULL-CAP",
+      name: "Synthetic covered item at cap",
+      sellingPrice: "100.00",
+      openingQuantity: 30,
+      bnpcEligible: true,
+      bnpcCategory: "PRIME_COMMODITY",
+      bnpcSource: "Synthetic DTI/DA covered-goods list review",
+      bnpcReviewReference: "Synthetic signed classification BNPC-CAP",
+      isScEligible: false,
+      isPwdEligible: false,
+    });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    await openShift(cashier, "1000.00");
+    const requestBody = {
+      benefitType: "SENIOR_CITIZEN",
+      customerIdNumber: "SYNTHETIC-CAP-HOLDER",
+      bnpcChecks: syntheticBnpcChecks(),
+      items: [
+        { productId: product.id, quantity: 25, benefitTreatment: "BNPC" },
+      ],
+    };
+    const noFourKindsToken = await csrfFor(cashier);
+    const noFourKinds = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noFourKindsToken)
+      .send(requestBody);
+    expect(noFourKinds.status, JSON.stringify(noFourKinds.body)).toBe(409);
+    expect(noFourKinds.body.error).toBe(
+      "bnpc_four_kinds_confirmation_required",
+    );
+
+    const fullChecks = syntheticBnpcChecks({ fourKindsChecked: true });
+    const fullCap = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noFourKindsToken)
+      .send({ ...requestBody, bnpcChecks: fullChecks });
+    expect(fullCap.status, JSON.stringify(fullCap.body)).toBe(200);
+    expect(fullCap.body.totals).toMatchObject({
+      bnpcQualifyingPurchase: "2500.00",
+      bnpcDiscount: "125.00",
+    });
+
+    const fullSale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", noFourKindsToken)
+      .send({
+        ...requestBody,
+        bnpcChecks: fullChecks,
+        requestKey: randomUUID(),
+        customerName: "Synthetic cap holder",
+        customerIdType: "Synthetic holder ID",
+        customerIdChecked: true,
+        paymentMethod: "CASH",
+      });
+    expect(fullSale.status, JSON.stringify(fullSale.body)).toBe(201);
+
+    const overCap = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noFourKindsToken)
+      .send({
+        benefitType: "SENIOR_CITIZEN",
+        customerIdNumber: "SYNTHETIC-CAP-HOLDER",
+        bnpcChecks: fullChecks,
+        items: [
+          { productId: product.id, quantity: 1, benefitTreatment: "BNPC" },
+        ],
+      });
+    expect(overCap.status).toBe(409);
+    expect(overCap.body.error).toBe("bnpc_purchase_allowance_exceeded");
+    const regular = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noFourKindsToken)
+      .send({
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(regular.status).toBe(200);
+  });
+
+  it("enforces the owner-reviewed prescription requirement for BNPC lines", async () => {
+    await seedUsers();
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    await configureBnpcPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-BNPC-RX-REQUIRED",
+      name: "Synthetic prescription-required covered item",
+      bnpcEligible: true,
+      bnpcCategory: "PRIME_COMMODITY",
+      bnpcSource: "Synthetic covered-goods review",
+      bnpcReviewReference: "Synthetic prescription review BNPC-RX",
+      bnpcPrescriptionRequired: true,
+      isScEligible: false,
+      isPwdEligible: false,
+    });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const token = await csrfFor(cashier);
+    const checks = syntheticBnpcChecks();
+    const baseRequest = {
+      benefitType: "PWD",
+      customerIdNumber: "SYNTHETIC-RX-HOLDER",
+      bnpcChecks: checks,
+      items: [{ productId: product.id, quantity: 1, benefitTreatment: "BNPC" }],
+    };
+    const missing = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", token)
+      .send(baseRequest);
+    expect(missing.status).toBe(409);
+    expect(missing.body.error).toBe(
+      "bnpc_product_prescription_confirmation_required",
+    );
+
+    const checked = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", token)
+      .send({
+        ...baseRequest,
+        bnpcChecks: {
+          ...checks,
+          prescriptionApplicable: true,
+          prescriptionChecked: true,
+        },
+      });
+    expect(checked.status).toBe(200);
+    expect(checked.body.lines[0]).toMatchObject({
+      bnpcPrescriptionRequired: true,
+      benefitTreatment: "BNPC",
+    });
   });
 });
 

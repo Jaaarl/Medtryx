@@ -218,7 +218,8 @@ function activeOffer(db: Database.Database, row: BundleRow) {
   const components = db
     .prepare(
       `SELECT p.id, p.sku, p.name, p.unit, p.selling_price_centavos,
-            p.tax_class, p.sc_eligible, p.pwd_eligible, p.tracks_lots,
+            p.tax_class, p.sc_eligible, p.pwd_eligible, p.bnpc_eligible,
+            p.bnpc_category, p.bnpc_prescription_required, p.tracks_lots,
             p.quantity_on_hand, p.is_active, c.quantity, c.component_order
      FROM sales_bundle_version_components c JOIN products p ON p.id = c.product_id
      WHERE c.bundle_version_id = ? ORDER BY c.component_order`,
@@ -232,6 +233,9 @@ function activeOffer(db: Database.Database, row: BundleRow) {
     tax_class: string;
     sc_eligible: number;
     pwd_eligible: number;
+    bnpc_eligible: number;
+    bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
+    bnpc_prescription_required: number;
     tracks_lots: number;
     quantity_on_hand: number;
     is_active: number;
@@ -274,6 +278,9 @@ function activeOffer(db: Database.Database, row: BundleRow) {
       taxClass: component.tax_class,
       isScEligible: component.sc_eligible === 1,
       isPwdEligible: component.pwd_eligible === 1,
+      isBnpcEligible: component.bnpc_eligible === 1,
+      isBnpcPrescriptionRequired: component.bnpc_prescription_required === 1,
+      bnpcCategory: component.bnpc_category,
       tracksLots: component.tracks_lots === 1,
       quantityAvailable,
       assignedLots,

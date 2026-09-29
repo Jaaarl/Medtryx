@@ -21,11 +21,13 @@ type SaleLineRow = {
   unit_price_centavos: number;
   tax_class_snapshot: "VATABLE" | "VAT_EXEMPT" | "ZERO_RATED";
   benefit_applied: number;
+  benefit_treatment_snapshot: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
   benefit_type: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
   tax_basis_centavos: number;
   vat_centavos: number;
   vat_removed_centavos: number;
   discount_centavos: number;
+  bnpc_discount_centavos: number;
   bundle_promotion_discount_centavos: number;
   amount_due_centavos: number;
   allocated_cogs_centavos: number;
@@ -108,8 +110,10 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
   const saleLines = db
     .prepare(
       `SELECT sl.quantity, sl.unit_price_centavos, sl.tax_class_snapshot,
-              sl.benefit_applied, s.benefit_type, sl.tax_basis_centavos,
+              sl.benefit_applied, sl.benefit_treatment_snapshot,
+              s.benefit_type, sl.tax_basis_centavos,
               sl.vat_centavos, sl.vat_removed_centavos, sl.discount_centavos,
+              sl.bnpc_discount_centavos,
               sl.bundle_promotion_discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos
        FROM sale_lines sl JOIN sales s ON s.id = sl.sale_id
@@ -139,13 +143,12 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       "bundlePromotionalDiscounts",
       BigInt(line.bundle_promotion_discount_centavos),
     );
-    if (line.benefit_applied === 1) {
-      if (line.benefit_type === "SENIOR_CITIZEN") {
-        add(totals, "seniorDiscounts", BigInt(line.discount_centavos));
-      } else if (line.benefit_type === "PWD") {
-        add(totals, "pwdDiscounts", BigInt(line.discount_centavos));
-      }
+    if (line.benefit_treatment_snapshot === "SENIOR_CITIZEN") {
+      add(totals, "seniorDiscounts", BigInt(line.discount_centavos));
+    } else if (line.benefit_treatment_snapshot === "PWD") {
+      add(totals, "pwdDiscounts", BigInt(line.discount_centavos));
     }
+    add(totals, "bnpcDiscounts", BigInt(line.bnpc_discount_centavos));
   }
 
   const reversalRows = db
@@ -176,8 +179,10 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
   const reversalLines = db
     .prepare(
       `SELECT sl.quantity, sl.unit_price_centavos, sl.tax_class_snapshot,
-              sl.benefit_applied, s.benefit_type, sl.tax_basis_centavos,
+              sl.benefit_applied, sl.benefit_treatment_snapshot,
+              s.benefit_type, sl.tax_basis_centavos,
               sl.vat_centavos, sl.vat_removed_centavos, sl.discount_centavos,
+              sl.bnpc_discount_centavos,
               sl.bundle_promotion_discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos,
               rl.refund_amount_centavos, rl.original_cogs_centavos
@@ -211,13 +216,12 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       "bundlePromotionalDiscounts",
       -BigInt(line.bundle_promotion_discount_centavos),
     );
-    if (line.benefit_applied === 1) {
-      if (line.benefit_type === "SENIOR_CITIZEN") {
-        add(totals, "seniorDiscounts", -BigInt(line.discount_centavos));
-      } else if (line.benefit_type === "PWD") {
-        add(totals, "pwdDiscounts", -BigInt(line.discount_centavos));
-      }
+    if (line.benefit_treatment_snapshot === "SENIOR_CITIZEN") {
+      add(totals, "seniorDiscounts", -BigInt(line.discount_centavos));
+    } else if (line.benefit_treatment_snapshot === "PWD") {
+      add(totals, "pwdDiscounts", -BigInt(line.discount_centavos));
     }
+    add(totals, "bnpcDiscounts", -BigInt(line.bnpc_discount_centavos));
   }
 
   const cashRows = db
@@ -365,6 +369,43 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     promotional_discount_applied_centavos: number;
   }>;
   const reversalCount = reversalRows.length;
+  const bnpcSales = db
+    .prepare(
+      `SELECT s.transaction_id, s.benefit_type, p.version AS policy_version,
+              p.effective_from, p.source_title, b.week_start_date,
+              b.local_purchase_applied_centavos,
+              b.bnpc_discount_centavos,
+              b.verified_purchase_allowance_centavos,
+              b.verified_discount_allowance_centavos,
+              b.external_purchase_attested_centavos,
+              b.external_discount_attested_centavos,
+              SUM(sl.tax_basis_centavos) AS tax_basis_centavos,
+              SUM(sl.vat_centavos) AS vat_centavos,
+              SUM(sl.vat_removed_centavos) AS vat_removed_centavos
+       FROM sale_bnpc_snapshots b
+       JOIN sales s ON s.id = b.sale_id
+       JOIN bnpc_policy_versions p ON p.id = b.bnpc_policy_version_id
+       JOIN sale_lines sl ON sl.sale_id = s.id AND sl.bnpc_policy_version = p.id
+       WHERE s.business_date >= ? AND s.business_date <= ?
+       GROUP BY s.id ORDER BY s.created_at, s.transaction_id`,
+    )
+    .all(startDay, endDay) as Array<{
+    transaction_id: string;
+    benefit_type: "SENIOR_CITIZEN" | "PWD";
+    policy_version: string;
+    effective_from: string;
+    source_title: string;
+    week_start_date: string;
+    local_purchase_applied_centavos: number;
+    bnpc_discount_centavos: number;
+    verified_purchase_allowance_centavos: number;
+    verified_discount_allowance_centavos: number;
+    external_purchase_attested_centavos: number;
+    external_discount_attested_centavos: number;
+    tax_basis_centavos: number;
+    vat_centavos: number;
+    vat_removed_centavos: number;
+  }>;
   const total = (key: string) => money(totals[key] ?? 0n);
   const estimatedGrossProfit =
     (totals.netSalesExcludingVat ?? 0n) - (totals.cogs ?? 0n);
@@ -384,6 +425,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       vatRemoved: total("vatRemoved"),
       seniorDiscounts: total("seniorDiscounts"),
       pwdDiscounts: total("pwdDiscounts"),
+      bnpcDiscounts: total("bnpcDiscounts"),
       bundlePromotionalDiscounts: total("bundlePromotionalDiscounts"),
       cashSales: total("cashSales"),
       qrSales: total("qrSales"),
@@ -421,6 +463,32 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       promotionalDiscountApplied: money(
         BigInt(bundle.promotional_discount_applied_centavos),
       ),
+    })),
+    bnpcSales: bnpcSales.map((sale) => ({
+      transactionId: sale.transaction_id,
+      holderType: sale.benefit_type,
+      policyVersion: sale.policy_version,
+      effectiveFrom: sale.effective_from,
+      sourceTitle: sale.source_title,
+      weekStartDate: sale.week_start_date,
+      localPurchaseApplied: money(BigInt(sale.local_purchase_applied_centavos)),
+      discount: money(BigInt(sale.bnpc_discount_centavos)),
+      verifiedPurchaseAllowance: money(
+        BigInt(sale.verified_purchase_allowance_centavos),
+      ),
+      verifiedDiscountAllowance: money(
+        BigInt(sale.verified_discount_allowance_centavos),
+      ),
+      externalPurchaseAttested: money(
+        BigInt(sale.external_purchase_attested_centavos),
+      ),
+      externalDiscountAttested: money(
+        BigInt(sale.external_discount_attested_centavos),
+      ),
+      taxBasis: money(BigInt(sale.tax_basis_centavos)),
+      vat: money(BigInt(sale.vat_centavos)),
+      vatRemoved: money(BigInt(sale.vat_removed_centavos)),
+      localStoreOnly: true,
     })),
     inventory: {
       activeProductCount: activeProducts.length,
@@ -468,6 +536,11 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ["Tax", "VAT removed for benefits", report.metrics.vatRemoved],
     ["Discounts", "Senior citizen", report.metrics.seniorDiscounts],
     ["Discounts", "PWD", report.metrics.pwdDiscounts],
+    [
+      "Discounts",
+      "BNPC 5% (net of full reversals)",
+      report.metrics.bnpcDiscounts,
+    ],
     [
       "Discounts",
       "Bundle promotional discounts (net of reversals)",

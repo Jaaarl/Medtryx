@@ -28,6 +28,7 @@ import {
 import { selectedEnvironment, writeAuditEvent } from "./db.js";
 import { registerInventoryRoutes } from "./inventory.js";
 import { registerBundleRoutes } from "./bundles.js";
+import { registerBnpcPolicyRoutes } from "./bnpc-policy.js";
 import { registerBackupRoutes } from "./backups.js";
 import { registerReversalRoutes } from "./reversals.js";
 import { registerReportRoutes } from "./reports.js";
@@ -413,6 +414,7 @@ export function createApp(
   app.use("/api", inventoryRouter);
   const salesRouter = express.Router();
   registerSalesRoutes(salesRouter, db);
+  registerBnpcPolicyRoutes(salesRouter, db);
   registerReversalRoutes(salesRouter, db);
   registerReportRoutes(salesRouter, db);
   app.use("/api", salesRouter);

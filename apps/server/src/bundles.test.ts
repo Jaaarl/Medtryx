@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { openDatabase } from "./db.js";
 import {
+  clearBnpcLedgerForTest,
   clearBundleLedgerForTest,
   clearLotLedgerForTest,
 } from "./test-ledger.js";
@@ -29,6 +30,7 @@ let cashierHash: string;
 type Agent = ReturnType<typeof request.agent>;
 
 async function seed(): Promise<void> {
+  clearBnpcLedgerForTest(db);
   clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   db.transaction(() => {
@@ -101,6 +103,9 @@ async function createProduct(
     taxClass?: "VATABLE" | "VAT_EXEMPT";
     isScEligible?: boolean;
     tracksLots?: boolean;
+    bnpcEligible?: boolean;
+    bnpcPrescriptionRequired?: boolean;
+    bnpcCategory?: "BASIC_NECESSITY" | "PRIME_COMMODITY";
   },
 ) {
   const csrf = await csrfFor(owner);
@@ -117,6 +122,19 @@ async function createProduct(
       isScEligible: options.isScEligible ?? false,
       isPwdEligible: false,
       tracksLots: options.tracksLots ?? false,
+      bnpcEligible: options.bnpcEligible ?? false,
+      ...(options.bnpcEligible
+        ? {
+            bnpcPrescriptionRequired: options.bnpcPrescriptionRequired ?? false,
+          }
+        : {}),
+      ...(options.bnpcEligible
+        ? {
+            bnpcCategory: options.bnpcCategory ?? "BASIC_NECESSITY",
+            bnpcSource: "Synthetic DTI/DA covered-goods list review",
+            bnpcReviewReference: `Synthetic BNPC review ${options.sku}`,
+          }
+        : {}),
       openingQuantity: 5,
       openingUnitCost: "3.00",
       ...(options.tracksLots
@@ -149,6 +167,32 @@ async function approveTax(owner: Agent) {
       costBasisDescription: "Synthetic weighted-average unit costs only",
     });
   expect(response.status, JSON.stringify(response.body)).toBe(200);
+}
+
+async function approveBnpc(owner: Agent) {
+  const csrf = await csrfFor(owner);
+  const response = await owner
+    .post("/api/settings/bnpc-policy")
+    .set("x-csrf-token", csrf)
+    .send({
+      version: `SYNTHETIC-BNPC-${randomUUID()}`,
+      effectiveFrom: "2024-03-25",
+      sourceTitle: "Synthetic review of JAO No. 24-02",
+      sourceUrl:
+        "https://ncda.gov.ph/wp-content/uploads/2024/04/JAO-DTI-DA-DOE-No.-240-02-S2024.pdf",
+      reviewedAt: todayInManila(),
+      discountRateBasisPoints: 500,
+      weeklyPurchaseLimit: "2500.00",
+      weeklyDiscountLimit: "125.00",
+      noCarryover: true,
+      minimumKindsAtPurchaseLimit: 4,
+      storeEligibilityConfirmed: true,
+      approvalReference: "Synthetic bundle/accountant approval",
+      enabled: true,
+      confirmOwnerReview: true,
+      confirmAccountantApproval: true,
+    });
+  expect(response.status, JSON.stringify(response.body)).toBe(201);
 }
 
 async function createBundle(
@@ -531,6 +575,114 @@ describe("virtual bundle offers", () => {
       });
     expect(stale.status).toBe(409);
     expect(stale.body.error).toBe("bundle_offer_unavailable");
+  });
+
+  it("compares component BNPC with allocated promotion without stacking across VAT classes", async () => {
+    const owner = await signIn("owner.bundles@example.test", ownerPassword);
+    await approveTax(owner);
+    await approveBnpc(owner);
+    const covered = await createProduct(owner, {
+      sku: "SYN-BND-BNPC",
+      name: "Synthetic BNPC tablet",
+      sellingPrice: "112.00",
+      bnpcEligible: true,
+      bnpcCategory: "PRIME_COMMODITY",
+    });
+    const exempt = await createProduct(owner, {
+      sku: "SYN-BND-EXEMPT",
+      name: "Synthetic exempt component",
+      sellingPrice: "20.01",
+      taxClass: "VAT_EXEMPT",
+    });
+    const created = await createBundle(owner, [covered.id, exempt.id], {
+      code: "SYN-BNPC-BUNDLE",
+      name: "Synthetic mixed BNPC bundle",
+      reductionValue: 401,
+      promotionalPrice: "128.00",
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.pricing).toEqual({
+      regularTotal: "132.01",
+      suggestedPromotionalPrice: "128.00",
+      approvedPromotionalPrice: "128.00",
+    });
+    const cashier = await signIn(
+      "cashier.bundles@example.test",
+      cashierPassword,
+    );
+    const offer = {
+      offerKey: randomUUID(),
+      bundleVersionId: created.body.bundle.versionId as string,
+      quantity: 1,
+      components: [
+        { productId: covered.id, benefitTreatment: "BNPC" },
+        { productId: exempt.id, benefitTreatment: "REGULAR" },
+      ],
+    };
+    const csrf = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({
+        benefitType: "PWD",
+        customerIdNumber: "SYNTHETIC-BUNDLE-HOLDER",
+        bnpcChecks: {
+          bookletChecked: true,
+          priorPurchaseConfirmed: true,
+          externalPurchaseAmount: "0.00",
+          externalDiscountUsedAmount: "0.00",
+          representativePurchase: false,
+          representativeDocumentsChecked: false,
+          authorizationLetterIssuedDate: null,
+          prescriptionApplicable: false,
+          prescriptionChecked: false,
+          fourKindsChecked: false,
+        },
+        paymentMethod: "QR",
+        items: [],
+        bundleOffers: [offer],
+      });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.lines[0]).toMatchObject({
+      benefitTreatment: "BNPC",
+      bnpcCategory: "PRIME_COMMODITY",
+      regularGross: "112.00",
+      bnpcDiscount: "5.60",
+      discount: "0.00",
+      vatRemoved: "0.00",
+      vat: "11.40",
+      amountDue: "106.40",
+    });
+    expect(preview.body.lines[0].bundle).toMatchObject({
+      promotionSelected: false,
+      selectedStatutoryTreatment: "BNPC",
+      statutoryAlternativeAmountDue: "106.40",
+      promotionAlternativeAmountDue: "108.60",
+      allocatedPromotionDiscount: "3.40",
+      appliedPromotionDiscount: "0.00",
+    });
+    expect(preview.body.lines[1]).toMatchObject({
+      taxClass: "VAT_EXEMPT",
+      benefitTreatment: "REGULAR",
+      bnpcDiscount: "0.00",
+      vat: "0.00",
+      amountDue: "19.40",
+    });
+    expect(preview.body.lines[1].bundle).toMatchObject({
+      allocatedPromotionDiscount: "0.61",
+      appliedPromotionDiscount: "0.61",
+      promotionSelected: true,
+    });
+    expect(preview.body.bundles[0]).toMatchObject({
+      promotionalDiscountOffered: "4.01",
+      promotionalDiscountApplied: "0.61",
+      discountInteractionRule: "MORE_FAVORABLE_NO_STACK_V1",
+    });
+    expect(preview.body.totals).toMatchObject({
+      bnpcDiscount: "5.60",
+      bundlePromotionalDiscount: "0.61",
+      amountDue: "125.80",
+    });
   });
 
   it("rejects stale, inactive, expired, or tampered offers and reserves tracked component lots", async () => {

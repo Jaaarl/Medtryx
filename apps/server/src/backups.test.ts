@@ -21,6 +21,7 @@ import {
 } from "./customer-data.js";
 import { openDatabase } from "./db.js";
 import {
+  clearBnpcLedgerForTest,
   clearBundleLedgerForTest,
   clearLotLedgerForTest,
 } from "./test-ledger.js";
@@ -95,6 +96,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  clearBnpcLedgerForTest(db);
   clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   for (const path of [primaryDirectory, secondaryDirectory]) {
@@ -182,6 +184,25 @@ describe("owner-only verified backup and restore", () => {
       costBasisDescription: "Synthetic weighted-average acquisition cost",
     });
     expect(policy.status).toBe(200);
+    const bnpcPolicy = await postWithCsrf(owner, "/settings/bnpc-policy", {
+      version: "SYNTHETIC-BACKUP-BNPC-V1",
+      effectiveFrom: "2024-03-25",
+      sourceTitle: "Synthetic backup review of JAO No. 24-02",
+      sourceUrl:
+        "https://ncda.gov.ph/wp-content/uploads/2024/04/JAO-DTI-DA-DOE-No.-240-02-S2024.pdf",
+      reviewedAt: manilaDayAfter(0),
+      discountRateBasisPoints: 500,
+      weeklyPurchaseLimit: "2500.00",
+      weeklyDiscountLimit: "125.00",
+      noCarryover: true,
+      minimumKindsAtPurchaseLimit: 4,
+      storeEligibilityConfirmed: true,
+      approvalReference: "Synthetic backup/accountant approval",
+      enabled: true,
+      confirmOwnerReview: true,
+      confirmAccountantApproval: true,
+    });
+    expect(bnpcPolicy.status, JSON.stringify(bnpcPolicy.body)).toBe(201);
     const productResponse = await postWithCsrf(owner, "/products", {
       sku: "SYN-BACKUP-001",
       name: "Synthetic backup medicine",
@@ -216,6 +237,58 @@ describe("owner-only verified backup and restore", () => {
       transactionId: string;
       businessDate: string;
     };
+    const bnpcProductResponse = await postWithCsrf(owner, "/products", {
+      sku: "SYN-BACKUP-BNPC-001",
+      name: "Synthetic backup BNPC item",
+      unit: "piece",
+      sellingPrice: "112.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      bnpcEligible: true,
+      bnpcPrescriptionRequired: true,
+      bnpcCategory: "BASIC_NECESSITY",
+      bnpcSource: "Synthetic DTI/DA covered-goods list review",
+      bnpcReviewReference: "Synthetic backup classification BNPC-01",
+      openingQuantity: 4,
+      openingUnitCost: "40.00",
+    });
+    expect(bnpcProductResponse.status).toBe(201);
+    const bnpcProductId = bnpcProductResponse.body.product.id as string;
+    const bnpcSaleResponse = await postWithCsrf(cashier, "/sales", {
+      benefitType: "PWD",
+      items: [
+        { productId: bnpcProductId, quantity: 1, benefitTreatment: "BNPC" },
+      ],
+      paymentMethod: "QR",
+      requestKey: randomUUID(),
+      customerName: "SYNTHETIC BNPC RESTORE CUSTOMER",
+      customerIdType: "Synthetic PWD ID",
+      customerIdNumber: "SYN-BNPC-RESTORE-ID-6621",
+      customerIdChecked: true,
+      bnpcChecks: {
+        bookletChecked: true,
+        priorPurchaseConfirmed: true,
+        externalPurchaseAmount: "0.00",
+        externalDiscountUsedAmount: "0.00",
+        representativePurchase: false,
+        representativeDocumentsChecked: false,
+        authorizationLetterIssuedDate: null,
+        prescriptionApplicable: true,
+        prescriptionChecked: true,
+        fourKindsChecked: false,
+      },
+    });
+    expect(bnpcSaleResponse.status, JSON.stringify(bnpcSaleResponse.body)).toBe(
+      201,
+    );
+    const bnpcSale = bnpcSaleResponse.body.sale as {
+      id: string;
+      transactionId: string;
+      bnpcDiscount: string;
+    };
+    expect(bnpcSale.bnpcDiscount).toBe("5.60");
     const trackedProductResponse = await postWithCsrf(owner, "/products", {
       sku: "SYN-BACKUP-LOT-001",
       name: "Synthetic tracked backup item",
@@ -493,6 +566,52 @@ describe("owner-only verified backup and restore", () => {
         )
         .run(bundleSale.transactionId),
     ).toThrow(/sale_bundle_snapshots_are_immutable/u);
+    const restoredBnpcSale = await signedInOwner.get(
+      `/api/sales/${bnpcSale.transactionId}`,
+    );
+    expect(restoredBnpcSale.status).toBe(200);
+    expect(restoredBnpcSale.body.sale).toMatchObject({
+      bnpcDiscount: "5.60",
+      lines: [
+        expect.objectContaining({
+          benefitTreatment: "BNPC",
+          bnpcEligible: true,
+          bnpcCategory: "BASIC_NECESSITY",
+          bnpcPrescriptionRequired: true,
+          bnpcDiscount: "5.60",
+          bnpcPolicyVersion: "SYNTHETIC-BACKUP-BNPC-V1",
+        }),
+      ],
+    });
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM bnpc_usage_events WHERE sale_id = ?",
+          )
+          .get(bnpcSale.id) as { count: number }
+      ).count,
+    ).toBe(1);
+    expect(() =>
+      db
+        .prepare("UPDATE bnpc_policy_versions SET enabled = 0 WHERE id = ?")
+        .run(
+          (
+            db
+              .prepare(
+                "SELECT bnpc_policy_version_id FROM sale_bnpc_snapshots WHERE sale_id = ?",
+              )
+              .get(bnpcSale.id) as
+              | { bnpc_policy_version_id: string }
+              | undefined
+          )?.bnpc_policy_version_id,
+        ),
+    ).toThrow(/bnpc_policy_versions_are_immutable/u);
+    expect(() =>
+      db
+        .prepare("DELETE FROM bnpc_usage_events WHERE sale_id = ?")
+        .run(bnpcSale.id),
+    ).toThrow(/bnpc_usage_events_are_append_only/u);
     const customer = await signedInOwner.get(
       `/api/sales/${sale.transactionId}/customer`,
     );
@@ -504,9 +623,10 @@ describe("owner-only verified backup and restore", () => {
     const report = await signedInOwner.get(
       `/api/reports/daily?date=${sale.businessDate}`,
     );
-    expect(report.body.report.metrics.grossSales).toBe("244.00");
+    expect(report.body.report.metrics.grossSales).toBe("356.00");
+    expect(report.body.report.metrics.bnpcDiscounts).toBe("5.60");
     expect(report.body.report.metrics.bundlePromotionalDiscounts).toBe("1.00");
-    expect(report.body.report.inventory.inventoryValue).toBe("82.00");
+    expect(report.body.report.inventory.inventoryValue).toBe("202.00");
     const restoredBackups = await signedInOwner.get("/api/backups");
     expect(restoredBackups.body.backups).toEqual(
       expect.arrayContaining([
@@ -581,7 +701,7 @@ describe("owner-only verified backup and restore", () => {
             .prepare("SELECT COUNT(*) AS count FROM sales")
             .get() as { count: number }
         ).count,
-      ).toBe(2);
+      ).toBe(3);
       expect(
         (
           cleanInstallDb

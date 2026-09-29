@@ -9,7 +9,7 @@
 
 ## 1. Product in one paragraph
 
-Medtryx is a browser-based pharmacy sales and simple stock system. The owner creates inventory products and maintains stock. Cashiers select existing products for checkout, record sales, and apply approved Senior Citizen (SC) or Person with Disability (PWD) treatment to eligible items. A sale reduces stock automatically. The pharmacy continues to issue its registered manual invoice separately. Medtryx records the declared payment method but does not collect or verify payment.
+Medtryx is a browser-based pharmacy sales and simple stock system. The owner creates inventory products and maintains stock, expiry lots, virtual bundle offers, and reviewed benefit settings. Cashiers select existing products or bundles for checkout and apply one selected statutory treatment per eligible component, including SC, PWD, or the distinct BNPC benefit when its policy is approved and enabled. A sale reduces component stock automatically. The pharmacy continues to issue its registered manual invoice separately. Medtryx records the declared payment method but does not collect or verify payment.
 
 ### First-release goals
 
@@ -22,11 +22,11 @@ Medtryx is a browser-based pharmacy sales and simple stock system. The owner cre
 
 ## 2. What changes from the original specification
 
-| Area | Original direction | This first release |
+| Area | Original direction | Current web app scope |
 | --- | --- | --- |
 | App | Kotlin/Compose app on a HUAWEI tablet, plus a separate iPad dashboard | One responsive web app opened in a browser on any approved device |
 | Server | Tablet hosts the data and dashboard | One store computer hosts the web app and database |
-| Product setup | Many product attributes, effective-date versions, and pack conversions | One simple SKU record with required name, unit, price, tax class, generic/branded type, and separate SC/PWD eligibility |
+| Product setup | Many product attributes, effective-date versions, and pack conversions | One SKU record with name, unit, price, tax class, generic/branded type, separate SC/PWD flags, and owner-reviewed BNPC eligibility/category/source metadata |
 | Inventory | Product-level choice of lot/expiry tracking, immutable lot ledger, and FEFO sale allocation | One stock unit per SKU; untracked flow remains for products the owner marks non-expiring |
 | Acquisition cost | Lot/cost snapshots and more detailed margin reporting | Record the unit acquisition cost on each stock receipt; show a weighted-average cost and estimated unit profit per SKU |
 | Expiry | Owner-visible lot balances, expiry warnings, and sale blocking for expired, quarantined, or unassigned tracked stock | Printed expiry date is the last saleable day; expired stock remains until authorized disposal |
@@ -56,7 +56,7 @@ The original specification remains available for later features. Its implementat
 
 ### Scope brought forward for the current web app
 
-The owner explicitly brought exactly three follow-on features into this implementation: tracked lots and expiry, virtual sales bundles, and the distinct BNPC 5% benefit. They are separate ordered bundles in `IMPLEMENTATION_STATUS.md`; the BNPC live-sale switch stays off until its policy and store workflow receive approval.
+The owner explicitly brought exactly three follow-on features into the current implementation: tracked lots and expiry, virtual sales bundles, and the distinct BNPC 5% benefit. They are ordered bundles 7–9 in `IMPLEMENTATION_STATUS.md`. The software bundles are implemented; the BNPC live-sale switch remains off until the current policy, product classifications, establishment coverage, and store workflow receive owner/accountant approval. This gate does not defer the software implementation.
 
 Still excluded are pack-to-piece conversion, multiple selling units sharing one stock pool, physical bundle stock, supplier purchasing, partial returns, Android/Room work, cloud hosting, and multiple branches.
 - Payment gateway, QR verification, official invoice generation, electronic invoicing, and customer-facing receipts.
@@ -140,14 +140,14 @@ For management reports, define **estimated gross profit = sale revenue after dis
 - Owners see physical and saleable lot balances, expiry alerts, quarantine controls, exact-lot disposal, and an editable warning horizon. Reversal restores stock to its original lot only after physical verification and only while that lot remains saleable; otherwise it records a write-off.
 - Upgrade-copy migration rehearsal, physical opening-stock reconciliation, disposal and reversal practice, and backup/report checks remain release tasks.
 
-## 7. Checkout, tax, and SC/PWD treatment
+## 7. Checkout, tax, and statutory treatment
 
 1. Cashier searches or scans an existing active product or virtual bundle. A bundle expands into component products and quantities; it has no independent stock.
 2. For tracked products, checkout shows FEFO lot assignments. The cashier physically picks and confirms those lots before finalization.
 3. Each component retains its own product identity, tax class, SC/PWD/BNPC eligibility, lot allocation, and sale snapshot. Each line gets at most one selected statutory treatment.
 4. Owners choose a percentage or fixed-amount reduction to calculate a suggested price, then explicitly approve the final promotional price. Editing creates a new immutable version. The maximum quantity applies per sale; bundle offers do not have stock.
 5. A bundle promotion is allocated proportionally across component regular-price lines, with centavo remainders assigned deterministically so the allocation equals the approved price. For each component, checkout compares the promotional result with its permitted statutory result and applies the lower amount due; discounts never stack. It shows the regular price and both results before confirmation. The selection rule is saved as `MORE_FAVORABLE_NO_STACK_V1`.
-6. For SC/PWD/BNPC, staff use protected customer identity and physical-ID confirmation. BNPC additionally requires the separate booklet/representative and prior-purchase checks from the approved store procedure; missing evidence means no BNPC benefit.
+6. For SC/PWD/BNPC, staff use protected customer identity and physical-ID confirmation. BNPC additionally requires the booklet and prior-purchase checks, representative documents when applicable, and an owner-reviewed product prescription confirmation when required. Missing evidence means no BNPC benefit.
 7. Medtryx calculates and shows each line's tax, discounts, and amount due, then the total. BNPC keeps the normal VAT class and never uses the SC/PWD VAT-removal formula. A statutory outcome can make the final total differ from the bundle's advertised price.
 8. Cashier declares `CASH` or `QR`. QR is a staff declaration, not payment verification.
 9. Cashier confirms the sale. Medtryx revalidates the current bundle version, active dates, per-sale limit, component prices, stock, lot availability, and policy in one transaction, saves immutable offer/component/tax snapshots with stock deductions, then assigns a unique internal transaction ID.
@@ -165,6 +165,12 @@ Tax-component rounding and cash-total rounding are separate approved settings. W
 | `.88–.99`               | next `.00`         |
 
 The pharmacy's owner/accountant must approve this treatment before enabling it for live sales.
+
+### BNPC policy and operating limits
+
+The current policy data is based on [DTI–DA–DOE Joint Administrative Order No. 24-02, Series of 2024](https://ncda.gov.ph/2024-revised-rules-on-granting-special-discounts-to-senior-citizens-and-persons-with-disability-on-purchase-of-basic-necessities-and-prime-commodities-joint-administrative-order-no-24-02-series-of-2/), effective March 25, 2024. It provides a 5% discount on the regular retail price of listed goods without VAT exemption, up to PHP125 off per calendar week on a combined maximum PHP2,500 of covered offline and online purchases, with no unused allowance carried forward. Using the full PHP2,500 requires at least four kinds of covered items. On a promotion, the customer receives the more favorable promotion or BNPC discount, never both. The JAO exempts establishments registered as BMBEs and CDA-registered cooperatives from its coverage.
+
+These values and rules are stored in a dated, versioned owner policy rather than assumed to be permanent. The owner must review current issuances, this pharmacy's establishment coverage, and each eligible product against the official list. Before enabling live checkout, the owner/accountant must approve the exact centavo and tax calculations, booklet and representative procedure, four-kind verification, reversal treatment, and handling of prior purchases at other stores or online. Staff attest to those external amounts from the presented booklet; Medtryx only knows this store's ledger and does not promise a nationwide remaining balance. If approval or evidence is missing, checkout remains available without BNPC.
 
 For an approved SC/PWD-qualified VATable line, remove the VAT component from the VAT-inclusive price before calculating the applicable 20% statutory discount. For a catalog VAT-exempt qualified line, apply the approved discount without removing VAT again. An unselected or ineligible line remains a regular line. Do not combine SC and PWD benefits on the same line. Show the calculation to staff so it can be transcribed into the separate manual-invoice process.
 
@@ -240,7 +246,7 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 16. With owner-approved nearest-₱0.25 cash rounding enabled, checkout rounds the combined CASH total by the documented table, leaves QR totals and line tax unchanged, and preserves the signed adjustment through sale, full reversal, expected shift cash, reports, and CSV.
 17. Tracked lots enforce Manila FEFO ordering, stable same-expiry tie-breaks, last-saleable-day expiry boundaries, exact-lot disposal, concurrent last-unit safety, and original-lot-only physically verified reversal; reports and backup/restore reconcile lot quantity and value.
 18. Virtual bundles revalidate the current owner-approved version, dates, per-sale limit, and component prices at finalization. They expand into component lines, have no independent stock, and allocate promotional centavos deterministically so component allocations sum exactly to the approved bundle price. Each component keeps its own tax and statutory treatment; the more favorable permitted result is selected without stacking.
-19. BNPC eligibility is explicit and independent from tax class and SC/PWD flags. BNPC is off by default; approved use is per selected line, honors verified weekly allowance and evidence, retains normal VAT treatment, does not stack with promotions, and snapshots policy and allowance.
+19. BNPC eligibility/category/source and any product prescription requirement are explicit owner-reviewed product fields, independent from tax class and SC/PWD flags. The switch defaults off; synthetic tests cover per-line selection, weekly caps, evidence and four-kind checks, normal VAT, promotion comparison without stacking, protected holder references, reports, reversal, and immutable policy/allowance/tax snapshots.
 
 ## 11. Decisions to make before development or launch
 
@@ -256,7 +262,8 @@ Create a daily **unencrypted** backup in an access-restricted folder on the serv
 | Backup destination and access owner | Unencrypted backup in a restricted server folder plus a separately stored copy | Before pilot |
 | Lot/expiry operations | Product-level tracking, owner physical reconciliation, FEFO pick confirmation, exact-lot disposal and reversal | Before live stock migration and pilot |
 | Tax, SC/PWD, rounding, and invoicing rules | Owner and professional review of current requirements | Before live use |
+| BNPC policy | Review current issuances, eligible product list, store coverage/exemption, centavo/tax, booklet/representative, four-kind, cross-channel allowance, and reversal procedures; record owner/accountant approval | Before enabling the BNPC policy switch |
 
 ## 12. Later enhancements, only if the pharmacy needs them
 
-The current follow-on implementation order is lots/expiry, virtual bundles, then BNPC. The BNPC policy and live switch remain approval-gated. Pack-to-piece conversion, physical bundle stock, partial returns, supplier purchasing, cloud access, multiple branches, and Android remain outside this web scope and require separate decisions.
+The implementation order is lots/expiry, virtual bundles, then BNPC; all three software bundles are implemented as documented in `IMPLEMENTATION_STATUS.md`. The BNPC policy and live switch remain approval-gated, and the enhanced app is not pilot-ready until the release checklist passes with physical/site evidence. Pack-to-piece conversion, physical bundle stock, partial returns, supplier purchasing, cloud access, multiple branches, and Android remain outside this web scope and require separate decisions.

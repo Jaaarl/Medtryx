@@ -37,6 +37,7 @@ import { ReportsPage } from "./reports-page";
 import { ShiftHistoryPage } from "./shift-history-page";
 import { BackupsPage } from "./backups-page";
 import { TaxPolicySettings } from "./tax-policy-settings";
+import { BnpcPolicySettings } from "./bnpc-policy-settings";
 import { BundlesPage } from "./bundles-page";
 
 const navigation = [
@@ -715,6 +716,7 @@ function SettingsPage() {
         )}
       </div>
       <TaxPolicySettings />
+      <BnpcPolicySettings />
     </section>
   );
 }

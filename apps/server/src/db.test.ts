@@ -136,6 +136,47 @@ describe("database migrations", () => {
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM sale_bundle_snapshots").get(),
       ).toEqual({ count: 0 });
+      expect(
+        db
+          .prepare(
+            `SELECT bnpc_eligible, bnpc_category, bnpc_prescription_required FROM products
+             WHERE id = 'legacy-product'`,
+          )
+          .get(),
+      ).toEqual({
+        bnpc_eligible: 0,
+        bnpc_category: null,
+        bnpc_prescription_required: 0,
+      });
+      expect(
+        db
+          .prepare(
+            `SELECT benefit_treatment_snapshot, bnpc_discount_centavos,
+                    bnpc_eligible_snapshot FROM sale_lines
+             WHERE id = 'legacy-sale-line'`,
+          )
+          .get(),
+      ).toEqual({
+        benefit_treatment_snapshot: "REGULAR",
+        bnpc_discount_centavos: 0,
+        bnpc_eligible_snapshot: 0,
+      });
+      expect(
+        db
+          .prepare(
+            `SELECT version, effective_from, enabled,
+                    weekly_purchase_limit_centavos,
+                    weekly_discount_limit_centavos
+             FROM bnpc_policy_versions WHERE id = 'BNPC-JAO-24-02-INITIAL'`,
+          )
+          .get(),
+      ).toEqual({
+        version: "JAO-DTI-DA-DOE-24-02-2024",
+        effective_from: "2024-03-25",
+        enabled: 0,
+        weekly_purchase_limit_centavos: 250_000,
+        weekly_discount_limit_centavos: 12_500,
+      });
     } finally {
       db.close();
     }

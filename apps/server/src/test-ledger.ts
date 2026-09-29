@@ -93,3 +93,39 @@ export function clearBundleLedgerForTest(db: Database.Database): void {
     for (const sql of bundleImmutableTriggers) db.exec(sql);
   })();
 }
+
+const bnpcImmutableTriggers = [
+  `CREATE TRIGGER bnpc_policy_versions_no_update BEFORE UPDATE ON bnpc_policy_versions
+   BEGIN SELECT RAISE(ABORT, 'bnpc_policy_versions_are_immutable'); END`,
+  `CREATE TRIGGER bnpc_policy_versions_no_delete BEFORE DELETE ON bnpc_policy_versions
+   BEGIN SELECT RAISE(ABORT, 'bnpc_policy_versions_are_immutable'); END`,
+  `CREATE TRIGGER sale_bnpc_snapshots_no_update BEFORE UPDATE ON sale_bnpc_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bnpc_snapshots_are_immutable'); END`,
+  `CREATE TRIGGER sale_bnpc_snapshots_no_delete BEFORE DELETE ON sale_bnpc_snapshots
+   BEGIN SELECT RAISE(ABORT, 'sale_bnpc_snapshots_are_immutable'); END`,
+  `CREATE TRIGGER bnpc_usage_events_no_update BEFORE UPDATE ON bnpc_usage_events
+   BEGIN SELECT RAISE(ABORT, 'bnpc_usage_events_are_append_only'); END`,
+  `CREATE TRIGGER bnpc_usage_events_no_delete BEFORE DELETE ON bnpc_usage_events
+   BEGIN SELECT RAISE(ABORT, 'bnpc_usage_events_are_append_only'); END`,
+];
+
+export function clearBnpcLedgerForTest(db: Database.Database): void {
+  db.transaction(() => {
+    for (const name of [
+      "bnpc_policy_versions_no_update",
+      "bnpc_policy_versions_no_delete",
+      "sale_bnpc_snapshots_no_update",
+      "sale_bnpc_snapshots_no_delete",
+      "bnpc_usage_events_no_update",
+      "bnpc_usage_events_no_delete",
+    ]) {
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    }
+    db.exec(
+      `DELETE FROM bnpc_usage_events;
+       DELETE FROM sale_bnpc_snapshots;
+       DELETE FROM bnpc_policy_versions;`,
+    );
+    for (const sql of bnpcImmutableTriggers) db.exec(sql);
+  })();
+}

@@ -897,6 +897,39 @@ export function registerReversalRoutes(
             }
           }
 
+          const bnpcUsage = db
+            .prepare(
+              `SELECT holder_key_hmac, week_start_date,
+                      local_purchase_applied_centavos, bnpc_discount_centavos
+               FROM sale_bnpc_snapshots WHERE sale_id = ?`,
+            )
+            .get(sale.id) as
+            | {
+                holder_key_hmac: string;
+                week_start_date: string;
+                local_purchase_applied_centavos: number;
+                bnpc_discount_centavos: number;
+              }
+            | undefined;
+          if (bnpcUsage) {
+            db.prepare(
+              `INSERT INTO bnpc_usage_events
+               (id, holder_key_hmac, week_start_date, event_type, sale_id,
+                reversal_id, qualifying_purchase_delta_centavos,
+                bnpc_discount_delta_centavos, created_at)
+               VALUES (?, ?, ?, 'REVERSAL', ?, ?, ?, ?, ?)`,
+            ).run(
+              randomUUID(),
+              bnpcUsage.holder_key_hmac,
+              bnpcUsage.week_start_date,
+              sale.id,
+              reversalId,
+              -bnpcUsage.local_purchase_applied_centavos,
+              -bnpcUsage.bnpc_discount_centavos,
+              createdAt,
+            );
+          }
+
           if (cashShift && refundTotal > 0) {
             const expected = cashShift.expected_cash_centavos - refundTotal;
             db.prepare(

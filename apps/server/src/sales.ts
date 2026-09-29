@@ -4,6 +4,13 @@ import type Database from "better-sqlite3";
 import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  resolveBnpcCheckoutContext,
+  bnpcHolderKey,
+  type BnpcCheckoutContext,
+  type BnpcEvidence,
+  BnpcCheckoutError,
+} from "./bnpc.js";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import {
   decryptCustomerField,
@@ -38,6 +45,12 @@ const moneySchema = z
   .trim()
   .regex(/^\d{1,7}(?:\.\d{1,2})?$/);
 const benefitSchema = z.enum(["REGULAR", "SENIOR_CITIZEN", "PWD"]);
+const lineTreatmentSchema = z.enum([
+  "REGULAR",
+  "SENIOR_CITIZEN",
+  "PWD",
+  "BNPC",
+]);
 const paymentSchema = z.enum(["CASH", "QR"]);
 const roundingSchema = z.enum(["HALF_UP", "HALF_EVEN", "DOWN"]);
 const cashRoundingSchema = z.enum(["NONE", "NEAREST_25_CENTAVOS"]);
@@ -46,6 +59,7 @@ const checkoutItemSchema = z
     productId: z.uuid(),
     quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY),
     benefitApplied: z.boolean().default(false),
+    benefitTreatment: lineTreatmentSchema.optional(),
     lotAllocations: z
       .array(
         z
@@ -63,6 +77,7 @@ const checkoutBundleComponentSchema = z
   .object({
     productId: z.uuid(),
     benefitApplied: z.boolean().default(false),
+    benefitTreatment: lineTreatmentSchema.optional(),
     lotAllocations: z
       .array(
         z
@@ -104,12 +119,33 @@ const checkoutItemsSchema = z
     }
   });
 
+const bnpcEvidenceSchema = z
+  .object({
+    bookletChecked: z.boolean().default(false),
+    priorPurchaseConfirmed: z.boolean().default(false),
+    externalPurchaseAmount: moneySchema.default("0.00"),
+    externalDiscountUsedAmount: moneySchema.default("0.00"),
+    representativePurchase: z.boolean().default(false),
+    representativeDocumentsChecked: z.boolean().default(false),
+    authorizationLetterIssuedDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/u)
+      .nullable()
+      .default(null),
+    prescriptionApplicable: z.boolean().default(false),
+    prescriptionChecked: z.boolean().default(false),
+    fourKindsChecked: z.boolean().default(false),
+  })
+  .strict();
+
 const checkoutBaseSchema = z
   .object({
     benefitType: benefitSchema,
     items: checkoutItemsSchema,
     bundleOffers: checkoutBundleOffersSchema.default([]),
     paymentMethod: paymentSchema.default("QR"),
+    customerIdNumber: z.string().trim().min(2).max(80).optional(),
+    bnpcChecks: bnpcEvidenceSchema.optional(),
   })
   .strict()
   .refine((value) => value.items.length > 0 || value.bundleOffers.length > 0, {
@@ -127,15 +163,54 @@ const saleRequestSchema = z
     customerIdType: z.string().trim().min(2).max(60).optional(),
     customerIdNumber: z.string().trim().min(2).max(80).optional(),
     customerIdChecked: z.boolean().default(false),
+    bnpcChecks: bnpcEvidenceSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
+    const requestedTreatments = [
+      ...value.items.map(
+        (item) =>
+          item.benefitTreatment ??
+          (item.benefitApplied ? value.benefitType : "REGULAR"),
+      ),
+      ...value.bundleOffers.flatMap((offer) =>
+        offer.components.map(
+          (component) =>
+            component.benefitTreatment ??
+            (component.benefitApplied ? value.benefitType : "REGULAR"),
+        ),
+      ),
+    ];
+    const hasCustomerBenefit = requestedTreatments.some(
+      (treatment) => treatment === "SENIOR_CITIZEN" || treatment === "PWD",
+    );
+    const hasBnpc = requestedTreatments.includes("BNPC");
     const customerValues = [
       value.customerName,
       value.customerIdType,
       value.customerIdNumber,
     ];
     if (value.benefitType === "REGULAR") {
+      if (hasCustomerBenefit || hasBnpc) {
+        context.addIssue({
+          code: "custom",
+          path: ["benefitType"],
+          message: "benefit_holder_type_required",
+        });
+      }
+      if (
+        customerValues.some((entry) => entry !== undefined) ||
+        value.customerIdChecked
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["customerName"],
+          message: "regular_sale_has_no_customer_benefit_record",
+        });
+      }
+      return;
+    }
+    if (!hasCustomerBenefit && !hasBnpc) {
       if (customerValues.some((entry) => entry !== undefined)) {
         context.addIssue({
           code: "custom",
@@ -152,6 +227,7 @@ const saleRequestSchema = z
       }
       return;
     }
+    if (!hasCustomerBenefit && !hasBnpc) return;
     if (customerValues.some((entry) => entry === undefined)) {
       context.addIssue({
         code: "custom",
@@ -166,16 +242,37 @@ const saleRequestSchema = z
         message: "physical_id_check_required",
       });
     }
+    if (hasBnpc && (!value.customerIdNumber || !value.bnpcChecks)) {
+      context.addIssue({
+        code: "custom",
+        path: ["bnpcChecks"],
+        message: "bnpc_evidence_required",
+      });
+    }
+    if (hasBnpc && !value.bnpcChecks?.bookletChecked) {
+      context.addIssue({
+        code: "custom",
+        path: ["bnpcChecks", "bookletChecked"],
+        message: "bnpc_booklet_confirmation_required",
+      });
+    }
+    if (hasBnpc && !value.bnpcChecks?.priorPurchaseConfirmed) {
+      context.addIssue({
+        code: "custom",
+        path: ["bnpcChecks", "priorPurchaseConfirmed"],
+        message: "bnpc_prior_purchase_confirmation_required",
+      });
+    }
     if (
-      !value.items.some((item) => item.benefitApplied) &&
-      !value.bundleOffers.some((offer) =>
-        offer.components.some((component) => component.benefitApplied),
-      )
+      (value.benefitType === "SENIOR_CITIZEN" &&
+        requestedTreatments.includes("PWD")) ||
+      (value.benefitType === "PWD" &&
+        requestedTreatments.includes("SENIOR_CITIZEN"))
     ) {
       context.addIssue({
         code: "custom",
         path: ["items"],
-        message: "benefit_sale_requires_eligible_line",
+        message: "benefit_holder_line_mismatch",
       });
     }
   });
@@ -214,12 +311,49 @@ type ProductSaleRow = {
   sc_pwd_eligible: number;
   sc_eligible: number;
   pwd_eligible: number;
+  bnpc_eligible: number;
+  bnpc_prescription_required: number;
+  bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
   product_type: "GENERIC" | "BRANDED" | null;
   tracks_lots: number;
   quantity_on_hand: number;
   inventory_value_centavos: number;
   is_active: number;
 };
+
+type CheckoutItem = z.infer<typeof checkoutItemSchema>;
+type SaleLineTreatment = z.infer<typeof lineTreatmentSchema>;
+
+function requestedTreatment(
+  item: CheckoutItem,
+  benefitType: SaleBenefit,
+): SaleLineTreatment {
+  return (
+    item.benefitTreatment ?? (item.benefitApplied ? benefitType : "REGULAR")
+  );
+}
+
+function bnpcDiscountFor(
+  regularGrossCentavos: number,
+  rateBasisPoints: number,
+  roundingMode: TaxRoundingMode,
+): number {
+  const mode =
+    roundingMode === "HALF_EVEN"
+      ? Decimal.ROUND_HALF_EVEN
+      : roundingMode === "DOWN"
+        ? Decimal.ROUND_DOWN
+        : Decimal.ROUND_HALF_UP;
+  const value = new Decimal(regularGrossCentavos)
+    .mul(rateBasisPoints)
+    .div(10_000)
+    .toDecimalPlaces(0, mode)
+    .toNumber();
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new SalesError(400, "sale_amount_overflow");
+  }
+  return value;
+}
 
 type StoredTaxApproval = TaxPolicy & {
   approvalReference: string;
@@ -353,6 +487,10 @@ function handleSalesError(error: unknown, res: Response): boolean {
     res.status(503).json({ error: error.code });
     return true;
   }
+  if (error instanceof BnpcCheckoutError) {
+    res.status(409).json({ error: error.code });
+    return true;
+  }
   if (
     error instanceof Error &&
     error.message.includes("shifts_one_open_store_idx")
@@ -361,6 +499,47 @@ function handleSalesError(error: unknown, res: Response): boolean {
     return true;
   }
   return false;
+}
+
+function hasRequestedBnpc(
+  items: z.infer<typeof checkoutItemsSchema>,
+  bundleOffers: z.infer<typeof checkoutBundleOffersSchema>,
+): boolean {
+  return (
+    items.some((item) => item.benefitTreatment === "BNPC") ||
+    bundleOffers.some((offer) =>
+      offer.components.some(
+        (component) => component.benefitTreatment === "BNPC",
+      ),
+    )
+  );
+}
+
+function bnpcContextForCheckout(
+  db: Database.Database,
+  items: z.infer<typeof checkoutItemsSchema>,
+  bundleOffers: z.infer<typeof checkoutBundleOffersSchema>,
+  benefitType: SaleBenefit,
+  idNumber: string | undefined,
+  evidence: BnpcEvidence | undefined,
+): BnpcCheckoutContext | undefined {
+  if (!hasRequestedBnpc(items, bundleOffers)) return undefined;
+  if (
+    benefitType === "REGULAR" ||
+    !idNumber ||
+    !evidence ||
+    !evidence.bookletChecked ||
+    !evidence.priorPurchaseConfirmed
+  ) {
+    throw new SalesError(409, "bnpc_evidence_required");
+  }
+  try {
+    return resolveBnpcCheckoutContext(db, evidence, idNumber);
+  } catch (error) {
+    if (error instanceof BnpcCheckoutError)
+      throw new SalesError(409, error.code);
+    throw error;
+  }
 }
 
 function manilaBusinessDate(now: Date): string {
@@ -388,7 +567,7 @@ type BundleComponentCalculation = {
   allocatedPromotionDiscountCentavos: number;
   appliedPromotionDiscountCentavos: number;
   promotionSelected: boolean;
-  selectedStatutoryTreatment: SaleBenefit;
+  selectedStatutoryTreatment: SaleLineTreatment;
   regularTotalCentavos: number;
   promotionalPriceCentavos: number;
   maxQuantityPerSale: number | null;
@@ -425,6 +604,7 @@ function calculateCart(
   paymentMethod: "CASH" | "QR",
   requireLotConfirmation = false,
   bundleOffers: z.infer<typeof checkoutBundleOffersSchema> = [],
+  bnpcContext?: BnpcCheckoutContext,
 ) {
   const reservedLots = new Map<string, number>();
   const reservedUntracked = new Map<string, number>();
@@ -576,6 +756,7 @@ function calculateCart(
         productId: component.product_id,
         quantity: lineQuantity,
         benefitApplied: suppliedComponent.benefitApplied,
+        benefitTreatment: suppliedComponent.benefitTreatment,
         lotAllocations: suppliedComponent.lotAllocations,
         lotPickConfirmed: suppliedComponent.lotPickConfirmed,
       };
@@ -640,7 +821,8 @@ function calculateCart(
     const product = db
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
-                sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+                sc_pwd_eligible, sc_eligible, pwd_eligible, bnpc_eligible,
+                bnpc_category, bnpc_prescription_required, product_type,
                 quantity_on_hand, tracks_lots,
                 inventory_value_centavos, is_active
          FROM products WHERE id = ?`,
@@ -684,40 +866,107 @@ function calculateCart(
       }
       reservedUntracked.set(product.id, alreadyReserved + item.quantity);
     }
-    let calculation: ReturnType<typeof calculateTaxLine>;
-    let statutoryAlternative: ReturnType<typeof calculateTaxLine>;
-    let promotionAlternative: ReturnType<typeof calculateTaxLine> | null = null;
+    const treatment = requestedTreatment(item, benefitType);
+    if (treatment === "BNPC") {
+      if (!bnpcContext) throw new SalesError(409, "bnpc_evidence_required");
+      if (!product.bnpc_eligible || !product.bnpc_category) {
+        throw new SalesError(409, "product_not_bnpc_eligible");
+      }
+      if (
+        product.bnpc_prescription_required === 1 &&
+        (!bnpcContext.evidence.prescriptionApplicable ||
+          !bnpcContext.evidence.prescriptionChecked)
+      ) {
+        throw new SalesError(
+          409,
+          "bnpc_product_prescription_confirmation_required",
+        );
+      }
+    }
+    if (
+      (treatment === "SENIOR_CITIZEN" && benefitType !== "SENIOR_CITIZEN") ||
+      (treatment === "PWD" && benefitType !== "PWD")
+    ) {
+      throw new SalesError(400, "benefit_holder_line_mismatch");
+    }
+    const regularGrossCentavos = product.selling_price_centavos * item.quantity;
+    const bnpcDiscountCentavos =
+      treatment === "BNPC"
+        ? bnpcDiscountFor(
+            regularGrossCentavos,
+            bnpcContext!.policy.discountRateBasisPoints,
+            policy.roundingMode,
+          )
+        : 0;
+    let calculation: ReturnType<typeof calculateTaxLine> & {
+      bnpcDiscountCentavos: number;
+    };
+    let statutoryAlternative: ReturnType<typeof calculateTaxLine> & {
+      bnpcDiscountCentavos: number;
+    };
+    let promotionAlternative:
+      | (ReturnType<typeof calculateTaxLine> & {
+          bnpcDiscountCentavos: number;
+        })
+      | null = null;
     try {
-      statutoryAlternative = calculateTaxLine(
-        {
-          unitPriceCentavos: product.selling_price_centavos,
-          quantity: item.quantity,
-          grossOverrideCentavos: product.selling_price_centavos * item.quantity,
-          taxClass: product.tax_class,
-          isScEligible: product.sc_eligible === 1,
-          isPwdEligible: product.pwd_eligible === 1,
-          benefit: benefitType,
-          benefitApplied: item.benefitApplied,
-        },
-        policy,
-      );
+      if (treatment === "BNPC") {
+        statutoryAlternative = {
+          ...calculateTaxLine(
+            {
+              unitPriceCentavos: product.selling_price_centavos,
+              quantity: item.quantity,
+              grossOverrideCentavos:
+                regularGrossCentavos - bnpcDiscountCentavos,
+              taxClass: product.tax_class,
+              isScEligible: false,
+              isPwdEligible: false,
+              benefit: benefitType,
+              benefitApplied: false,
+            },
+            policy,
+          ),
+          bnpcDiscountCentavos,
+        };
+      } else {
+        statutoryAlternative = {
+          ...calculateTaxLine(
+            {
+              unitPriceCentavos: product.selling_price_centavos,
+              quantity: item.quantity,
+              grossOverrideCentavos: regularGrossCentavos,
+              taxClass: product.tax_class,
+              isScEligible: product.sc_eligible === 1,
+              isPwdEligible: product.pwd_eligible === 1,
+              benefit: benefitType,
+              benefitApplied:
+                treatment === "SENIOR_CITIZEN" || treatment === "PWD",
+            },
+            policy,
+          ),
+          bnpcDiscountCentavos: 0,
+        };
+      }
       if (bundle) {
         const promotionalGross =
           product.selling_price_centavos * item.quantity -
           bundle.allocatedPromotionDiscountCentavos;
-        promotionAlternative = calculateTaxLine(
-          {
-            unitPriceCentavos: product.selling_price_centavos,
-            quantity: item.quantity,
-            grossOverrideCentavos: promotionalGross,
-            taxClass: product.tax_class,
-            isScEligible: product.sc_eligible === 1,
-            isPwdEligible: product.pwd_eligible === 1,
-            benefit: benefitType,
-            benefitApplied: false,
-          },
-          policy,
-        );
+        promotionAlternative = {
+          ...calculateTaxLine(
+            {
+              unitPriceCentavos: product.selling_price_centavos,
+              quantity: item.quantity,
+              grossOverrideCentavos: promotionalGross,
+              taxClass: product.tax_class,
+              isScEligible: product.sc_eligible === 1,
+              isPwdEligible: product.pwd_eligible === 1,
+              benefit: benefitType,
+              benefitApplied: false,
+            },
+            policy,
+          ),
+          bnpcDiscountCentavos: 0,
+        };
         const promotionSelected =
           promotionAlternative.amountDueCentavos <=
           statutoryAlternative.amountDueCentavos;
@@ -731,9 +980,7 @@ function calculateCart(
         bundle.promotionSelected = promotionSelected;
         bundle.selectedStatutoryTreatment = promotionSelected
           ? "REGULAR"
-          : item.benefitApplied
-            ? benefitType
-            : "REGULAR";
+          : treatment;
         bundle.appliedPromotionDiscountCentavos = promotionSelected
           ? bundle.allocatedPromotionDiscountCentavos
           : 0;
@@ -753,11 +1000,39 @@ function calculateCart(
       quantity: item.quantity,
       lotAllocations,
       bundle,
-      regularGrossCentavos: product.selling_price_centavos * item.quantity,
+      regularGrossCentavos,
+      requestedBenefitTreatment: treatment,
       ...calculation,
+      benefitTreatment: bundle?.promotionSelected ? "REGULAR" : treatment,
       unitPriceCentavos: product.selling_price_centavos,
     };
   });
+  const bnpcPurchaseCentavos = safeCentavoTotal(
+    lines
+      .filter((line) => line.requestedBenefitTreatment === "BNPC")
+      .map((line) => line.regularGrossCentavos),
+  );
+  const bnpcDiscountCentavos = safeCentavoTotal(
+    lines.map((line) => line.bnpcDiscountCentavos),
+  );
+  if (bnpcContext) {
+    if (bnpcPurchaseCentavos > bnpcContext.purchaseAllowanceCentavos) {
+      throw new SalesError(409, "bnpc_purchase_allowance_exceeded");
+    }
+    if (bnpcDiscountCentavos > bnpcContext.discountAllowanceCentavos) {
+      throw new SalesError(409, "bnpc_discount_allowance_exceeded");
+    }
+    if (
+      bnpcPurchaseCentavos > 0 &&
+      bnpcContext.localPurchaseBeforeCentavos +
+        bnpcContext.externalPurchaseAttestedCentavos +
+        bnpcPurchaseCentavos >=
+        bnpcContext.policy.weeklyPurchaseLimitCentavos &&
+      !bnpcContext.evidence.fourKindsChecked
+    ) {
+      throw new SalesError(409, "bnpc_four_kinds_confirmation_required");
+    }
+  }
   const subtotalCentavos = safeCentavoTotal(
     lines.map((line) => line.grossCentavos),
   );
@@ -789,14 +1064,23 @@ function calculateCart(
     vatCentavos,
     vatRemovedCentavos,
     discountCentavos,
+    bnpcDiscountCentavos,
+    bnpcPurchaseCentavos,
     lineAmountDueCentavos,
     cashRoundingAdjustmentCentavos,
     amountDueCentavos,
     bundlePromotionalDiscountCentavos,
     bundleOffers: bundleSnapshotDrafts,
-    seniorDiscountCentavos:
-      benefitType === "SENIOR_CITIZEN" ? discountCentavos : 0,
-    pwdDiscountCentavos: benefitType === "PWD" ? discountCentavos : 0,
+    seniorDiscountCentavos: safeCentavoTotal(
+      lines
+        .filter((line) => line.benefitTreatment === "SENIOR_CITIZEN")
+        .map((line) => line.discountCentavos),
+    ),
+    pwdDiscountCentavos: safeCentavoTotal(
+      lines
+        .filter((line) => line.benefitTreatment === "PWD")
+        .map((line) => line.discountCentavos),
+    ),
   };
 }
 
@@ -805,6 +1089,7 @@ function presentCheckout(
   result: ReturnType<typeof calculateCart>,
   policy: TaxPolicy,
   paymentMethod: "CASH" | "QR",
+  bnpcContext?: BnpcCheckoutContext,
 ) {
   return {
     policy: presentPolicy(policy),
@@ -826,11 +1111,16 @@ function presentCheckout(
       scPwdEligible: line.product.sc_pwd_eligible === 1,
       isScEligible: line.product.sc_eligible === 1,
       isPwdEligible: line.product.pwd_eligible === 1,
+      bnpcEligible: line.product.bnpc_eligible === 1,
+      bnpcPrescriptionRequired: line.product.bnpc_prescription_required === 1,
+      bnpcCategory: line.product.bnpc_category,
       benefitApplied: line.benefitApplied,
+      benefitTreatment: line.benefitTreatment,
       taxBasis: money(line.taxBasisCentavos),
       vat: money(line.vatCentavos),
       vatRemoved: money(line.vatRemovedCentavos),
       discount: money(line.discountCentavos),
+      bnpcDiscount: money(line.bnpcDiscountCentavos),
       amountDue: money(line.amountDueCentavos),
       ruleVersion: line.ruleVersion,
       bundle: line.bundle
@@ -911,6 +1201,16 @@ function presentCheckout(
       vatRemoved: money(result.vatRemovedCentavos),
       seniorDiscount: money(result.seniorDiscountCentavos),
       pwdDiscount: money(result.pwdDiscountCentavos),
+      bnpcDiscount: money(result.bnpcDiscountCentavos),
+      bnpcQualifyingPurchase: money(result.bnpcPurchaseCentavos),
+      bnpcAllowance: bnpcContext
+        ? {
+            purchaseBeforeSale: money(bnpcContext.purchaseAllowanceCentavos),
+            discountBeforeSale: money(bnpcContext.discountAllowanceCentavos),
+            localStoreOnly: true,
+            weekStartDate: bnpcContext.weekStartDate,
+          }
+        : null,
       bundlePromotionalDiscount: money(
         result.bundlePromotionalDiscountCentavos,
       ),
@@ -997,6 +1297,7 @@ type SaleRow = {
   vat_removed_centavos: number;
   senior_discount_centavos: number;
   pwd_discount_centavos: number;
+  bnpc_discount_centavos: number;
   amount_due_centavos: number;
   cash_rounding_mode: CashRoundingMode;
   cash_rounding_adjustment_centavos: number;
@@ -1018,15 +1319,21 @@ export function getSavedSale(
   if (!sale) throw new SalesError(500, "sale_persistence_failed");
   const lines = db
     .prepare(
-      `SELECT id, product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
+      `SELECT sl.id, sl.product_id, product_name_snapshot, sku_snapshot, unit_snapshot,
               quantity, unit_price_centavos, tax_class_snapshot,
               sc_pwd_eligible_snapshot, sc_eligible_snapshot,
               pwd_eligible_snapshot, product_type_snapshot,
-              benefit_applied, tax_basis_centavos,
+              benefit_applied, benefit_treatment_snapshot,
+              bnpc_eligible_snapshot, bnpc_category_snapshot,
+              bnpc_discount_centavos, p.version AS bnpc_policy_version,
+              bnpc_prescription_required_snapshot,
+              tax_basis_centavos,
               vat_centavos, vat_removed_centavos, discount_centavos,
               bundle_promotion_discount_centavos, amount_due_centavos,
               allocated_cogs_centavos, tax_policy_version
-       FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
+       FROM sale_lines sl
+       LEFT JOIN bnpc_policy_versions p ON p.id = sl.bnpc_policy_version
+       WHERE sl.sale_id = ? ORDER BY line_number`,
     )
     .all(id) as {
     id: string;
@@ -1042,6 +1349,12 @@ export function getSavedSale(
     pwd_eligible_snapshot: number;
     product_type_snapshot: "GENERIC" | "BRANDED" | null;
     benefit_applied: number;
+    benefit_treatment_snapshot: SaleLineTreatment;
+    bnpc_eligible_snapshot: number;
+    bnpc_category_snapshot: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
+    bnpc_discount_centavos: number;
+    bnpc_policy_version: string | null;
+    bnpc_prescription_required_snapshot: number;
     tax_basis_centavos: number;
     vat_centavos: number;
     vat_removed_centavos: number;
@@ -1063,6 +1376,7 @@ export function getSavedSale(
     vatRemoved: money(sale.vat_removed_centavos),
     seniorDiscount: money(sale.senior_discount_centavos),
     pwdDiscount: money(sale.pwd_discount_centavos),
+    bnpcDiscount: money(sale.bnpc_discount_centavos),
     amountDue: money(sale.amount_due_centavos),
     cashRoundingMode: sale.cash_rounding_mode,
     cashRoundingAdjustment: money(sale.cash_rounding_adjustment_centavos),
@@ -1083,6 +1397,12 @@ export function getSavedSale(
       isPwdEligible: line.pwd_eligible_snapshot === 1,
       productType: line.product_type_snapshot,
       benefitApplied: line.benefit_applied === 1,
+      benefitTreatment: line.benefit_treatment_snapshot,
+      bnpcEligible: line.bnpc_eligible_snapshot === 1,
+      bnpcCategory: line.bnpc_category_snapshot,
+      bnpcPrescriptionRequired: line.bnpc_prescription_required_snapshot === 1,
+      bnpcDiscount: money(line.bnpc_discount_centavos),
+      bnpcPolicyVersion: line.bnpc_policy_version,
       lotAllocations: (
         db
           .prepare(
@@ -1160,6 +1480,83 @@ export function getSavedSale(
               selectedStatutoryTreatment: row.selected_statutory_treatment,
               priceRuleVersion: row.price_rule_version,
               discountInteractionRule: row.discount_interaction_rule,
+            }
+          : null;
+      })(),
+      bnpc: (() => {
+        const bnpc = db
+          .prepare(
+            `SELECT p.version, p.effective_from, p.source_title,
+                    s.week_start_date, s.local_purchase_before_centavos,
+                    s.local_discount_before_centavos,
+                    s.external_purchase_attested_centavos,
+                    s.external_discount_attested_centavos,
+                    s.verified_purchase_allowance_centavos,
+                    s.verified_discount_allowance_centavos,
+                    s.local_purchase_applied_centavos,
+                    s.bnpc_discount_centavos, s.booklet_checked,
+                    s.representative_purchase, s.representative_documents_checked,
+                    s.authorization_letter_issued_date, s.prescription_applicable,
+                    s.prescription_checked, s.four_kinds_checked
+             FROM sale_bnpc_snapshots s
+             JOIN bnpc_policy_versions p ON p.id = s.bnpc_policy_version_id
+             WHERE s.sale_id = ?`,
+          )
+          .get(id) as
+          | {
+              version: string;
+              effective_from: string;
+              source_title: string;
+              week_start_date: string;
+              local_purchase_before_centavos: number;
+              local_discount_before_centavos: number;
+              external_purchase_attested_centavos: number;
+              external_discount_attested_centavos: number;
+              verified_purchase_allowance_centavos: number;
+              verified_discount_allowance_centavos: number;
+              local_purchase_applied_centavos: number;
+              bnpc_discount_centavos: number;
+              booklet_checked: number;
+              representative_purchase: number;
+              representative_documents_checked: number;
+              authorization_letter_issued_date: string | null;
+              prescription_applicable: number;
+              prescription_checked: number;
+              four_kinds_checked: number;
+            }
+          | undefined;
+        return bnpc
+          ? {
+              policyVersion: bnpc.version,
+              effectiveFrom: bnpc.effective_from,
+              sourceTitle: bnpc.source_title,
+              weekStartDate: bnpc.week_start_date,
+              localPurchaseBefore: money(bnpc.local_purchase_before_centavos),
+              localDiscountBefore: money(bnpc.local_discount_before_centavos),
+              externalPurchaseAttested: money(
+                bnpc.external_purchase_attested_centavos,
+              ),
+              externalDiscountAttested: money(
+                bnpc.external_discount_attested_centavos,
+              ),
+              verifiedPurchaseAllowance: money(
+                bnpc.verified_purchase_allowance_centavos,
+              ),
+              verifiedDiscountAllowance: money(
+                bnpc.verified_discount_allowance_centavos,
+              ),
+              localPurchaseApplied: money(bnpc.local_purchase_applied_centavos),
+              discount: money(bnpc.bnpc_discount_centavos),
+              bookletChecked: bnpc.booklet_checked === 1,
+              representativePurchase: bnpc.representative_purchase === 1,
+              representativeDocumentsChecked:
+                bnpc.representative_documents_checked === 1,
+              authorizationLetterIssuedDate:
+                bnpc.authorization_letter_issued_date,
+              prescriptionApplicable: bnpc.prescription_applicable === 1,
+              prescriptionChecked: bnpc.prescription_checked === 1,
+              fourKindsChecked: bnpc.four_kinds_checked === 1,
+              localStoreOnly: true,
             }
           : null;
       })(),
@@ -1514,6 +1911,14 @@ export function registerSalesRoutes(
     if (!parsed.success) return validationFailure(res);
     try {
       const policy = taxPolicy(db);
+      const bnpcContext = bnpcContextForCheckout(
+        db,
+        parsed.data.items,
+        parsed.data.bundleOffers,
+        parsed.data.benefitType,
+        parsed.data.customerIdNumber,
+        parsed.data.bnpcChecks,
+      );
       const result = calculateCart(
         db,
         parsed.data.benefitType,
@@ -1522,8 +1927,17 @@ export function registerSalesRoutes(
         parsed.data.paymentMethod,
         false,
         parsed.data.bundleOffers,
+        bnpcContext,
       );
-      res.json(presentCheckout(db, result, policy, parsed.data.paymentMethod));
+      res.json(
+        presentCheckout(
+          db,
+          result,
+          policy,
+          parsed.data.paymentMethod,
+          bnpcContext,
+        ),
+      );
     } catch (error) {
       if (!handleSalesError(error, res)) throw error;
     }
@@ -1532,6 +1946,24 @@ export function registerSalesRoutes(
   router.post("/sales", requireAuth, csrf, (req, res) => {
     const parsed = saleRequestSchema.safeParse(req.body);
     if (!parsed.success || !req.user) return validationFailure(res);
+    const bnpcRequested = hasRequestedBnpc(
+      parsed.data.items,
+      parsed.data.bundleOffers,
+    );
+    let holderKeyForHash: string | null = null;
+    if (bnpcRequested) {
+      if (!parsed.data.customerIdNumber) {
+        return res.status(400).json({ error: "bnpc_evidence_required" });
+      }
+      try {
+        holderKeyForHash = bnpcHolderKey(parsed.data.customerIdNumber);
+      } catch (error) {
+        if (error instanceof CustomerDataError) {
+          return res.status(503).json({ error: error.code });
+        }
+        throw error;
+      }
+    }
     const requestHash = createHash("sha256")
       .update(
         JSON.stringify({
@@ -1539,6 +1971,8 @@ export function registerSalesRoutes(
           paymentMethod: parsed.data.paymentMethod,
           items: parsed.data.items,
           bundleOffers: parsed.data.bundleOffers,
+          bnpcChecks: parsed.data.bnpcChecks ?? null,
+          bnpcHolderKey: holderKeyForHash,
         }),
       )
       .digest("hex");
@@ -1565,6 +1999,14 @@ export function registerSalesRoutes(
         }
         const currentShift = shiftForCashier(db, req.user!.id);
         if (!currentShift) throw new SalesError(409, "open_shift_required");
+        const bnpcContext = bnpcContextForCheckout(
+          db,
+          parsed.data.items,
+          parsed.data.bundleOffers,
+          parsed.data.benefitType,
+          parsed.data.customerIdNumber,
+          parsed.data.bnpcChecks,
+        );
         const preview = calculateCart(
           db,
           parsed.data.benefitType,
@@ -1573,6 +2015,7 @@ export function registerSalesRoutes(
           parsed.data.paymentMethod,
           true,
           parsed.data.bundleOffers,
+          bnpcContext,
         );
         const nowDate = new Date();
         const businessDate = manilaBusinessDate(nowDate);
@@ -1607,8 +2050,8 @@ export function registerSalesRoutes(
              vat_removed_centavos,
              senior_discount_centavos, pwd_discount_centavos, amount_due_centavos,
              tax_policy_version, created_at, cash_rounding_mode,
-             cash_rounding_adjustment_centavos)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             cash_rounding_adjustment_centavos, bnpc_discount_centavos)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           saleId,
           transactionId,
@@ -1633,6 +2076,7 @@ export function registerSalesRoutes(
           now,
           policy.cashRoundingMode,
           preview.cashRoundingAdjustmentCentavos,
+          preview.bnpcDiscountCentavos,
         );
 
         const bundleSnapshotIds = new Map<string, string>();
@@ -1678,12 +2122,15 @@ export function registerSalesRoutes(
              sku_snapshot, unit_snapshot, quantity, unit_price_centavos,
              tax_class_snapshot, sc_pwd_eligible_snapshot,
              sc_eligible_snapshot, pwd_eligible_snapshot, product_type_snapshot,
-             benefit_applied,
+             benefit_applied, benefit_treatment_snapshot,
+             bnpc_eligible_snapshot, bnpc_category_snapshot,
+             bnpc_discount_centavos, bnpc_policy_version,
+             bnpc_prescription_required_snapshot,
              tax_basis_centavos, vat_centavos, vat_removed_centavos, discount_centavos,
              bundle_promotion_discount_centavos,
              amount_due_centavos, allocated_cogs_centavos,
              tax_policy_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const [index, line] of preview.lines.entries()) {
           const product = db
@@ -1746,6 +2193,14 @@ export function registerSalesRoutes(
             line.product.pwd_eligible,
             line.product.product_type,
             line.benefitApplied ? 1 : 0,
+            line.benefitTreatment,
+            line.product.bnpc_eligible,
+            line.product.bnpc_category,
+            line.bnpcDiscountCentavos,
+            bnpcContext && line.requestedBenefitTreatment === "BNPC"
+              ? bnpcContext.policy.id
+              : null,
+            line.product.bnpc_prescription_required,
             line.taxBasisCentavos,
             line.vatCentavos,
             line.vatRemovedCentavos,
@@ -1768,8 +2223,9 @@ export function registerSalesRoutes(
                  regular_unit_price_centavos, regular_line_total_centavos,
                  promotional_discount_allocated_centavos,
                  promotional_discount_applied_centavos,
-                 selected_statutory_treatment, tax_policy_version, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 selected_statutory_treatment, tax_policy_version, created_at,
+                 benefit_treatment_snapshot)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             ).run(
               randomUUID(),
               snapshotId,
@@ -1781,9 +2237,10 @@ export function registerSalesRoutes(
               line.regularGrossCentavos,
               line.bundle.allocatedPromotionDiscountCentavos,
               line.bundle.appliedPromotionDiscountCentavos,
-              line.benefitApplied ? parsed.data.benefitType : "REGULAR",
+              line.benefitTreatment,
               line.ruleVersion,
               now,
+              line.benefitTreatment,
             );
           }
           if (line.product.tracks_lots === 1) {
@@ -1841,6 +2298,63 @@ export function registerSalesRoutes(
               createdAt: now,
             });
           }
+        }
+
+        if (bnpcContext) {
+          db.prepare(
+            `INSERT INTO sale_bnpc_snapshots
+             (id, sale_id, bnpc_policy_version_id, holder_type, holder_key_hmac,
+              week_start_date, local_purchase_before_centavos,
+              local_discount_before_centavos,
+              external_purchase_attested_centavos,
+              external_discount_attested_centavos,
+              verified_purchase_allowance_centavos,
+              verified_discount_allowance_centavos,
+              local_purchase_applied_centavos, bnpc_discount_centavos,
+              booklet_checked, representative_purchase,
+              representative_documents_checked,
+              authorization_letter_issued_date, prescription_applicable,
+              prescription_checked, four_kinds_checked, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            randomUUID(),
+            saleId,
+            bnpcContext.policy.id,
+            parsed.data.benefitType,
+            bnpcContext.holderKeyHmac,
+            bnpcContext.weekStartDate,
+            bnpcContext.localPurchaseBeforeCentavos,
+            bnpcContext.localDiscountBeforeCentavos,
+            bnpcContext.externalPurchaseAttestedCentavos,
+            bnpcContext.externalDiscountAttestedCentavos,
+            bnpcContext.purchaseAllowanceCentavos,
+            bnpcContext.discountAllowanceCentavos,
+            preview.bnpcPurchaseCentavos,
+            preview.bnpcDiscountCentavos,
+            bnpcContext.evidence.bookletChecked ? 1 : 0,
+            bnpcContext.evidence.representativePurchase ? 1 : 0,
+            bnpcContext.evidence.representativeDocumentsChecked ? 1 : 0,
+            bnpcContext.evidence.authorizationLetterIssuedDate,
+            bnpcContext.evidence.prescriptionApplicable ? 1 : 0,
+            bnpcContext.evidence.prescriptionChecked ? 1 : 0,
+            bnpcContext.evidence.fourKindsChecked ? 1 : 0,
+            now,
+          );
+          db.prepare(
+            `INSERT INTO bnpc_usage_events
+             (id, holder_key_hmac, week_start_date, event_type, sale_id,
+              qualifying_purchase_delta_centavos, bnpc_discount_delta_centavos,
+              created_at)
+             VALUES (?, ?, ?, 'SALE', ?, ?, ?, ?)`,
+          ).run(
+            randomUUID(),
+            bnpcContext.holderKeyHmac,
+            bnpcContext.weekStartDate,
+            saleId,
+            preview.bnpcPurchaseCentavos,
+            preview.bnpcDiscountCentavos,
+            now,
+          );
         }
 
         if (parsed.data.paymentMethod === "CASH") {

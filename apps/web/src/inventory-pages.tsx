@@ -23,6 +23,12 @@ type Product = {
   taxClass: "VATABLE" | "VAT_EXEMPT" | "ZERO_RATED";
   isScEligible: boolean;
   isPwdEligible: boolean;
+  isBnpcEligible: boolean;
+  isBnpcPrescriptionRequired: boolean;
+  bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
+  bnpcSource: string | null;
+  bnpcReviewReference: string | null;
+  bnpcReviewedAt: string | null;
   productType: "GENERIC" | "BRANDED" | null;
   tracksLots: boolean;
   quantityOnHand: number;
@@ -50,6 +56,9 @@ type CatalogProduct = Pick<
   | "taxClass"
   | "isScEligible"
   | "isPwdEligible"
+  | "isBnpcEligible"
+  | "isBnpcPrescriptionRequired"
+  | "bnpcCategory"
   | "productType"
   | "tracksLots"
 > & {
@@ -101,6 +110,11 @@ const EMPTY_FORM = {
   taxClass: "VATABLE" as Product["taxClass"],
   isScEligible: false,
   isPwdEligible: false,
+  isBnpcEligible: false,
+  isBnpcPrescriptionRequired: false,
+  bnpcCategory: "BASIC_NECESSITY" as "BASIC_NECESSITY" | "PRIME_COMMODITY",
+  bnpcSource: "",
+  bnpcReviewReference: "",
   productType: "" as Product["productType"] | "",
   tracksLots: false,
   openingQuantity: "0",
@@ -161,6 +175,8 @@ function errorMessage(error: unknown): string {
       "This product is not marked eligible for a Senior Citizen benefit.",
     product_not_pwd_eligible:
       "This product is not marked eligible for a PWD benefit.",
+    bnpc_classification_review_required:
+      "Set the BNPC category and record its official source and review reference before enabling eligibility.",
     insufficient_stock:
       "The requested change exceeds available stock. Refresh and review the cart.",
     customer_encryption_unavailable:
@@ -319,6 +335,11 @@ export function ProductsPage() {
       taxClass: product.taxClass,
       isScEligible: product.isScEligible,
       isPwdEligible: product.isPwdEligible,
+      isBnpcEligible: product.isBnpcEligible,
+      isBnpcPrescriptionRequired: product.isBnpcPrescriptionRequired,
+      bnpcCategory: product.bnpcCategory ?? "BASIC_NECESSITY",
+      bnpcSource: product.bnpcSource ?? "",
+      bnpcReviewReference: product.bnpcReviewReference ?? "",
       productType: product.productType ?? "",
       tracksLots: product.tracksLots,
       reorderLevel:
@@ -345,6 +366,17 @@ export function ProductsPage() {
       taxClass: form.taxClass,
       isScEligible: form.isScEligible,
       isPwdEligible: form.isPwdEligible,
+      bnpcEligible: form.isBnpcEligible,
+      ...(form.isBnpcEligible
+        ? { bnpcPrescriptionRequired: form.isBnpcPrescriptionRequired }
+        : {}),
+      ...(form.isBnpcEligible
+        ? {
+            bnpcCategory: form.bnpcCategory,
+            bnpcSource: form.bnpcSource.trim(),
+            bnpcReviewReference: form.bnpcReviewReference.trim(),
+          }
+        : {}),
       tracksLots: form.tracksLots,
       ...(form.productType ? { productType: form.productType } : {}),
       reorderLevel: form.reorderLevel === "" ? null : Number(form.reorderLevel),
@@ -478,6 +510,9 @@ export function ProductsPage() {
                           {product.sku}
                           {` · ${product.productType === null ? "Unclassified" : product.productType === "GENERIC" ? "Generic" : "Branded"}`}
                           {product.barcode ? ` · ${product.barcode}` : ""} ·{" "}
+                          {product.isBnpcEligible
+                            ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
+                            : "BNPC ineligible"}
                           {product.unit}
                         </small>
                       </td>
@@ -713,6 +748,103 @@ export function ProductsPage() {
                 />
                 <span>PWD eligible</span>
               </label>
+            </div>
+            <div
+              className="inventory-checkbox-group"
+              role="group"
+              aria-label="BNPC benefit eligibility"
+            >
+              <span className="field-label">Separate BNPC benefit</span>
+              <label className="inventory-checkbox">
+                <input
+                  type="checkbox"
+                  checked={form.isBnpcEligible}
+                  onChange={(event) =>
+                    setForm({ ...form, isBnpcEligible: event.target.checked })
+                  }
+                />
+                <span>Eligible for 5% BNPC discount</span>
+              </label>
+              <small className="field-hint">
+                Independent from VAT class and SC/PWD eligibility. Review each
+                SKU against the dated official goods list; product names and
+                broad categories never set this automatically.
+              </small>
+              {form.isBnpcEligible && (
+                <>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.isBnpcPrescriptionRequired}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          isBnpcPrescriptionRequired: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      Prescription required for BNPC benefit on this product
+                    </span>
+                  </label>
+                  <Field
+                    id="product-bnpc-category"
+                    label="Reviewed BNPC category"
+                  >
+                    <select
+                      id="product-bnpc-category"
+                      className="text-input select-input"
+                      value={form.bnpcCategory}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          bnpcCategory: event.target.value as NonNullable<
+                            Product["bnpcCategory"]
+                          >,
+                        })
+                      }
+                    >
+                      <option value="BASIC_NECESSITY">Basic Necessity</option>
+                      <option value="PRIME_COMMODITY">Prime Commodity</option>
+                    </select>
+                  </Field>
+                  <Field
+                    id="product-bnpc-source"
+                    label="Official source reviewed"
+                  >
+                    <input
+                      id="product-bnpc-source"
+                      className="text-input"
+                      value={form.bnpcSource}
+                      onChange={(event) =>
+                        setForm({ ...form, bnpcSource: event.target.value })
+                      }
+                      minLength={3}
+                      maxLength={500}
+                      required
+                    />
+                  </Field>
+                  <Field
+                    id="product-bnpc-review"
+                    label="Category review reference"
+                  >
+                    <input
+                      id="product-bnpc-review"
+                      className="text-input"
+                      value={form.bnpcReviewReference}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          bnpcReviewReference: event.target.value,
+                        })
+                      }
+                      minLength={3}
+                      maxLength={300}
+                      required
+                    />
+                  </Field>
+                </>
+              )}
             </div>
             <label className="inventory-checkbox">
               <input
@@ -1871,7 +2003,7 @@ export function StockPage() {
 type CartLine = {
   product: CatalogProduct;
   quantity: number;
-  benefitApplied: boolean;
+  benefitTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
 };
 
 type BundleOffer = {
@@ -1900,6 +2032,9 @@ type BundleOffer = {
     taxClass: CatalogProduct["taxClass"];
     isScEligible: boolean;
     isPwdEligible: boolean;
+    isBnpcEligible: boolean;
+    isBnpcPrescriptionRequired: boolean;
+    bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
     tracksLots: boolean;
     quantityAvailable: number;
     assignedLots: CatalogProduct["assignedLots"];
@@ -1910,7 +2045,10 @@ type BundleCartLine = {
   offer: BundleOffer;
   offerKey: string;
   quantity: number;
-  componentBenefits: Record<string, boolean>;
+  componentBenefits: Record<
+    string,
+    "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC"
+  >;
 };
 
 type CheckoutPreview = {
@@ -1935,7 +2073,7 @@ type CheckoutPreview = {
       promotionSelected: boolean;
       statutoryAlternativeAmountDue: string;
       promotionAlternativeAmountDue: string;
-      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
+      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
     };
     assignedLots: Array<{
       lotId: string;
@@ -1944,6 +2082,10 @@ type CheckoutPreview = {
       quantity: number;
     }>;
     gross: string;
+    bnpcEligible: boolean;
+    bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
+    benefitTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
+    bnpcDiscount: string;
     taxBasis: string;
     vat: string;
     vatRemoved: string;
@@ -1969,7 +2111,7 @@ type CheckoutPreview = {
       promotionAlternativeAmountDue: string;
       statutoryAlternativeAmountDue: string;
       appliedPromotionDiscount: string;
-      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
+      selectedStatutoryTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
     }>;
   }>;
   totals: {
@@ -1978,6 +2120,14 @@ type CheckoutPreview = {
     vatRemoved: string;
     seniorDiscount: string;
     pwdDiscount: string;
+    bnpcDiscount: string;
+    bnpcQualifyingPurchase: string;
+    bnpcAllowance: null | {
+      purchaseBeforeSale: string;
+      discountBeforeSale: string;
+      localStoreOnly: boolean;
+      weekStartDate: string;
+    };
     bundlePromotionalDiscount: string;
     amountBeforeCashRounding: string;
     cashRoundingAdjustment: string;
@@ -1990,12 +2140,21 @@ type SaleRecord = {
   transactionId: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  bnpcDiscount: string;
   cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
   cashRoundingAdjustment: string;
   label: string;
 };
 
 type TaxPolicySummary = { approved: boolean; version: string };
+type BnpcPolicySummary = {
+  enabled: boolean;
+  version: string;
+  weeklyPurchaseLimit: string;
+  weeklyDiscountLimit: string;
+  effectiveFrom: string;
+  sourceTitle: string;
+};
 
 type CurrentShift = {
   id: string;
@@ -2018,6 +2177,22 @@ export function CheckoutPage() {
   const [customerIdType, setCustomerIdType] = useState("");
   const [customerIdNumber, setCustomerIdNumber] = useState("");
   const [customerIdChecked, setCustomerIdChecked] = useState(false);
+  const [bnpcPolicy, setBnpcPolicy] = useState<BnpcPolicySummary | null>(null);
+  const [bnpcBookletChecked, setBnpcBookletChecked] = useState(false);
+  const [bnpcPriorPurchaseConfirmed, setBnpcPriorPurchaseConfirmed] =
+    useState(false);
+  const [bnpcExternalPurchase, setBnpcExternalPurchase] = useState("0.00");
+  const [bnpcExternalDiscount, setBnpcExternalDiscount] = useState("0.00");
+  const [bnpcRepresentativePurchase, setBnpcRepresentativePurchase] =
+    useState(false);
+  const [bnpcRepresentativeDocsChecked, setBnpcRepresentativeDocsChecked] =
+    useState(false);
+  const [bnpcAuthorizationLetterDate, setBnpcAuthorizationLetterDate] =
+    useState("");
+  const [bnpcPrescriptionApplicable, setBnpcPrescriptionApplicable] =
+    useState(false);
+  const [bnpcPrescriptionChecked, setBnpcPrescriptionChecked] = useState(false);
+  const [bnpcFourKindsChecked, setBnpcFourKindsChecked] = useState(false);
   const [policy, setPolicy] = useState<TaxPolicySummary | null>(null);
   const [shift, setShift] = useState<CurrentShift | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -2065,13 +2240,15 @@ export function CheckoutPage() {
         "/shifts/current",
       ),
       api.get<{ bundles: BundleOffer[] }>("/bundles/active"),
+      api.get<{ policy: BnpcPolicySummary }>("/bnpc-policy"),
     ])
-      .then(([policyResult, shiftResult, bundleResult]) => {
+      .then(([policyResult, shiftResult, bundleResult, bnpcResult]) => {
         if (!active) return;
         setPolicy(policyResult.policy);
         setShift(shiftResult.shift);
         setRegisterOpen(shiftResult.registerOpen);
         setBundleOffers(bundleResult.bundles);
+        setBnpcPolicy(bnpcResult.policy);
         if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       })
       .catch(() => {
@@ -2106,6 +2283,46 @@ export function CheckoutPage() {
     bundleCart.some((line) =>
       line.offer.components.some((component) => component.tracksLots),
     );
+  const hasBnpc =
+    cart.some((line) => line.benefitTreatment === "BNPC") ||
+    bundleCart.some((line) =>
+      Object.values(line.componentBenefits).includes("BNPC"),
+    );
+  const bnpcPrescriptionRequired =
+    cart.some(
+      (line) =>
+        line.benefitTreatment === "BNPC" &&
+        line.product.isBnpcPrescriptionRequired,
+    ) ||
+    bundleCart.some((line) =>
+      line.offer.components.some(
+        (component) =>
+          line.componentBenefits[component.productId] === "BNPC" &&
+          component.isBnpcPrescriptionRequired,
+      ),
+    );
+  const hasSelectedBenefit =
+    hasBnpc ||
+    cart.some((line) => line.benefitTreatment !== "REGULAR") ||
+    bundleCart.some((line) =>
+      Object.values(line.componentBenefits).some(
+        (treatment) => treatment !== "REGULAR",
+      ),
+    );
+  const effectiveBenefitType = hasSelectedBenefit ? benefitType : "REGULAR";
+  const bnpcChecks = {
+    bookletChecked: bnpcBookletChecked,
+    priorPurchaseConfirmed: bnpcPriorPurchaseConfirmed,
+    externalPurchaseAmount: bnpcExternalPurchase,
+    externalDiscountUsedAmount: bnpcExternalDiscount,
+    representativePurchase: bnpcRepresentativePurchase,
+    representativeDocumentsChecked: bnpcRepresentativeDocsChecked,
+    authorizationLetterIssuedDate: bnpcAuthorizationLetterDate || null,
+    prescriptionApplicable:
+      bnpcPrescriptionApplicable || bnpcPrescriptionRequired,
+    prescriptionChecked: bnpcPrescriptionChecked,
+    fourKindsChecked: bnpcFourKindsChecked,
+  };
 
   function invalidatePreview() {
     setPreview(null);
@@ -2131,7 +2348,10 @@ export function CheckoutPage() {
               }
             : entry,
         );
-      return [...current, { product, quantity: 1, benefitApplied: false }];
+      return [
+        ...current,
+        { product, quantity: 1, benefitTreatment: "REGULAR" },
+      ];
     });
   }
   function setQuantity(productId: string, quantity: number) {
@@ -2155,11 +2375,14 @@ export function CheckoutPage() {
     );
   }
 
-  function setBenefitForLine(productId: string, benefitApplied: boolean) {
+  function setBenefitForLine(
+    productId: string,
+    benefitTreatment: CartLine["benefitTreatment"],
+  ) {
     invalidatePreview();
     setCart((current) =>
       current.map((line) =>
-        line.product.id === productId ? { ...line, benefitApplied } : line,
+        line.product.id === productId ? { ...line, benefitTreatment } : line,
       ),
     );
   }
@@ -2236,7 +2459,10 @@ export function CheckoutPage() {
           offerKey: window.crypto.randomUUID(),
           quantity: 1,
           componentBenefits: Object.fromEntries(
-            offer.components.map((component) => [component.productId, false]),
+            offer.components.map((component) => [
+              component.productId,
+              "REGULAR",
+            ]),
           ),
         },
       ];
@@ -2265,7 +2491,7 @@ export function CheckoutPage() {
   function setBundleBenefit(
     offerKey: string,
     productId: string,
-    benefitApplied: boolean,
+    benefitTreatment: NonNullable<BundleCartLine["componentBenefits"][string]>,
   ) {
     invalidatePreview();
     setBundleCart((current) =>
@@ -2275,7 +2501,7 @@ export function CheckoutPage() {
               ...line,
               componentBenefits: {
                 ...line.componentBenefits,
-                [productId]: benefitApplied,
+                [productId]: benefitTreatment,
               },
             }
           : line,
@@ -2336,12 +2562,12 @@ export function CheckoutPage() {
     setNotice("");
     try {
       const result = await api.post<CheckoutPreview>("/sales/preview", {
-        benefitType,
+        benefitType: effectiveBenefitType,
         paymentMethod,
         items: cart.map((line) => ({
           productId: line.product.id,
           quantity: line.quantity,
-          benefitApplied: line.benefitApplied,
+          benefitTreatment: line.benefitTreatment,
         })),
         bundleOffers: bundleCart.map((line) => ({
           offerKey: line.offerKey,
@@ -2349,10 +2575,11 @@ export function CheckoutPage() {
           quantity: line.quantity,
           components: line.offer.components.map((component) => ({
             productId: component.productId,
-            benefitApplied:
-              line.componentBenefits[component.productId] ?? false,
+            benefitTreatment:
+              line.componentBenefits[component.productId] ?? "REGULAR",
           })),
         })),
+        ...(hasBnpc ? { customerIdNumber, bnpcChecks } : {}),
       });
       setPreview(result);
       setLotPickConfirmed(false);
@@ -2373,13 +2600,13 @@ export function CheckoutPage() {
       const result = await api.post<{ sale: SaleRecord; replayed: boolean }>(
         "/sales",
         {
-          benefitType,
+          benefitType: effectiveBenefitType,
           paymentMethod,
           requestKey,
           items: cart.map((line) => ({
             productId: line.product.id,
             quantity: line.quantity,
-            benefitApplied: line.benefitApplied,
+            benefitTreatment: line.benefitTreatment,
             ...(line.product.tracksLots
               ? {
                   lotAllocations:
@@ -2408,8 +2635,8 @@ export function CheckoutPage() {
               );
               return {
                 productId: component.productId,
-                benefitApplied:
-                  line.componentBenefits[component.productId] ?? false,
+                benefitTreatment:
+                  line.componentBenefits[component.productId] ?? "REGULAR",
                 ...(component.tracksLots
                   ? {
                       lotAllocations:
@@ -2423,14 +2650,15 @@ export function CheckoutPage() {
               };
             }),
           })),
-          ...(benefitType === "REGULAR"
-            ? {}
-            : {
+          ...(hasSelectedBenefit
+            ? {
                 customerName,
                 customerIdType,
                 customerIdNumber,
                 customerIdChecked,
-              }),
+              }
+            : {}),
+          ...(hasBnpc ? { bnpcChecks } : {}),
         },
       );
       setSaleRecord(result.sale);
@@ -2815,13 +3043,16 @@ export function CheckoutPage() {
                     setCart((current) =>
                       current.map((line) => ({
                         ...line,
-                        benefitApplied:
-                          next === "SENIOR_CITIZEN"
-                            ? line.benefitApplied && line.product.isScEligible
-                            : next === "PWD"
-                              ? line.benefitApplied &&
-                                line.product.isPwdEligible
-                              : false,
+                        benefitTreatment:
+                          line.benefitTreatment === "BNPC" ||
+                          (next === "SENIOR_CITIZEN" &&
+                            line.benefitTreatment === "SENIOR_CITIZEN" &&
+                            line.product.isScEligible) ||
+                          (next === "PWD" &&
+                            line.benefitTreatment === "PWD" &&
+                            line.product.isPwdEligible)
+                            ? line.benefitTreatment
+                            : "REGULAR",
                       })),
                     );
                     setBundleCart((current) =>
@@ -2830,14 +3061,21 @@ export function CheckoutPage() {
                         componentBenefits: Object.fromEntries(
                           bundleLine.offer.components.map((component) => [
                             component.productId,
-                            Boolean(
-                              bundleLine.componentBenefits[component.productId],
-                            ) &&
-                              (next === "SENIOR_CITIZEN"
-                                ? component.isScEligible
-                                : next === "PWD"
-                                  ? component.isPwdEligible
-                                  : false),
+                            (() => {
+                              const treatment =
+                                bundleLine.componentBenefits[
+                                  component.productId
+                                ] ?? "REGULAR";
+                              return treatment === "BNPC" ||
+                                (next === "SENIOR_CITIZEN" &&
+                                  treatment === "SENIOR_CITIZEN" &&
+                                  component.isScEligible) ||
+                                (next === "PWD" &&
+                                  treatment === "PWD" &&
+                                  component.isPwdEligible)
+                                ? treatment
+                                : "REGULAR";
+                            })(),
                           ]),
                         ),
                       })),
@@ -2857,7 +3095,7 @@ export function CheckoutPage() {
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
                         type="checkbox"
-                        checked={line.benefitApplied}
+                        checked={line.benefitTreatment === benefitType}
                         disabled={
                           benefitType === "SENIOR_CITIZEN"
                             ? !line.product.isScEligible
@@ -2866,7 +3104,7 @@ export function CheckoutPage() {
                         onChange={(event) =>
                           setBenefitForLine(
                             line.product.id,
-                            event.target.checked,
+                            event.target.checked ? benefitType : "REGULAR",
                           )
                         }
                       />
@@ -2903,14 +3141,14 @@ export function CheckoutPage() {
                             checked={
                               bundleLine.componentBenefits[
                                 component.productId
-                              ] ?? false
+                              ] === benefitType
                             }
                             disabled={!eligible}
                             onChange={(event) =>
                               setBundleBenefit(
                                 bundleLine.offerKey,
                                 component.productId,
-                                event.target.checked,
+                                event.target.checked ? benefitType : "REGULAR",
                               )
                             }
                           />
@@ -2924,7 +3162,60 @@ export function CheckoutPage() {
                   )}
                 </div>
               )}
-              {benefitType !== "REGULAR" && (
+              {bnpcPolicy?.enabled && benefitType !== "REGULAR" && (
+                <div className="checkout-benefit-lines">
+                  <strong>BNPC 5 percent option</strong>
+                  {cart.map((line) => (
+                    <label className="inventory-checkbox" key={line.product.id}>
+                      <input
+                        type="checkbox"
+                        checked={line.benefitTreatment === "BNPC"}
+                        disabled={!line.product.isBnpcEligible}
+                        onChange={(event) =>
+                          setBenefitForLine(
+                            line.product.id,
+                            event.target.checked ? "BNPC" : "REGULAR",
+                          )
+                        }
+                      />
+                      <span>
+                        {line.product.name} · BNPC 5% ·{" "}
+                        {line.product.bnpcCategory ?? "not reviewed eligible"}
+                      </span>
+                    </label>
+                  ))}
+                  {bundleCart.flatMap((bundleLine) =>
+                    bundleLine.offer.components.map((component) => (
+                      <label
+                        className="inventory-checkbox"
+                        key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            bundleLine.componentBenefits[
+                              component.productId
+                            ] === "BNPC"
+                          }
+                          disabled={!component.isBnpcEligible}
+                          onChange={(event) =>
+                            setBundleBenefit(
+                              bundleLine.offerKey,
+                              component.productId,
+                              event.target.checked ? "BNPC" : "REGULAR",
+                            )
+                          }
+                        />
+                        <span>
+                          {bundleLine.offer.name} · {component.name} · BNPC 5% ·{" "}
+                          {component.bnpcCategory ?? "not reviewed eligible"}
+                        </span>
+                      </label>
+                    )),
+                  )}
+                </div>
+              )}
+              {hasSelectedBenefit && benefitType !== "REGULAR" && (
                 <div className="checkout-customer-fields">
                   <Field id="benefit-customer-name" label="Customer name">
                     <input
@@ -2978,6 +3269,175 @@ export function CheckoutPage() {
                       }}
                     />
                     <span>I checked the physical ID</span>
+                  </label>
+                </div>
+              )}
+              {bnpcPolicy && !bnpcPolicy.enabled && (
+                <small className="field-hint">
+                  BNPC is disabled pending the current policy review, store
+                  eligibility decision, and owner/accountant approval.
+                </small>
+              )}
+              {hasBnpc && (
+                <div className="checkout-customer-fields">
+                  <strong>BNPC booklet and prior usage</strong>
+                  <p className="field-hint">
+                    The allowance shown is local to this register. Medtryx
+                    cannot see purchases at other stores or online; staff must
+                    verify booklet amounts covering all channels.
+                  </p>
+                  <Field
+                    id="bnpc-external-purchase"
+                    label="Prior covered purchases elsewhere this Manila week (PHP)"
+                  >
+                    <input
+                      id="bnpc-external-purchase"
+                      className="text-input"
+                      inputMode="decimal"
+                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                      value={bnpcExternalPurchase}
+                      onChange={(event) => {
+                        setBnpcExternalPurchase(event.target.value);
+                        setRequestKey("");
+                      }}
+                    />
+                  </Field>
+                  <Field
+                    id="bnpc-external-discount"
+                    label="Prior BNPC discounts used elsewhere this Manila week (PHP)"
+                  >
+                    <input
+                      id="bnpc-external-discount"
+                      className="text-input"
+                      inputMode="decimal"
+                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                      value={bnpcExternalDiscount}
+                      onChange={(event) => {
+                        setBnpcExternalDiscount(event.target.value);
+                        setRequestKey("");
+                      }}
+                    />
+                  </Field>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={bnpcBookletChecked}
+                      onChange={(event) => {
+                        setBnpcBookletChecked(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>I checked the current booklet.</span>
+                  </label>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={bnpcPriorPurchaseConfirmed}
+                      onChange={(event) => {
+                        setBnpcPriorPurchaseConfirmed(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>
+                      I confirmed prior purchase and discount amounts against
+                      the booklet and customer information.
+                    </span>
+                  </label>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={bnpcRepresentativePurchase}
+                      onChange={(event) => {
+                        setBnpcRepresentativePurchase(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>This purchase is through a representative.</span>
+                  </label>
+                  {bnpcRepresentativePurchase && (
+                    <>
+                      <Field
+                        id="bnpc-authorization-date"
+                        label="Authorization letter issue date"
+                      >
+                        <input
+                          id="bnpc-authorization-date"
+                          className="text-input"
+                          type="date"
+                          required
+                          value={bnpcAuthorizationLetterDate}
+                          onChange={(event) => {
+                            setBnpcAuthorizationLetterDate(event.target.value);
+                            setRequestKey("");
+                          }}
+                        />
+                      </Field>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          required
+                          checked={bnpcRepresentativeDocsChecked}
+                          onChange={(event) => {
+                            setBnpcRepresentativeDocsChecked(
+                              event.target.checked,
+                            );
+                            setRequestKey("");
+                          }}
+                        />
+                        <span>
+                          I checked the required representative and holder IDs,
+                          booklet, and authorization documents.
+                        </span>
+                      </label>
+                    </>
+                  )}
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={
+                        bnpcPrescriptionApplicable || bnpcPrescriptionRequired
+                      }
+                      disabled={bnpcPrescriptionRequired}
+                      onChange={(event) => {
+                        setBnpcPrescriptionApplicable(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>
+                      {bnpcPrescriptionRequired
+                        ? "The selected product requires a prescription for BNPC."
+                        : "A prescription is required for a selected item."}
+                    </span>
+                  </label>
+                  {(bnpcPrescriptionApplicable || bnpcPrescriptionRequired) && (
+                    <label className="inventory-checkbox">
+                      <input
+                        type="checkbox"
+                        required
+                        checked={bnpcPrescriptionChecked}
+                        onChange={(event) => {
+                          setBnpcPrescriptionChecked(event.target.checked);
+                          setRequestKey("");
+                        }}
+                      />
+                      <span>I checked the applicable prescription.</span>
+                    </label>
+                  )}
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={bnpcFourKindsChecked}
+                      onChange={(event) => {
+                        setBnpcFourKindsChecked(event.target.checked);
+                        setRequestKey("");
+                      }}
+                    />
+                    <span>
+                      I verified the four-kind condition from the booklet if
+                      this purchase reaches the full weekly purchase cap.
+                    </span>
                   </label>
                 </div>
               )}
@@ -3060,6 +3520,9 @@ export function CheckoutPage() {
                         : ""}{" "}
                       · discount ₱{line.discount}
                     </small>
+                    {centsFromMoney(line.bnpcDiscount) > 0n && (
+                      <small>BNPC discount ₱{line.bnpcDiscount}</small>
+                    )}
                     {line.assignedLots.length > 0 && (
                       <small>
                         FEFO pick:{" "}
