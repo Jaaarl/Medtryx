@@ -289,7 +289,7 @@ export function BundlesPage() {
       <header className="page-heading">
         <div>
           <span className="eyebrow">OWNER WORKSPACE</span>
-          <h1>Virtual sales bundles</h1>
+          <h1>Bundle offers</h1>
           <p>
             Offers expand to their component products at checkout. Bundle offers
             have no independent stock.
@@ -321,7 +321,7 @@ export function BundlesPage() {
           </div>
         </div>
         <form
-          className="form-stack inventory-form"
+          className="form-stack inventory-form bundle-editor-form"
           onSubmit={(event) => void save(event)}
         >
           {editingId && (
@@ -448,7 +448,7 @@ export function BundlesPage() {
               )}
             </div>
           </div>
-          <div className="settings-main-card">
+          <div className="settings-main-card bundle-components-card">
             <div className="card-heading">
               <div>
                 <h3>Component products</h3>
@@ -463,57 +463,88 @@ export function BundlesPage() {
                 </p>
               </div>
             </div>
-            {components.map((component, index) => (
-              <div
-                className="inventory-search-row"
-                key={`${component.productId}-${index}`}
-              >
-                <select
-                  className="text-input select-input"
-                  aria-label={`Bundle component ${index + 1}`}
-                  value={component.productId}
-                  onChange={(event) =>
-                    setComponent(index, { productId: event.target.value })
-                  }
-                  required
+            <div className="bundle-component-list">
+              {components.map((component, index) => (
+                <div
+                  className="bundle-component-row"
+                  key={`${component.productId}-${index}`}
                 >
-                  <option value="">Choose product</option>
-                  {products.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.sku} · {product.name} · ₱{product.sellingPrice}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="text-input"
-                  aria-label={`Quantity for component ${index + 1}`}
-                  type="number"
-                  min="1"
-                  max="10000"
-                  value={component.quantity}
-                  onChange={(event) =>
-                    setComponent(index, {
-                      quantity: Number(event.target.value),
-                    })
-                  }
-                  required
-                />
-                <button
-                  className="button button-quiet"
-                  type="button"
-                  onClick={() => {
-                    setConfirmPrice(false);
-                    setComponents((current) =>
-                      current.filter((_, entryIndex) => entryIndex !== index),
-                    );
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
+                  <select
+                    className="text-input select-input bundle-component-select"
+                    aria-label={`Bundle component ${index + 1}`}
+                    value={component.productId}
+                    onChange={(event) =>
+                      setComponent(index, { productId: event.target.value })
+                    }
+                    required
+                  >
+                    <option value="">Choose product</option>
+                    {products.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.sku} · {product.name} · ₱{product.sellingPrice}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="bundle-quantity-stepper">
+                    <button
+                      type="button"
+                      aria-label={`Decrease quantity for component ${index + 1}`}
+                      disabled={component.quantity <= 1}
+                      onClick={() =>
+                        setComponent(index, {
+                          quantity: Math.max(1, component.quantity - 1),
+                        })
+                      }
+                    >
+                      −
+                    </button>
+                    <input
+                      className="bundle-quantity-input"
+                      aria-label={`Quantity for component ${index + 1}`}
+                      type="number"
+                      min="1"
+                      max="10000"
+                      value={component.quantity}
+                      onChange={(event) =>
+                        setComponent(index, {
+                          quantity: Math.max(
+                            1,
+                            Math.min(10000, Number(event.target.value) || 1),
+                          ),
+                        })
+                      }
+                      required
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Increase quantity for component ${index + 1}`}
+                      disabled={component.quantity >= 10000}
+                      onClick={() =>
+                        setComponent(index, {
+                          quantity: Math.min(10000, component.quantity + 1),
+                        })
+                      }
+                    >
+                      +
+                    </button>
+                  </div>
+                  <button
+                    className="button button-quiet bundle-remove-component"
+                    type="button"
+                    onClick={() => {
+                      setConfirmPrice(false);
+                      setComponents((current) =>
+                        current.filter((_, entryIndex) => entryIndex !== index),
+                      );
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
             <button
-              className="button button-quiet"
+              className="button button-quiet bundle-add-component"
               type="button"
               disabled={components.length >= 20}
               onClick={() => {
@@ -524,42 +555,44 @@ export function BundlesPage() {
                 ]);
               }}
             >
-              Add component
+              <span aria-hidden="true">+</span> Add component
             </button>
           </div>
-          <label className="inventory-checkbox">
-            <input
-              type="checkbox"
-              checked={confirmPrice}
-              onChange={(event) => setConfirmPrice(event.target.checked)}
-            />
-            <span>
-              I approve this exact final promotional price. Statutory SC/PWD
-              treatment is compared per component and never stacked with the
-              bundle promotion.
-            </span>
-          </label>
-          <div className="button-row">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={saving || components.length < 2 || !confirmPrice}
-            >
-              {saving
-                ? "Saving…"
-                : editingId
-                  ? "Approve new version"
-                  : "Create and approve offer"}
-            </button>
-            {editingId && (
+          <div className="bundle-approval-actions">
+            <label className="inventory-checkbox">
+              <input
+                type="checkbox"
+                checked={confirmPrice}
+                onChange={(event) => setConfirmPrice(event.target.checked)}
+              />
+              <span>
+                I approve this exact final promotional price. Statutory SC/PWD
+                treatment is compared per component and never stacked with the
+                bundle promotion.
+              </span>
+            </label>
+            <div className="button-row">
               <button
-                className="button button-quiet"
-                type="button"
-                onClick={clearForm}
+                className="button button-primary bundle-submit"
+                type="submit"
+                disabled={saving || components.length < 2 || !confirmPrice}
               >
-                Cancel editing
+                {saving
+                  ? "Saving…"
+                  : editingId
+                    ? "Approve new version"
+                    : "Create and approve offer"}
               </button>
-            )}
+              {editingId && (
+                <button
+                  className="button button-quiet"
+                  type="button"
+                  onClick={clearForm}
+                >
+                  Cancel editing
+                </button>
+              )}
+            </div>
           </div>
         </form>
       </div>
@@ -574,44 +607,66 @@ export function BundlesPage() {
           </div>
         </div>
         {bundles.length ? (
-          <div className="catalog-result-list">
+          <div className="saved-bundle-list">
             {bundles.map((bundle) => (
-              <article className="catalog-result" key={bundle.id}>
-                <div className="catalog-product-copy">
+              <article className="saved-bundle-card" key={bundle.id}>
+                <div className="saved-bundle-info">
                   <strong>
-                    {bundle.code} · {bundle.name} · v{bundle.version}
+                    {bundle.code} &middot; {bundle.name} &middot; v
+                    {bundle.version}
                   </strong>
-                  <small>
-                    {bundle.components
-                      .map(
-                        (component) =>
-                          `${component.quantity} × ${component.name}`,
-                      )
-                      .join(" + ")}
+                  <small className="saved-bundle-components">
+                    {bundle.components.map((component, index) => (
+                      <span key={component.productId + "-" + index}>
+                        {index > 0 ? " + " : ""}
+                        {component.quantity} &times; {component.name}
+                      </span>
+                    ))}
                   </small>
-                  <span>
-                    {bundle.active ? "Active" : "Inactive"} ·{" "}
+                  <span className="saved-bundle-status">
+                    <span
+                      className={
+                        "status-dot" + (bundle.active ? "" : " is-inactive")
+                      }
+                      aria-hidden="true"
+                    />
+                    {bundle.active ? "Active" : "Inactive"} &middot;{" "}
                     {bundle.activeFrom}
                     {bundle.activeUntil
-                      ? ` to ${bundle.activeUntil}`
-                      : " onward"}{" "}
-                    · Offer ₱{bundle.promotionalPrice} · Suggested ₱
-                    {bundle.suggestedPromotionalPrice}
-                    {bundle.maxQuantityPerSale
-                      ? ` · max ${bundle.maxQuantityPerSale} per sale`
-                      : ""}
+                      ? " to " + bundle.activeUntil
+                      : " onward"}
                   </span>
+                  {bundle.maxQuantityPerSale && (
+                    <small className="saved-bundle-limit">
+                      Maximum {bundle.maxQuantityPerSale} per sale
+                    </small>
+                  )}
                 </div>
-                <div className="button-row">
+                <div className="saved-bundle-prices">
+                  <div>
+                    <span>Offer price</span>
+                    <strong>&#8369;{bundle.promotionalPrice}</strong>
+                  </div>
+                  <div>
+                    <span>Suggested price</span>
+                    <strong className="suggested-price">
+                      &#8369;{bundle.suggestedPromotionalPrice}
+                    </strong>
+                  </div>
+                </div>
+                <div className="button-row saved-bundle-actions">
                   <button
-                    className="button button-quiet"
+                    className="button button-quiet bundle-edit-action"
                     type="button"
                     onClick={() => editBundle(bundle)}
                   >
                     Edit version
                   </button>
                   <button
-                    className="button button-quiet"
+                    className={
+                      "button button-quiet bundle-toggle-action " +
+                      (bundle.active ? "is-active" : "is-inactive")
+                    }
                     type="button"
                     onClick={() => void setActive(bundle, !bundle.active)}
                   >

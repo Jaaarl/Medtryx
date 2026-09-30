@@ -2707,7 +2707,7 @@ export function CheckoutPage() {
           </div>
           {bundleOffers.length > 0 && (
             <div className="bundle-offer-list">
-              <h3>Virtual bundle offers</h3>
+              <h3>Bundle offers</h3>
               {bundleOffers.map((offer) => (
                 <article className="catalog-result" key={offer.versionId}>
                   <div className="catalog-product-copy">
