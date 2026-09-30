@@ -22,7 +22,7 @@ const moneySchema = z
   .trim()
   .regex(/^\d{1,7}(?:\.\d{1,2})?$/);
 const taxClassSchema = z.enum(["VATABLE", "VAT_EXEMPT", "ZERO_RATED"]);
-const productTypeSchema = z.enum(["GENERIC", "BRANDED"]);
+const productTypeSchema = z.enum(["GENERIC", "BRANDED", "NOT_APPLICABLE"]);
 const bnpcCategorySchema = z.enum(["BASIC_NECESSITY", "PRIME_COMMODITY"]);
 const skuSchema = z
   .string()
@@ -235,6 +235,7 @@ type ProductRow = {
   bnpc_eligible: number;
   bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
   product_type: "GENERIC" | "BRANDED" | null;
+  product_type_applicable: number;
   tracks_lots: number;
   quantity_on_hand: number;
   inventory_value_centavos: number;
@@ -380,7 +381,10 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
     isPwdEligible: row.pwd_eligible === 1,
     isBnpcEligible: row.bnpc_eligible === 1,
     bnpcCategory: row.bnpc_category,
-    productType: row.product_type,
+    productType:
+      row.product_type_applicable === 0
+        ? "NOT_APPLICABLE"
+        : row.product_type,
     tracksLots: row.tracks_lots === 1,
     quantityOnHand: row.quantity_on_hand,
     reorderLevel: row.reorder_level,
@@ -703,7 +707,10 @@ export function registerInventoryRoutes(
         isPwdEligible: row.pwd_eligible === 1,
         isBnpcEligible: row.bnpc_eligible === 1,
         bnpcCategory: row.bnpc_category,
-        productType: row.product_type,
+        productType:
+          row.product_type_applicable === 0
+            ? "NOT_APPLICABLE"
+            : row.product_type,
         tracksLots: row.tracks_lots === 1,
         physicalQuantity: row.quantity_on_hand,
         quantityAvailable,
@@ -774,10 +781,11 @@ export function registerInventoryRoutes(
         db.prepare(
           `INSERT INTO products
             (id, sku, name, barcode, unit, selling_price_centavos, tax_class,
-             sc_pwd_eligible, sc_eligible, pwd_eligible, product_type, tracks_lots,
+             sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+             product_type_applicable, tracks_lots,
              quantity_on_hand, inventory_value_centavos,
              reorder_level, is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         ).run(
           id,
           generatedSku,
@@ -789,7 +797,10 @@ export function registerInventoryRoutes(
           parsed.data.isScEligible || parsed.data.isPwdEligible ? 1 : 0,
           parsed.data.isScEligible ? 1 : 0,
           parsed.data.isPwdEligible ? 1 : 0,
-          parsed.data.productType,
+          parsed.data.productType === "NOT_APPLICABLE"
+            ? null
+            : parsed.data.productType,
+          parsed.data.productType === "NOT_APPLICABLE" ? 0 : 1,
           parsed.data.tracksLots ? 1 : 0,
           parsed.data.openingQuantity,
           inventoryValueCents,
@@ -946,11 +957,17 @@ export function registerInventoryRoutes(
       ) {
         changes.isPwdEligible = parsed.data.isPwdEligible;
       }
+      const currentProductType =
+        current.product_type_applicable === 0
+          ? "NOT_APPLICABLE"
+          : current.product_type;
       if (
         parsed.data.productType !== undefined &&
-        parsed.data.productType !== current.product_type
+        parsed.data.productType !== currentProductType
       ) {
         changes.productType = parsed.data.productType;
+        changes.productTypeApplicable =
+          parsed.data.productType === "NOT_APPLICABLE" ? 0 : 1;
       }
       if (
         parsed.data.tracksLots !== undefined &&
@@ -1007,7 +1024,16 @@ export function registerInventoryRoutes(
         isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
         bnpcEligible: ["bnpc_eligible", changes.bnpcEligible ? 1 : 0],
         bnpcCategory: ["bnpc_category", changes.bnpcCategory as string | null],
-        productType: ["product_type", String(changes.productType)],
+        productType: [
+          "product_type",
+          changes.productType === "NOT_APPLICABLE"
+            ? null
+            : String(changes.productType),
+        ],
+        productTypeApplicable: [
+          "product_type_applicable",
+          Number(changes.productTypeApplicable),
+        ],
         tracksLots: ["tracks_lots", changes.tracksLots ? 1 : 0],
         scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
         reorderLevel: ["reorder_level", parsed.data.reorderLevel ?? null],
@@ -1685,7 +1711,11 @@ function currentValues(
       isPwdEligible: row.pwd_eligible === 1,
       bnpcEligible: row.bnpc_eligible === 1,
       bnpcCategory: row.bnpc_category,
-      productType: row.product_type,
+      productType:
+        row.product_type_applicable === 0
+          ? "NOT_APPLICABLE"
+          : row.product_type,
+      productTypeApplicable: row.product_type_applicable === 1,
       tracksLots: row.tracks_lots === 1,
       reorderLevel: row.reorder_level,
       active: row.is_active === 1,

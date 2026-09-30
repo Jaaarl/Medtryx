@@ -314,6 +314,7 @@ type ProductSaleRow = {
   bnpc_eligible: number;
   bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
   product_type: "GENERIC" | "BRANDED" | null;
+  product_type_applicable: number;
   tracks_lots: number;
   quantity_on_hand: number;
   inventory_value_centavos: number;
@@ -821,7 +822,7 @@ function calculateCart(
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
                 sc_pwd_eligible, sc_eligible, pwd_eligible, bnpc_eligible,
-                bnpc_category, product_type,
+                bnpc_category, product_type, product_type_applicable,
                 quantity_on_hand, tracks_lots,
                 inventory_value_centavos, is_active
          FROM products WHERE id = ?`,
@@ -1096,7 +1097,10 @@ function presentCheckout(
       regularGross: money(line.regularGrossCentavos),
       gross: money(line.grossCentavos),
       taxClass: line.product.tax_class,
-      productType: line.product.product_type,
+      productType:
+        line.product.product_type_applicable === 0
+          ? "NOT_APPLICABLE"
+          : line.product.product_type,
       scPwdEligible: line.product.sc_pwd_eligible === 1,
       isScEligible: line.product.sc_eligible === 1,
       isPwdEligible: line.product.pwd_eligible === 1,
@@ -1311,6 +1315,7 @@ export function getSavedSale(
               quantity, unit_price_centavos, tax_class_snapshot,
               sc_pwd_eligible_snapshot, sc_eligible_snapshot,
               pwd_eligible_snapshot, product_type_snapshot,
+              product_type_applicable_snapshot,
               benefit_applied, benefit_treatment_snapshot,
               bnpc_eligible_snapshot, bnpc_category_snapshot,
               bnpc_discount_centavos, p.version AS bnpc_policy_version,
@@ -1336,6 +1341,7 @@ export function getSavedSale(
     sc_eligible_snapshot: number;
     pwd_eligible_snapshot: number;
     product_type_snapshot: "GENERIC" | "BRANDED" | null;
+    product_type_applicable_snapshot: number;
     benefit_applied: number;
     benefit_treatment_snapshot: SaleLineTreatment;
     bnpc_eligible_snapshot: number;
@@ -1383,7 +1389,10 @@ export function getSavedSale(
       scPwdEligible: line.sc_pwd_eligible_snapshot === 1,
       isScEligible: line.sc_eligible_snapshot === 1,
       isPwdEligible: line.pwd_eligible_snapshot === 1,
-      productType: line.product_type_snapshot,
+      productType:
+        line.product_type_applicable_snapshot === 0
+          ? "NOT_APPLICABLE"
+          : line.product_type_snapshot,
       benefitApplied: line.benefit_applied === 1,
       benefitTreatment: line.benefit_treatment_snapshot,
       bnpcEligible: line.bnpc_eligible_snapshot === 1,
@@ -2110,6 +2119,7 @@ export function registerSalesRoutes(
              sku_snapshot, unit_snapshot, quantity, unit_price_centavos,
              tax_class_snapshot, sc_pwd_eligible_snapshot,
              sc_eligible_snapshot, pwd_eligible_snapshot, product_type_snapshot,
+             product_type_applicable_snapshot,
              benefit_applied, benefit_treatment_snapshot,
              bnpc_eligible_snapshot, bnpc_category_snapshot,
              bnpc_discount_centavos, bnpc_policy_version,
@@ -2118,7 +2128,7 @@ export function registerSalesRoutes(
              bundle_promotion_discount_centavos,
              amount_due_centavos, allocated_cogs_centavos,
              tax_policy_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         for (const [index, line] of preview.lines.entries()) {
           const product = db
@@ -2180,6 +2190,7 @@ export function registerSalesRoutes(
             line.product.sc_eligible,
             line.product.pwd_eligible,
             line.product.product_type,
+            line.product.product_type_applicable,
             line.benefitApplied ? 1 : 0,
             line.benefitTreatment,
             line.product.bnpc_eligible,

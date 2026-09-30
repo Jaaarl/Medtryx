@@ -25,7 +25,7 @@ type Product = {
   isPwdEligible: boolean;
   isBnpcEligible: boolean;
   bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
-  productType: "GENERIC" | "BRANDED" | null;
+  productType: "GENERIC" | "BRANDED" | "NOT_APPLICABLE" | null;
   tracksLots: boolean;
   quantityOnHand: number;
   unallocatedQuantity: number;
@@ -183,6 +183,13 @@ function errorMessage(error: unknown): string {
   return (
     messages[error.code] ?? "The request was rejected. Refresh and try again."
   );
+}
+
+function productTypeLabel(productType: Product["productType"]): string {
+  if (productType === null) return "Unclassified";
+  if (productType === "GENERIC") return "Generic";
+  if (productType === "BRANDED") return "Branded";
+  return "N/A";
 }
 
 function Field({
@@ -492,7 +499,7 @@ export function ProductsPage() {
                         <strong>{product.name}</strong>
                         <small>
                           {product.sku}
-                          {` · ${product.productType === null ? "Unclassified" : product.productType === "GENERIC" ? "Generic" : "Branded"}`}
+                          {` · ${productTypeLabel(product.productType)}`}
                           {product.barcode ? ` · ${product.barcode}` : ""} ·{" "}
                           {product.isBnpcEligible
                             ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
@@ -684,6 +691,7 @@ export function ProductsPage() {
                   [
                     ["GENERIC", "Generic"],
                     ["BRANDED", "Branded"],
+                    ["NOT_APPLICABLE", "N/A"],
                   ] as const
                 ).map(([value, label]) => (
                   <label className="inventory-radio-option" key={value}>
@@ -2673,7 +2681,7 @@ export function CheckoutPage() {
                     <strong>{product.name}</strong>
                     <small>
                       {product.sku} · {product.unit}
-                      {` · ${product.productType === null ? "Unclassified" : product.productType === "GENERIC" ? "Generic" : "Branded"}`}
+                      {` · ${productTypeLabel(product.productType)}`}
                       {product.barcode ? ` · ${product.barcode}` : ""}
                     </small>
                     <span>
