@@ -2980,7 +2980,8 @@ export function CheckoutPage() {
                       current.map((line) => ({
                         ...line,
                         benefitTreatment:
-                          line.benefitTreatment === "BNPC" ||
+                          (next !== "REGULAR" &&
+                            line.benefitTreatment === "BNPC") ||
                           (next === "SENIOR_CITIZEN" &&
                             line.benefitTreatment === "SENIOR_CITIZEN" &&
                             line.product.isScEligible) ||
@@ -3002,7 +3003,8 @@ export function CheckoutPage() {
                                 bundleLine.componentBenefits[
                                   component.productId
                                 ] ?? "REGULAR";
-                              return treatment === "BNPC" ||
+                              return (next !== "REGULAR" &&
+                                treatment === "BNPC") ||
                                 (next === "SENIOR_CITIZEN" &&
                                   treatment === "SENIOR_CITIZEN" &&
                                   component.isScEligible) ||
@@ -3024,23 +3026,29 @@ export function CheckoutPage() {
                   <option value="PWD">PWD</option>
                 </select>
               </Field>
-              {benefitType !== "REGULAR" && (
+              {benefitType !== "REGULAR" &&
+                cart.some((line) =>
+                  benefitType === "SENIOR_CITIZEN"
+                    ? line.product.isScEligible
+                    : line.product.isPwdEligible,
+                ) && (
                 <div className="checkout-benefit-lines">
                   <strong>
                     Choose lines for the standard{" "}
                     {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
                     benefit (20% discount + VAT exemption)
                   </strong>
-                  {cart.map((line) => (
+                  {cart
+                    .filter((line) =>
+                      benefitType === "SENIOR_CITIZEN"
+                        ? line.product.isScEligible
+                        : line.product.isPwdEligible,
+                    )
+                    .map((line) => (
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
                         type="checkbox"
                         checked={line.benefitTreatment === benefitType}
-                        disabled={
-                          benefitType === "SENIOR_CITIZEN"
-                            ? !line.product.isScEligible
-                            : !line.product.isPwdEligible
-                        }
                         onChange={(event) =>
                           setBenefitForLine(
                             line.product.id,
@@ -3059,10 +3067,17 @@ export function CheckoutPage() {
                           : " · not eligible"}
                       </span>
                     </label>
-                  ))}
+                    ))}
                 </div>
               )}
-              {benefitType !== "REGULAR" && bundleCart.length > 0 && (
+              {benefitType !== "REGULAR" &&
+                bundleCart.some((bundleLine) =>
+                  bundleLine.offer.components.some((component) =>
+                    benefitType === "SENIOR_CITIZEN"
+                      ? component.isScEligible
+                      : component.isPwdEligible,
+                  ),
+                ) && (
                 <div className="checkout-benefit-lines">
                   <strong>
                     Choose bundle components for the standard{" "}
@@ -3070,7 +3085,13 @@ export function CheckoutPage() {
                     benefit (20% discount + VAT exemption)
                   </strong>
                   {bundleCart.flatMap((bundleLine) =>
-                    bundleLine.offer.components.map((component) => {
+                    bundleLine.offer.components
+                      .filter((component) =>
+                        benefitType === "SENIOR_CITIZEN"
+                          ? component.isScEligible
+                          : component.isPwdEligible,
+                      )
+                      .map((component) => {
                       const eligible =
                         benefitType === "SENIOR_CITIZEN"
                           ? component.isScEligible
@@ -3107,7 +3128,14 @@ export function CheckoutPage() {
                   )}
                 </div>
               )}
-              {bnpcPolicy?.enabled && benefitType !== "REGULAR" && (
+              {bnpcPolicy?.enabled &&
+                benefitType !== "REGULAR" &&
+                (cart.some((line) => line.product.isBnpcEligible) ||
+                  bundleCart.some((bundleLine) =>
+                    bundleLine.offer.components.some(
+                      (component) => component.isBnpcEligible,
+                    ),
+                  )) && (
                 <div className="checkout-benefit-lines">
                   <strong>
                     Separate BNPC benefit: 5% discount; VAT remains
@@ -3117,7 +3145,9 @@ export function CheckoutPage() {
                     holders. It does not use the standard 20% discount or VAT
                     exemption.
                   </small>
-                  {cart.map((line) => (
+                  {cart
+                    .filter((line) => line.product.isBnpcEligible)
+                    .map((line) => (
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
                         type="checkbox"
@@ -3137,9 +3167,11 @@ export function CheckoutPage() {
                           : "not eligible"}
                       </span>
                     </label>
-                  ))}
+                    ))}
                   {bundleCart.flatMap((bundleLine) =>
-                    bundleLine.offer.components.map((component) => (
+                    bundleLine.offer.components
+                      .filter((component) => component.isBnpcEligible)
+                      .map((component) => (
                       <label
                         className="inventory-checkbox"
                         key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
@@ -3235,7 +3267,7 @@ export function CheckoutPage() {
                     : "BNPC is disabled pending the current policy review, store eligibility decision, and owner/accountant approval."}
                 </small>
               )}
-              {hasBnpc && (
+              {hasBnpc && benefitType !== "REGULAR" && (
                 <div className="checkout-customer-fields">
                   <strong>BNPC booklet and prior usage</strong>
                   <p className="field-hint">
