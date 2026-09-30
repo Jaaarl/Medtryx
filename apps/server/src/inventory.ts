@@ -52,10 +52,7 @@ const createProductSchema = z
     isScEligible: z.boolean(),
     isPwdEligible: z.boolean(),
     bnpcEligible: z.boolean().default(false),
-    bnpcPrescriptionRequired: z.boolean().optional(),
     bnpcCategory: bnpcCategorySchema.optional(),
-    bnpcSource: z.string().trim().min(3).max(500).optional(),
-    bnpcReviewReference: z.string().trim().min(3).max(300).optional(),
     openingQuantity: z.number().int().min(0).max(MAX_QUANTITY).default(0),
     openingUnitCost: moneySchema.optional(),
     reorderLevel: z
@@ -113,13 +110,7 @@ const createProductSchema = z
         });
       }
     }
-    if (
-      value.bnpcEligible &&
-      (!value.bnpcCategory ||
-        !value.bnpcSource ||
-        !value.bnpcReviewReference ||
-        value.bnpcPrescriptionRequired === undefined)
-    ) {
+    if (value.bnpcEligible && !value.bnpcCategory) {
       context.addIssue({
         code: "custom",
         path: ["bnpcCategory"],
@@ -140,16 +131,7 @@ const updateProductSchema = z
     isScEligible: z.boolean().optional(),
     isPwdEligible: z.boolean().optional(),
     bnpcEligible: z.boolean().optional(),
-    bnpcPrescriptionRequired: z.boolean().optional(),
     bnpcCategory: bnpcCategorySchema.nullable().optional(),
-    bnpcSource: z.string().trim().min(3).max(500).nullable().optional(),
-    bnpcReviewReference: z
-      .string()
-      .trim()
-      .min(3)
-      .max(300)
-      .nullable()
-      .optional(),
     reorderLevel: z
       .number()
       .int()
@@ -162,13 +144,7 @@ const updateProductSchema = z
   .strict()
   .refine((value) => Object.keys(value).length > 0, "empty_update")
   .superRefine((value, context) => {
-    if (
-      value.bnpcEligible === true &&
-      (!value.bnpcCategory ||
-        !value.bnpcSource ||
-        !value.bnpcReviewReference ||
-        value.bnpcPrescriptionRequired === undefined)
-    ) {
+    if (value.bnpcEligible === true && !value.bnpcCategory) {
       context.addIssue({
         code: "custom",
         path: ["bnpcCategory"],
@@ -257,12 +233,7 @@ type ProductRow = {
   sc_eligible: number;
   pwd_eligible: number;
   bnpc_eligible: number;
-  bnpc_prescription_required: number;
   bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
-  bnpc_source: string | null;
-  bnpc_review_reference: string | null;
-  bnpc_reviewed_at: string | null;
-  bnpc_reviewed_by_user_id: string | null;
   product_type: "GENERIC" | "BRANDED" | null;
   tracks_lots: number;
   quantity_on_hand: number;
@@ -408,12 +379,7 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
     isScEligible: row.sc_eligible === 1,
     isPwdEligible: row.pwd_eligible === 1,
     isBnpcEligible: row.bnpc_eligible === 1,
-    isBnpcPrescriptionRequired: row.bnpc_prescription_required === 1,
     bnpcCategory: row.bnpc_category,
-    bnpcSource: row.bnpc_source,
-    bnpcReviewReference: row.bnpc_review_reference,
-    bnpcReviewedAt: row.bnpc_reviewed_at,
-    bnpcReviewedByUserId: row.bnpc_reviewed_by_user_id,
     productType: row.product_type,
     tracksLots: row.tracks_lots === 1,
     quantityOnHand: row.quantity_on_hand,
@@ -736,7 +702,6 @@ export function registerInventoryRoutes(
         isScEligible: row.sc_eligible === 1,
         isPwdEligible: row.pwd_eligible === 1,
         isBnpcEligible: row.bnpc_eligible === 1,
-        isBnpcPrescriptionRequired: row.bnpc_prescription_required === 1,
         bnpcCategory: row.bnpc_category,
         productType: row.product_type,
         tracksLots: row.tracks_lots === 1,
@@ -835,17 +800,9 @@ export function registerInventoryRoutes(
         if (parsed.data.bnpcEligible) {
           db.prepare(
             `UPDATE products SET bnpc_eligible = 1, bnpc_category = ?,
-               bnpc_source = ?, bnpc_review_reference = ?, bnpc_prescription_required = ?, bnpc_reviewed_at = ?,
+               bnpc_prescription_required = 0, bnpc_reviewed_at = ?,
                bnpc_reviewed_by_user_id = ? WHERE id = ?`,
-          ).run(
-            parsed.data.bnpcCategory!,
-            parsed.data.bnpcSource!,
-            parsed.data.bnpcReviewReference!,
-            parsed.data.bnpcPrescriptionRequired ? 1 : 0,
-            now,
-            req.user!.id,
-            id,
-          );
+          ).run(parsed.data.bnpcCategory!, now, req.user!.id, id);
         }
         if (parsed.data.openingQuantity > 0 && openingCostCents !== null) {
           const stockEventId = writeStockEvent(db, {
@@ -900,15 +857,6 @@ export function registerInventoryRoutes(
             bnpcCategory: parsed.data.bnpcEligible
               ? parsed.data.bnpcCategory
               : null,
-            bnpcSource: parsed.data.bnpcEligible
-              ? parsed.data.bnpcSource
-              : null,
-            bnpcReviewReference: parsed.data.bnpcEligible
-              ? parsed.data.bnpcReviewReference
-              : null,
-            bnpcPrescriptionRequired: parsed.data.bnpcEligible
-              ? parsed.data.bnpcPrescriptionRequired
-              : false,
             openingQuantity: parsed.data.openingQuantity,
             taxClass: parsed.data.taxClass,
           },
@@ -976,44 +924,15 @@ export function registerInventoryRoutes(
       const nextBnpcCategory = nextBnpcEligible
         ? (parsed.data.bnpcCategory ?? current.bnpc_category)
         : null;
-      const nextBnpcSource = nextBnpcEligible
-        ? (parsed.data.bnpcSource ?? current.bnpc_source)
-        : null;
-      const nextBnpcReviewReference = nextBnpcEligible
-        ? (parsed.data.bnpcReviewReference ?? current.bnpc_review_reference)
-        : null;
-      const nextBnpcPrescriptionRequired = nextBnpcEligible
-        ? (parsed.data.bnpcPrescriptionRequired ??
-          current.bnpc_prescription_required === 1)
-        : false;
-      if (
-        nextBnpcEligible &&
-        (!nextBnpcCategory || !nextBnpcSource || !nextBnpcReviewReference)
-      ) {
-        throw new InventoryError(400, "bnpc_classification_review_required");
-      }
-      if (
-        nextBnpcEligible &&
-        parsed.data.bnpcPrescriptionRequired === undefined &&
-        current.bnpc_eligible !== 1
-      ) {
+      if (nextBnpcEligible && !nextBnpcCategory) {
         throw new InventoryError(400, "bnpc_classification_review_required");
       }
       const bnpcClassificationChanged =
         nextBnpcEligible !== (current.bnpc_eligible === 1) ||
-        nextBnpcCategory !== current.bnpc_category ||
-        nextBnpcSource !== current.bnpc_source ||
-        nextBnpcReviewReference !== current.bnpc_review_reference ||
-        nextBnpcPrescriptionRequired !==
-          (current.bnpc_prescription_required === 1);
+        nextBnpcCategory !== current.bnpc_category;
       if (bnpcClassificationChanged) {
         changes.bnpcEligible = nextBnpcEligible;
         changes.bnpcCategory = nextBnpcCategory;
-        changes.bnpcSource = nextBnpcSource;
-        changes.bnpcReviewReference = nextBnpcReviewReference;
-      }
-      if (bnpcClassificationChanged) {
-        changes.bnpcPrescriptionRequired = nextBnpcPrescriptionRequired;
       }
       if (
         parsed.data.isScEligible !== undefined &&
@@ -1088,15 +1007,6 @@ export function registerInventoryRoutes(
         isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
         bnpcEligible: ["bnpc_eligible", changes.bnpcEligible ? 1 : 0],
         bnpcCategory: ["bnpc_category", changes.bnpcCategory as string | null],
-        bnpcSource: ["bnpc_source", changes.bnpcSource as string | null],
-        bnpcReviewReference: [
-          "bnpc_review_reference",
-          changes.bnpcReviewReference as string | null,
-        ],
-        bnpcPrescriptionRequired: [
-          "bnpc_prescription_required",
-          changes.bnpcPrescriptionRequired ? 1 : 0,
-        ],
         productType: ["product_type", String(changes.productType)],
         tracksLots: ["tracks_lots", changes.tracksLots ? 1 : 0],
         scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
@@ -1775,9 +1685,6 @@ function currentValues(
       isPwdEligible: row.pwd_eligible === 1,
       bnpcEligible: row.bnpc_eligible === 1,
       bnpcCategory: row.bnpc_category,
-      bnpcSource: row.bnpc_source,
-      bnpcReviewReference: row.bnpc_review_reference,
-      bnpcPrescriptionRequired: row.bnpc_prescription_required === 1,
       productType: row.product_type,
       tracksLots: row.tracks_lots === 1,
       reorderLevel: row.reorder_level,

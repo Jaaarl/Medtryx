@@ -312,7 +312,6 @@ type ProductSaleRow = {
   sc_eligible: number;
   pwd_eligible: number;
   bnpc_eligible: number;
-  bnpc_prescription_required: number;
   bnpc_category: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
   product_type: "GENERIC" | "BRANDED" | null;
   tracks_lots: number;
@@ -822,7 +821,7 @@ function calculateCart(
       .prepare(
         `SELECT id, sku, name, unit, selling_price_centavos, tax_class,
                 sc_pwd_eligible, sc_eligible, pwd_eligible, bnpc_eligible,
-                bnpc_category, bnpc_prescription_required, product_type,
+                bnpc_category, product_type,
                 quantity_on_hand, tracks_lots,
                 inventory_value_centavos, is_active
          FROM products WHERE id = ?`,
@@ -871,16 +870,6 @@ function calculateCart(
       if (!bnpcContext) throw new SalesError(409, "bnpc_evidence_required");
       if (!product.bnpc_eligible || !product.bnpc_category) {
         throw new SalesError(409, "product_not_bnpc_eligible");
-      }
-      if (
-        product.bnpc_prescription_required === 1 &&
-        (!bnpcContext.evidence.prescriptionApplicable ||
-          !bnpcContext.evidence.prescriptionChecked)
-      ) {
-        throw new SalesError(
-          409,
-          "bnpc_product_prescription_confirmation_required",
-        );
       }
     }
     if (
@@ -1112,7 +1101,6 @@ function presentCheckout(
       isScEligible: line.product.sc_eligible === 1,
       isPwdEligible: line.product.pwd_eligible === 1,
       bnpcEligible: line.product.bnpc_eligible === 1,
-      bnpcPrescriptionRequired: line.product.bnpc_prescription_required === 1,
       bnpcCategory: line.product.bnpc_category,
       benefitApplied: line.benefitApplied,
       benefitTreatment: line.benefitTreatment,
@@ -2200,7 +2188,7 @@ export function registerSalesRoutes(
             bnpcContext && line.requestedBenefitTreatment === "BNPC"
               ? bnpcContext.policy.id
               : null,
-            line.product.bnpc_prescription_required,
+            0,
             line.taxBasisCentavos,
             line.vatCentavos,
             line.vatRemovedCentavos,

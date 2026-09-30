@@ -104,7 +104,6 @@ async function createProduct(
     isScEligible?: boolean;
     tracksLots?: boolean;
     bnpcEligible?: boolean;
-    bnpcPrescriptionRequired?: boolean;
     bnpcCategory?: "BASIC_NECESSITY" | "PRIME_COMMODITY";
   },
 ) {
@@ -125,14 +124,7 @@ async function createProduct(
       bnpcEligible: options.bnpcEligible ?? false,
       ...(options.bnpcEligible
         ? {
-            bnpcPrescriptionRequired: options.bnpcPrescriptionRequired ?? false,
-          }
-        : {}),
-      ...(options.bnpcEligible
-        ? {
             bnpcCategory: options.bnpcCategory ?? "BASIC_NECESSITY",
-            bnpcSource: "Synthetic DTI/DA covered-goods list review",
-            bnpcReviewReference: `Synthetic BNPC review ${options.sku}`,
           }
         : {}),
       openingQuantity: 5,

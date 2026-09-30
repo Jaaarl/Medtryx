@@ -24,11 +24,7 @@ type Product = {
   isScEligible: boolean;
   isPwdEligible: boolean;
   isBnpcEligible: boolean;
-  isBnpcPrescriptionRequired: boolean;
   bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
-  bnpcSource: string | null;
-  bnpcReviewReference: string | null;
-  bnpcReviewedAt: string | null;
   productType: "GENERIC" | "BRANDED" | null;
   tracksLots: boolean;
   quantityOnHand: number;
@@ -57,7 +53,6 @@ type CatalogProduct = Pick<
   | "isScEligible"
   | "isPwdEligible"
   | "isBnpcEligible"
-  | "isBnpcPrescriptionRequired"
   | "bnpcCategory"
   | "productType"
   | "tracksLots"
@@ -111,10 +106,7 @@ const EMPTY_FORM = {
   isScEligible: false,
   isPwdEligible: false,
   isBnpcEligible: false,
-  isBnpcPrescriptionRequired: false,
-  bnpcCategory: "BASIC_NECESSITY" as "BASIC_NECESSITY" | "PRIME_COMMODITY",
-  bnpcSource: "",
-  bnpcReviewReference: "",
+  bnpcCategory: "" as "BASIC_NECESSITY" | "PRIME_COMMODITY" | "",
   productType: "" as Product["productType"] | "",
   tracksLots: false,
   openingQuantity: "0",
@@ -176,7 +168,7 @@ function errorMessage(error: unknown): string {
     product_not_pwd_eligible:
       "This product is not marked eligible for a PWD benefit.",
     bnpc_classification_review_required:
-      "Set the BNPC category and record its official source and review reference before enabling eligibility.",
+      "Choose Basic Necessity or Prime Commodity for this BNPC-eligible product.",
     insufficient_stock:
       "The requested change exceeds available stock. Refresh and review the cart.",
     customer_encryption_unavailable:
@@ -336,10 +328,7 @@ export function ProductsPage() {
       isScEligible: product.isScEligible,
       isPwdEligible: product.isPwdEligible,
       isBnpcEligible: product.isBnpcEligible,
-      isBnpcPrescriptionRequired: product.isBnpcPrescriptionRequired,
-      bnpcCategory: product.bnpcCategory ?? "BASIC_NECESSITY",
-      bnpcSource: product.bnpcSource ?? "",
-      bnpcReviewReference: product.bnpcReviewReference ?? "",
+      bnpcCategory: product.bnpcCategory ?? "",
       productType: product.productType ?? "",
       tracksLots: product.tracksLots,
       reorderLevel:
@@ -368,13 +357,8 @@ export function ProductsPage() {
       isPwdEligible: form.isPwdEligible,
       bnpcEligible: form.isBnpcEligible,
       ...(form.isBnpcEligible
-        ? { bnpcPrescriptionRequired: form.isBnpcPrescriptionRequired }
-        : {}),
-      ...(form.isBnpcEligible
         ? {
-            bnpcCategory: form.bnpcCategory,
-            bnpcSource: form.bnpcSource.trim(),
-            bnpcReviewReference: form.bnpcReviewReference.trim(),
+            bnpcCategory: form.bnpcCategory || undefined,
           }
         : {}),
       tracksLots: form.tracksLots,
@@ -725,9 +709,9 @@ export function ProductsPage() {
             <div
               className="inventory-checkbox-group"
               role="group"
-              aria-label="Benefit eligibility"
+              aria-label="Discount eligibility"
             >
-              <span className="field-label">Benefit eligibility</span>
+              <span className="field-label">Discount eligibility</span>
               <label className="inventory-checkbox">
                 <input
                   type="checkbox"
@@ -748,13 +732,6 @@ export function ProductsPage() {
                 />
                 <span>PWD eligible</span>
               </label>
-            </div>
-            <div
-              className="inventory-checkbox-group"
-              role="group"
-              aria-label="BNPC benefit eligibility"
-            >
-              <span className="field-label">Separate BNPC benefit</span>
               <label className="inventory-checkbox">
                 <input
                   type="checkbox"
@@ -763,89 +740,57 @@ export function ProductsPage() {
                     setForm({ ...form, isBnpcEligible: event.target.checked })
                   }
                 />
-                <span>Eligible for 5% BNPC discount</span>
+                <span>BNPC 5% discount eligible</span>
               </label>
               <small className="field-hint">
-                Independent from VAT class and SC/PWD eligibility. Review each
-                SKU against the dated official goods list; product names and
-                broad categories never set this automatically.
+                BNPC covers only goods on the official Basic Necessities and
+                Prime Commodities list. Check the exact product before turning
+                this on; toiletries like shampoo are not automatically covered.{" "}
+                <a
+                  href="https://ncda.gov.ph/2024-revised-rules-on-granting-special-discounts-to-senior-citizens-and-persons-with-disability-on-purchase-of-basic-necessities-and-prime-commodities-joint-administrative-order-no-24-02-series-of-2/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open JAO No. 24-02 (2024)
+                </a>
               </small>
-              {form.isBnpcEligible && (
-                <>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={form.isBnpcPrescriptionRequired}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          isBnpcPrescriptionRequired: event.target.checked,
-                        })
-                      }
-                    />
-                    <span>
-                      Prescription required for BNPC benefit on this product
-                    </span>
-                  </label>
-                  <Field
-                    id="product-bnpc-category"
-                    label="Reviewed BNPC category"
-                  >
-                    <select
-                      id="product-bnpc-category"
-                      className="text-input select-input"
-                      value={form.bnpcCategory}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          bnpcCategory: event.target.value as NonNullable<
-                            Product["bnpcCategory"]
-                          >,
-                        })
-                      }
-                    >
-                      <option value="BASIC_NECESSITY">Basic Necessity</option>
-                      <option value="PRIME_COMMODITY">Prime Commodity</option>
-                    </select>
-                  </Field>
-                  <Field
-                    id="product-bnpc-source"
-                    label="Official source reviewed"
-                  >
-                    <input
-                      id="product-bnpc-source"
-                      className="text-input"
-                      value={form.bnpcSource}
-                      onChange={(event) =>
-                        setForm({ ...form, bnpcSource: event.target.value })
-                      }
-                      minLength={3}
-                      maxLength={500}
-                      required
-                    />
-                  </Field>
-                  <Field
-                    id="product-bnpc-review"
-                    label="Category review reference"
-                  >
-                    <input
-                      id="product-bnpc-review"
-                      className="text-input"
-                      value={form.bnpcReviewReference}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          bnpcReviewReference: event.target.value,
-                        })
-                      }
-                      minLength={3}
-                      maxLength={300}
-                      required
-                    />
-                  </Field>
-                </>
-              )}
             </div>
+            {form.isBnpcEligible && (
+              <div
+                className="inventory-checkbox-group"
+                role="group"
+                aria-label="BNPC eligibility review"
+              >
+                <span className="field-label">BNPC eligibility review</span>
+                <Field
+                  id="product-bnpc-category"
+                  label="Covered goods category"
+                >
+                  <select
+                    id="product-bnpc-category"
+                    className="text-input select-input"
+                    required
+                    value={form.bnpcCategory}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        bnpcCategory: event.target.value as NonNullable<
+                          Product["bnpcCategory"]
+                        >,
+                      })
+                    }
+                  >
+                    <option value="">Choose category</option>
+                    <option value="BASIC_NECESSITY">Basic Necessity</option>
+                    <option value="PRIME_COMMODITY">Prime Commodity</option>
+                  </select>
+                </Field>
+                <small className="field-hint">
+                  The official list has two covered-goods sections. Both get 5%;
+                  choose the section that lists this product.
+                </small>
+              </div>
+            )}
             <label className="inventory-checkbox">
               <input
                 type="checkbox"
@@ -2033,7 +1978,6 @@ type BundleOffer = {
     isScEligible: boolean;
     isPwdEligible: boolean;
     isBnpcEligible: boolean;
-    isBnpcPrescriptionRequired: boolean;
     bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
     tracksLots: boolean;
     quantityAvailable: number;
@@ -2288,19 +2232,6 @@ export function CheckoutPage() {
     bundleCart.some((line) =>
       Object.values(line.componentBenefits).includes("BNPC"),
     );
-  const bnpcPrescriptionRequired =
-    cart.some(
-      (line) =>
-        line.benefitTreatment === "BNPC" &&
-        line.product.isBnpcPrescriptionRequired,
-    ) ||
-    bundleCart.some((line) =>
-      line.offer.components.some(
-        (component) =>
-          line.componentBenefits[component.productId] === "BNPC" &&
-          component.isBnpcPrescriptionRequired,
-      ),
-    );
   const hasSelectedBenefit =
     hasBnpc ||
     cart.some((line) => line.benefitTreatment !== "REGULAR") ||
@@ -2318,8 +2249,7 @@ export function CheckoutPage() {
     representativePurchase: bnpcRepresentativePurchase,
     representativeDocumentsChecked: bnpcRepresentativeDocsChecked,
     authorizationLetterIssuedDate: bnpcAuthorizationLetterDate || null,
-    prescriptionApplicable:
-      bnpcPrescriptionApplicable || bnpcPrescriptionRequired,
+    prescriptionApplicable: bnpcPrescriptionApplicable,
     prescriptionChecked: bnpcPrescriptionChecked,
     fourKindsChecked: bnpcFourKindsChecked,
   };
@@ -3179,8 +3109,10 @@ export function CheckoutPage() {
                         }
                       />
                       <span>
-                        {line.product.name} · BNPC 5% ·{" "}
-                        {line.product.bnpcCategory ?? "not reviewed eligible"}
+                        {line.product.name} · BNPC 5%{" "}
+                        {line.product.isBnpcEligible
+                          ? "eligible"
+                          : "not eligible"}
                       </span>
                     </label>
                   ))}
@@ -3207,8 +3139,10 @@ export function CheckoutPage() {
                           }
                         />
                         <span>
-                          {bundleLine.offer.name} · {component.name} · BNPC 5% ·{" "}
-                          {component.bnpcCategory ?? "not reviewed eligible"}
+                          {bundleLine.offer.name} · {component.name} · BNPC 5%{" "}
+                          {component.isBnpcEligible
+                            ? "eligible"
+                            : "not eligible"}
                         </span>
                       </label>
                     )),
@@ -3350,7 +3284,12 @@ export function CheckoutPage() {
                       type="checkbox"
                       checked={bnpcRepresentativePurchase}
                       onChange={(event) => {
-                        setBnpcRepresentativePurchase(event.target.checked);
+                        const isRepresentative = event.target.checked;
+                        setBnpcRepresentativePurchase(isRepresentative);
+                        if (!isRepresentative) {
+                          setBnpcPrescriptionApplicable(false);
+                          setBnpcPrescriptionChecked(false);
+                        }
                         setRequestKey("");
                       }}
                     />
@@ -3391,39 +3330,38 @@ export function CheckoutPage() {
                           booklet, and authorization documents.
                         </span>
                       </label>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={bnpcPrescriptionApplicable}
+                          onChange={(event) => {
+                            setBnpcPrescriptionApplicable(event.target.checked);
+                            if (!event.target.checked) {
+                              setBnpcPrescriptionChecked(false);
+                            }
+                            setRequestKey("");
+                          }}
+                        />
+                        <span>
+                          A medical prescription applies to this representative
+                          purchase, if required.
+                        </span>
+                      </label>
+                      {bnpcPrescriptionApplicable && (
+                        <label className="inventory-checkbox">
+                          <input
+                            type="checkbox"
+                            required
+                            checked={bnpcPrescriptionChecked}
+                            onChange={(event) => {
+                              setBnpcPrescriptionChecked(event.target.checked);
+                              setRequestKey("");
+                            }}
+                          />
+                          <span>I checked the applicable prescription.</span>
+                        </label>
+                      )}
                     </>
-                  )}
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={
-                        bnpcPrescriptionApplicable || bnpcPrescriptionRequired
-                      }
-                      disabled={bnpcPrescriptionRequired}
-                      onChange={(event) => {
-                        setBnpcPrescriptionApplicable(event.target.checked);
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>
-                      {bnpcPrescriptionRequired
-                        ? "The selected product requires a prescription for BNPC."
-                        : "A prescription is required for a selected item."}
-                    </span>
-                  </label>
-                  {(bnpcPrescriptionApplicable || bnpcPrescriptionRequired) && (
-                    <label className="inventory-checkbox">
-                      <input
-                        type="checkbox"
-                        required
-                        checked={bnpcPrescriptionChecked}
-                        onChange={(event) => {
-                          setBnpcPrescriptionChecked(event.target.checked);
-                          setRequestKey("");
-                        }}
-                      />
-                      <span>I checked the applicable prescription.</span>
-                    </label>
                   )}
                   <label className="inventory-checkbox">
                     <input

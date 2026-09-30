@@ -163,7 +163,6 @@ async function createProduct(
       productType: "BRANDED",
       isScEligible: true,
       isPwdEligible: true,
-      bnpcPrescriptionRequired: false,
       openingQuantity: 5,
       openingUnitCost: "40.00",
       ...overrides,
@@ -296,8 +295,6 @@ describe("BNPC checkout", () => {
       name: "Synthetic covered item",
       bnpcEligible: true,
       bnpcCategory: "BASIC_NECESSITY",
-      bnpcSource: "Synthetic DTI/DA covered-goods list review",
-      bnpcReviewReference: "Synthetic signed classification BNPC-01",
       isScEligible: false,
       isPwdEligible: false,
     });
@@ -482,8 +479,6 @@ describe("BNPC checkout", () => {
       openingQuantity: 30,
       bnpcEligible: true,
       bnpcCategory: "PRIME_COMMODITY",
-      bnpcSource: "Synthetic DTI/DA covered-goods list review",
-      bnpcReviewReference: "Synthetic signed classification BNPC-CAP",
       isScEligible: false,
       isPwdEligible: false,
     });
@@ -555,19 +550,16 @@ describe("BNPC checkout", () => {
     expect(regular.status).toBe(200);
   });
 
-  it("enforces the owner-reviewed prescription requirement for BNPC lines", async () => {
+  it("does not make prescription status a product-level BNPC rule", async () => {
     await seedUsers();
     const owner = await signIn("owner.sales@example.test", ownerPassword);
     await configureApprovedPolicy(owner);
     await configureBnpcPolicy(owner);
     const product = await createProduct(owner, {
-      sku: "SYN-BNPC-RX-REQUIRED",
-      name: "Synthetic prescription-required covered item",
+      sku: "SYN-BNPC-LEGACY-RX",
+      name: "Synthetic covered item with legacy prescription flag",
       bnpcEligible: true,
       bnpcCategory: "PRIME_COMMODITY",
-      bnpcSource: "Synthetic covered-goods review",
-      bnpcReviewReference: "Synthetic prescription review BNPC-RX",
-      bnpcPrescriptionRequired: true,
       isScEligible: false,
       isPwdEligible: false,
     });
@@ -580,13 +572,25 @@ describe("BNPC checkout", () => {
       bnpcChecks: checks,
       items: [{ productId: product.id, quantity: 1, benefitTreatment: "BNPC" }],
     };
-    const missing = await cashier
+    db.prepare(
+      "UPDATE products SET bnpc_prescription_required = 1 WHERE id = ?",
+    ).run(product.id);
+    const legacyFlagDoesNotBlockPreview = await cashier
       .post("/api/sales/preview")
       .set("x-csrf-token", token)
       .send(baseRequest);
-    expect(missing.status).toBe(409);
-    expect(missing.body.error).toBe(
-      "bnpc_product_prescription_confirmation_required",
+    expect(legacyFlagDoesNotBlockPreview.status).toBe(200);
+
+    const applicableButUnchecked = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", token)
+      .send({
+        ...baseRequest,
+        bnpcChecks: { ...checks, prescriptionApplicable: true },
+      });
+    expect(applicableButUnchecked.status).toBe(409);
+    expect(applicableButUnchecked.body.error).toBe(
+      "bnpc_prescription_confirmation_required",
     );
 
     const checked = await cashier
@@ -602,7 +606,6 @@ describe("BNPC checkout", () => {
       });
     expect(checked.status).toBe(200);
     expect(checked.body.lines[0]).toMatchObject({
-      bnpcPrescriptionRequired: true,
       benefitTreatment: "BNPC",
     });
   });

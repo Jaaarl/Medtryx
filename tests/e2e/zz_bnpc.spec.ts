@@ -47,10 +47,7 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
       isScEligible: false,
       isPwdEligible: false,
       bnpcEligible: true,
-      bnpcPrescriptionRequired: false,
       bnpcCategory: "BASIC_NECESSITY",
-      bnpcSource: "Synthetic official covered-goods review",
-      bnpcReviewReference: "Synthetic browser test BNPC-01",
       openingQuantity: 2,
       openingUnitCost: "30.00",
     },
@@ -90,17 +87,17 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
     "cashier@example.test",
     "SyntheticCashierPassword-72!",
   );
-  const openingCashField = cashierPage.getByLabel(/Opening cash/);
-  if (await openingCashField.count()) {
-    await openingCashField.fill("100.00");
-    await cashierPage.getByRole("button", { name: "Open shift" }).click();
-    await expect(cashierPage.getByText("Cashier shift opened.")).toBeVisible();
-  }
+  await expect(
+    cashierPage.getByRole("heading", { name: "Open a cashier shift" }),
+  ).toBeVisible();
+  await cashierPage.getByLabel(/Opening cash/).fill("100.00");
+  await cashierPage.getByRole("button", { name: "Open shift" }).click();
+  await expect(cashierPage.getByText("Cashier shift opened.")).toBeVisible();
   await cashierPage.getByLabel("Search catalog").fill("SYN-BNPC-E2E-001");
   await cashierPage.getByRole("button", { name: "Add to cart" }).click();
   await cashierPage.getByLabel("Sale benefit").selectOption("PWD");
   await cashierPage
-    .getByLabel("Synthetic BNPC E2E product · BNPC 5% · BASIC_NECESSITY")
+    .getByLabel("Synthetic BNPC E2E product · BNPC 5% eligible")
     .check();
   await cashierPage.getByLabel("Customer name").fill("Synthetic Holder");
   await cashierPage.getByLabel("ID type").fill("Synthetic PWD ID");
