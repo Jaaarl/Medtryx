@@ -80,6 +80,21 @@ type InventoryLot = {
   alert: "EXPIRED" | "NEAR_EXPIRY" | null;
 };
 
+function lotStatusPresentation(
+  lot: Pick<InventoryLot, "quarantined" | "alert">,
+) {
+  if (lot.quarantined) {
+    return { label: "Quarantined", className: "is-quarantined" };
+  }
+  if (lot.alert === "EXPIRED") {
+    return { label: "Expired", className: "is-expired" };
+  }
+  if (lot.alert === "NEAR_EXPIRY") {
+    return { label: "Near expiry", className: "is-near-expiry" };
+  }
+  return { label: "Saleable", className: "is-saleable" };
+}
+
 type StockEvent = {
   id: string;
   productId: string;
@@ -1621,7 +1636,7 @@ export function StockPage() {
           </div>
         </aside>
       </div>
-      <section className="activity-card stock-history-card">
+      <section className="activity-card stock-history-card stock-lots-card">
         <div className="card-heading">
           <div>
             <h2>Lots and expiry</h2>
@@ -1641,7 +1656,7 @@ export function StockPage() {
           </span>
         </div>
         <form
-          className="inventory-inline-form"
+          className="stock-horizon-form"
           onSubmit={(event) => void saveExpiryWarning(event)}
         >
           <Field
@@ -1660,12 +1675,14 @@ export function StockPage() {
               required
             />
           </Field>
-          <span className="field-hint">
-            Current horizon: {warningDays} days.
-          </span>
-          <button className="button button-quiet" type="submit">
-            Save horizon
-          </button>
+          <div className="stock-horizon-actions">
+            <span className="field-hint">
+              Current horizon: {warningDays} days.
+            </span>
+            <button className="button button-quiet" type="submit">
+              Save horizon
+            </button>
+          </div>
         </form>
         <div className="inventory-table-wrap">
           <table className="inventory-table">
@@ -1693,17 +1710,16 @@ export function StockPage() {
                     <td>{lot.quantity}</td>
                     <td>{lot.saleableQuantity}</td>
                     <td>
-                      {lot.quarantined
-                        ? "Quarantined"
-                        : lot.alert === "EXPIRED"
-                          ? "Expired"
-                          : lot.alert === "NEAR_EXPIRY"
-                            ? "Near expiry"
-                            : "Saleable"}
+                      <span
+                        className={`stock-lot-status ${lotStatusPresentation(lot).className}`}
+                      >
+                        {lotStatusPresentation(lot).label}
+                      </span>
                     </td>
                     <td>
                       <button
-                        className="text-action"
+                        className="button button-quiet stock-quarantine-action"
+                        type="button"
                         disabled={!lotStatusReason.trim()}
                         onClick={() => void toggleQuarantine(lot)}
                       >
@@ -1732,10 +1748,13 @@ export function StockPage() {
               minLength={3}
               maxLength={500}
             />
+            <small className="field-hint">
+              Enter a reason to enable quarantine and release actions.
+            </small>
           </Field>
           {selected?.tracksLots && selected.unallocatedQuantity > 0 && (
             <form
-              className="form-stack inventory-form"
+              className="form-stack inventory-form lot-reconciliation-form"
               onSubmit={(event) => void reconcileLegacyLot(event)}
             >
               <strong>Assign verified legacy stock</strong>
@@ -1819,7 +1838,7 @@ export function StockPage() {
           )}
         </div>
       </section>
-      <section className="activity-card stock-history-card">
+      <section className="activity-card stock-history-card stock-events-card">
         <div className="card-heading">
           <div>
             <h2>Stock history</h2>

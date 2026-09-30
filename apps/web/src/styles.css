@@ -1641,6 +1641,157 @@ a {
 }
 .stock-history-card .card-heading {
   border-bottom: 1px solid #edf1ef;
+  padding: 21px 24px;
+}
+.stock-history-card .card-heading h2 {
+  font-size: 16px;
+}
+.stock-history-card .card-heading p {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+  max-width: 760px;
+}
+.stock-history-card .count-chip {
+  font-size: 11px;
+  padding: 8px 12px;
+}
+.stock-lots-card .stock-horizon-form {
+  align-items: end;
+  border-bottom: 1px solid #edf1ef;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  padding: 18px 24px;
+}
+.stock-horizon-form .inventory-field > span {
+  font-size: 11px;
+}
+.stock-horizon-form .text-input {
+  font-size: 13px;
+  height: 42px;
+}
+.stock-horizon-actions {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-height: 42px;
+}
+.stock-horizon-actions .field-hint {
+  font-size: 11px;
+  margin: 0;
+}
+.stock-lots-card .inventory-table {
+  min-width: 860px;
+}
+.stock-lots-card .inventory-table th,
+.stock-events-card .inventory-table th {
+  font-size: 10px;
+  padding: 13px 16px;
+}
+.stock-lots-card .inventory-table td,
+.stock-events-card .inventory-table td {
+  font-size: 13px;
+  padding: 14px 16px;
+}
+.stock-lots-card .inventory-table td:first-child {
+  min-width: 290px;
+}
+.stock-lots-card .inventory-table td strong {
+  font-size: 13px;
+}
+.stock-lots-card .inventory-table td small {
+  font-size: 11px;
+}
+.stock-lots-card .inventory-table td:nth-child(2) {
+  min-width: 140px;
+}
+.stock-lots-card .inventory-table th:nth-child(n + 2),
+.stock-lots-card .inventory-table td:nth-child(n + 2) {
+  text-align: center;
+}
+.stock-lot-status {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  padding: 7px 10px;
+}
+.stock-lot-status.is-saleable {
+  background: #eaf5ef;
+  color: #277455;
+}
+.stock-lot-status.is-near-expiry {
+  background: #fff5e6;
+  color: #9b6721;
+}
+.stock-lot-status.is-expired,
+.stock-lot-status.is-quarantined {
+  background: #fff0ee;
+  color: #a34d43;
+}
+.stock-quarantine-action {
+  font-size: 12px;
+  min-height: 34px;
+}
+.stock-lots-card > .inventory-two-fields {
+  background: #fbfcfb;
+  border-top: 1px solid #edf1ef;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 18px 24px;
+}
+.stock-lots-card > .inventory-two-fields > .inventory-field {
+  max-width: 620px;
+  width: 100%;
+}
+.stock-lots-card > .inventory-two-fields .inventory-field > span {
+  font-size: 11px;
+}
+.stock-lots-card > .inventory-two-fields .text-input {
+  font-size: 13px;
+  height: 42px;
+}
+.stock-lots-card .lot-reconciliation-form {
+  background: white;
+  border: 1px solid #e5ece8;
+  border-radius: 9px;
+  max-width: 760px;
+  padding: 18px;
+}
+.stock-lots-card .lot-reconciliation-form > strong {
+  color: #35574c;
+  font-size: 14px;
+}
+.stock-lots-card .lot-reconciliation-form > small {
+  color: #71817b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.stock-lots-card .lot-reconciliation-form .button {
+  justify-self: start;
+}
+.stock-events-card .inventory-table {
+  min-width: 1280px;
+}
+.stock-events-card .inventory-table td:first-child {
+  min-width: 250px;
+}
+.stock-events-card .inventory-table td strong {
+  font-size: 12px;
+}
+.stock-events-card .inventory-table td small {
+  font-size: 11px;
+}
+.stock-events-card .inventory-table th:nth-child(7),
+.stock-events-card .inventory-table td:nth-child(7) {
+  min-width: 220px;
+  white-space: normal;
+}
+.stock-events-card .inventory-table th:last-child,
+.stock-events-card .inventory-table td:last-child {
+  min-width: 180px;
 }
 .checkout-grid {
   align-items: start;
@@ -2519,6 +2670,32 @@ a {
   }
 }
 @media (max-width: 620px) {
+  .stock-history-card .card-heading {
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 14px;
+  }
+  .stock-history-card .card-heading h2 {
+    font-size: 15px;
+  }
+  .stock-history-card .card-heading p {
+    font-size: 11px;
+  }
+  .stock-horizon-form {
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 15px 14px;
+  }
+  .stock-horizon-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .stock-lots-card > .inventory-two-fields {
+    padding: 15px 14px;
+  }
+  .stock-lots-card .lot-reconciliation-form {
+    padding: 14px;
+  }
   .stock-summary-grid {
     gap: 7px;
   }
