@@ -71,7 +71,7 @@ try {
        quantity_on_hand, inventory_value_centavos, reorder_level, is_active,
        created_at, updated_at)
      VALUES (?, ?, ?, NULL, ?, ?, 'VATABLE', 0, 0, 0, NULL, 1, 0, NULL,
-       NULL, NULL, NULL, NULL, 0, 0, 0, 0, NULL, 0, ?, ?)`,
+       NULL, NULL, NULL, NULL, 0, ?, 0, 0, NULL, 0, ?, ?)`,
   );
   const now = new Date().toISOString();
   let inserted = 0;
@@ -85,6 +85,7 @@ try {
         product.name,
         product.unit,
         toCentavos(product.sellingPrice),
+        product.tracksLots ? 1 : 0,
         now,
         now,
       );

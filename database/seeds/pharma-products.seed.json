@@ -3,7 +3,7 @@
   "scope": "products-only",
   "status": "review-required",
   "notes": [
-    "Lot No. and Expiry are omitted; this seed creates no stock, stock events, or inventory lots.",
+    "Products are configured for lot tracking, but Lot No. and Expiry are omitted; this seed creates no stock, stock events, or inventory lots.",
     "Unit Price in the source is an acquisition cost. Each suggested sellingPrice uses a randomly selected 2x or 3x multiplier, recorded per product.",
     "sourceUnitCost is included only to show how the suggested sellingPrice was calculated; the seed command does not import it as inventory or stock.",
     "The seed command uses VATABLE as a required placeholder tax class. Review tax class and product type before activation; product type remains unclassified.",
@@ -22,7 +22,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -38,7 +38,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -54,7 +54,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -70,7 +70,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -86,7 +86,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -102,7 +102,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -118,7 +118,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -134,7 +134,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -150,7 +150,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -166,7 +166,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -182,7 +182,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -198,7 +198,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -214,7 +214,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -230,7 +230,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -246,7 +246,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -262,7 +262,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -278,7 +278,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -294,7 +294,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -310,7 +310,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -326,7 +326,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -342,7 +342,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -358,7 +358,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -374,7 +374,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -390,7 +390,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -406,7 +406,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -422,7 +422,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -438,7 +438,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -454,7 +454,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -470,7 +470,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -486,7 +486,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -502,7 +502,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -518,7 +518,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -534,7 +534,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -550,7 +550,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -566,7 +566,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -582,7 +582,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -598,7 +598,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -614,7 +614,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -630,7 +630,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -646,7 +646,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -662,7 +662,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -678,7 +678,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -694,7 +694,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -710,7 +710,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -726,7 +726,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -742,7 +742,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -758,7 +758,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -774,7 +774,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -790,7 +790,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -806,7 +806,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -822,7 +822,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -838,7 +838,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -854,7 +854,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -870,7 +870,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -886,7 +886,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -902,7 +902,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -918,7 +918,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -934,7 +934,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -950,7 +950,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -966,7 +966,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -982,7 +982,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -998,7 +998,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1014,7 +1014,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1030,7 +1030,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1046,7 +1046,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1062,7 +1062,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1078,7 +1078,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1094,7 +1094,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1110,7 +1110,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1126,7 +1126,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1142,7 +1142,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1158,7 +1158,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1174,7 +1174,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1190,7 +1190,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1206,7 +1206,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1222,7 +1222,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1238,7 +1238,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1254,7 +1254,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1270,7 +1270,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     },
@@ -1286,7 +1286,7 @@
       "isScEligible": false,
       "isPwdEligible": false,
       "bnpcEligible": false,
-      "tracksLots": false,
+      "tracksLots": true,
       "openingQuantity": 0,
       "active": false
     }
