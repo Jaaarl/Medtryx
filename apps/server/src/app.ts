@@ -42,7 +42,7 @@ const activeSchema = z.object({ active: z.boolean() }).strict();
 const passwordSchema = z
   .object({
     currentPassword: z.string().min(1).max(128),
-    newPassword: z.string().min(12).max(128),
+    newPassword: z.string().min(8).max(128),
   })
   .strict();
 const DUMMY_PASSWORD_HASH =

@@ -9,7 +9,7 @@ const password = process.env.MEDTRYX_OWNER_PASSWORD;
 const parsed = createUserSchema.safeParse({ email, password, role: "owner" });
 if (!parsed.success) {
   process.stderr.write(
-    "Set MEDTRYX_OWNER_EMAIL and a unique MEDTRYX_OWNER_PASSWORD (12–128 characters).\n",
+    "Set MEDTRYX_OWNER_EMAIL and a unique MEDTRYX_OWNER_PASSWORD (8 to 128 characters).\n",
   );
   process.exit(1);
 }

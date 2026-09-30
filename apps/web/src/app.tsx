@@ -364,7 +364,7 @@ function AccountPage() {
         caught instanceof ApiError &&
           caught.code === "current_password_incorrect"
           ? "Your current password is incorrect."
-          : "Unable to change the password. Use at least 12 characters.",
+          : "Unable to change the password. Use at least 8 characters.",
       );
     } finally {
       setSaving(false);
@@ -421,7 +421,7 @@ function AccountPage() {
               className="text-input"
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={8}
               maxLength={128}
               value={newPassword}
               onChange={(event) => setNewPassword(event.target.value)}
@@ -435,7 +435,7 @@ function AccountPage() {
               className="text-input"
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={8}
               maxLength={128}
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
@@ -649,12 +649,12 @@ function SettingsPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
-              minLength={12}
+              minLength={8}
               maxLength={128}
               autoComplete="new-password"
             />
             <small className="field-hint">
-              Use at least 12 characters. The staff member can change it after
+              Use at least 8 characters. The staff member can change it after
               signing in.
             </small>
             <label className="field-label" htmlFor="staff-role">
