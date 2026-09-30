@@ -22,6 +22,8 @@ const dateSchema = z
     );
   });
 
+const BNPC_DISCOUNT_RATE_BASIS_POINTS = 500;
+
 const policyUpdateSchema = z
   .object({
     version: z.string().trim().min(3).max(64),
@@ -29,7 +31,7 @@ const policyUpdateSchema = z
     sourceTitle: z.string().trim().min(8).max(240),
     sourceUrl: z.string().url().max(500),
     reviewedAt: dateSchema,
-    discountRateBasisPoints: z.number().int().min(1).max(10_000),
+    discountRateBasisPoints: z.literal(BNPC_DISCOUNT_RATE_BASIS_POINTS),
     weeklyPurchaseLimit: moneySchema,
     weeklyDiscountLimit: moneySchema,
     noCarryover: z.boolean(),
@@ -170,7 +172,9 @@ export function readBnpcPolicy(db: Database.Database): BnpcPolicy {
     vatRule: row.vat_rule,
     promotionRule: row.promotion_rule,
     fourKindEvidenceRule: row.four_kind_evidence_rule,
-    enabled: row.enabled === 1,
+    enabled:
+      row.enabled === 1 &&
+      row.discount_rate_basis_points === BNPC_DISCOUNT_RATE_BASIS_POINTS,
     storeEligibilityConfirmed: row.store_eligibility_confirmed === 1,
     approvalReference: row.approval_reference,
   };

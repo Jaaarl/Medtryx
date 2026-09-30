@@ -30,7 +30,6 @@ type FormState = {
   sourceTitle: string;
   sourceUrl: string;
   reviewedAt: string;
-  discountRate: string;
   weeklyPurchaseLimit: string;
   weeklyDiscountLimit: string;
   noCarryover: boolean;
@@ -40,10 +39,6 @@ type FormState = {
   enabled: boolean;
   confirmAccountantApproval: boolean;
 };
-
-function percentText(basisPoints: number): string {
-  return `${Math.floor(basisPoints / 100)}.${String(basisPoints % 100).padStart(2, "0")}`;
-}
 
 function today(): string {
   const fields = new Intl.DateTimeFormat("en-CA", {
@@ -69,7 +64,6 @@ function formFromPolicy(policy?: Policy): FormState {
       policy?.sourceUrl ??
       "https://ncda.gov.ph/wp-content/uploads/2024/04/JAO-DTI-DA-DOE-No.-240-02-S2024.pdf",
     reviewedAt: today(),
-    discountRate: percentText(policy?.discountRateBasisPoints ?? 500),
     weeklyPurchaseLimit: policy?.weeklyPurchaseLimit ?? "2500.00",
     weeklyDiscountLimit: policy?.weeklyDiscountLimit ?? "125.00",
     noCarryover: policy?.noCarryover ?? true,
@@ -79,16 +73,6 @@ function formFromPolicy(policy?: Policy): FormState {
     enabled: policy?.enabled ?? false,
     confirmAccountantApproval: false,
   };
-}
-
-function basisPoints(value: string): number {
-  if (!/^\d{1,3}(?:\.\d{1,2})?$/u.test(value)) {
-    throw new Error("Enter a percentage with up to two decimal places.");
-  }
-  const [whole = "0", fraction = ""] = value.split(".");
-  const result = Number(BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0")));
-  if (result > 10_000) throw new Error("The discount rate cannot exceed 100%.");
-  return result;
 }
 
 function Field({
@@ -150,7 +134,7 @@ export function BnpcPolicySettings() {
           sourceTitle: form.sourceTitle.trim(),
           sourceUrl: form.sourceUrl.trim(),
           reviewedAt: form.reviewedAt,
-          discountRateBasisPoints: basisPoints(form.discountRate),
+          discountRateBasisPoints: 500,
           weeklyPurchaseLimit: form.weeklyPurchaseLimit.trim(),
           weeklyDiscountLimit: form.weeklyDiscountLimit.trim(),
           noCarryover: form.noCarryover,
@@ -217,7 +201,9 @@ export function BnpcPolicySettings() {
           ? "Loading BNPC policy…"
           : policy?.enabled
             ? `Enabled version ${policy.version}; source review ${policy.reviewedAt}.`
-            : `Disabled. Current stored version ${policy?.version ?? "unavailable"}; checkout will not grant BNPC.`}
+            : policy && policy.discountRateBasisPoints !== 500
+              ? `Disabled because the stored discount rate is ${policy.discountRateBasisPoints / 100}%; save a new 5% policy version before checkout can grant BNPC.`
+              : `Disabled. Current stored version ${policy?.version ?? "unavailable"}; checkout will not grant BNPC.`}
       </div>
       <form
         className="tax-policy-form"
@@ -288,18 +274,10 @@ export function BnpcPolicySettings() {
               required
             />
           </Field>
-          <Field id="bnpc-policy-rate" label="Discount rate (%)">
-            <input
-              id="bnpc-policy-rate"
-              className="text-input"
-              inputMode="decimal"
-              value={form.discountRate}
-              onChange={(event) =>
-                setForm({ ...form, discountRate: event.target.value })
-              }
-              required
-            />
-          </Field>
+          <div className="inventory-field">
+            <span>BNPC discount rate</span>
+            <span className="field-hint">5% fixed</span>
+          </div>
           <Field
             id="bnpc-policy-purchase-limit"
             label="Weekly qualifying-purchase limit (PHP)"

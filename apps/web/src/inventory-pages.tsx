@@ -720,7 +720,9 @@ export function ProductsPage() {
                     setForm({ ...form, isScEligible: event.target.checked })
                   }
                 />
-                <span>Senior Citizen eligible</span>
+                <span>
+                  Senior Citizen 20% discount + VAT exemption eligible
+                </span>
               </label>
               <label className="inventory-checkbox">
                 <input
@@ -730,7 +732,7 @@ export function ProductsPage() {
                     setForm({ ...form, isPwdEligible: event.target.checked })
                   }
                 />
-                <span>PWD eligible</span>
+                <span>PWD 20% discount + VAT exemption eligible</span>
               </label>
               <label className="inventory-checkbox">
                 <input
@@ -743,6 +745,9 @@ export function ProductsPage() {
                 <span>BNPC 5% discount eligible</span>
               </label>
               <small className="field-hint">
+                Senior/PWD eligibility controls the standard 20% discount and
+                VAT exemption. BNPC is a separate 5% discount and is available
+                to either holder type without selecting either standard flag.{" "}
                 BNPC covers only goods on the official Basic Necessities and
                 Prime Commodities list. Check the exact product before turning
                 this on; toiletries like shampoo are not automatically covered.{" "}
@@ -2093,6 +2098,7 @@ type SaleRecord = {
 type TaxPolicySummary = { approved: boolean; version: string };
 type BnpcPolicySummary = {
   enabled: boolean;
+  discountRateBasisPoints: number;
   version: string;
   weeklyPurchaseLimit: string;
   weeklyDiscountLimit: string;
@@ -3020,7 +3026,11 @@ export function CheckoutPage() {
               </Field>
               {benefitType !== "REGULAR" && (
                 <div className="checkout-benefit-lines">
-                  <strong>Choose eligible cart lines</strong>
+                  <strong>
+                    Choose lines for the standard{" "}
+                    {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                    benefit (20% discount + VAT exemption)
+                  </strong>
                   {cart.map((line) => (
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
@@ -3039,7 +3049,7 @@ export function CheckoutPage() {
                         }
                       />
                       <span>
-                        {line.product.name}
+                        {line.product.name} · 20% + VAT exemption
                         {(
                           benefitType === "SENIOR_CITIZEN"
                             ? line.product.isScEligible
@@ -3054,7 +3064,11 @@ export function CheckoutPage() {
               )}
               {benefitType !== "REGULAR" && bundleCart.length > 0 && (
                 <div className="checkout-benefit-lines">
-                  <strong>Choose eligible bundle components</strong>
+                  <strong>
+                    Choose bundle components for the standard{" "}
+                    {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                    benefit (20% discount + VAT exemption)
+                  </strong>
                   {bundleCart.flatMap((bundleLine) =>
                     bundleLine.offer.components.map((component) => {
                       const eligible =
@@ -3083,7 +3097,8 @@ export function CheckoutPage() {
                             }
                           />
                           <span>
-                            {bundleLine.offer.name} · {component.name}
+                            {bundleLine.offer.name} · {component.name} · 20% +
+                            VAT exemption
                             {eligible ? " · eligible" : " · not eligible"}
                           </span>
                         </label>
@@ -3094,7 +3109,14 @@ export function CheckoutPage() {
               )}
               {bnpcPolicy?.enabled && benefitType !== "REGULAR" && (
                 <div className="checkout-benefit-lines">
-                  <strong>BNPC 5 percent option</strong>
+                  <strong>
+                    Separate BNPC benefit: 5% discount; VAT remains
+                  </strong>
+                  <small className="field-hint">
+                    BNPC product eligibility works for both senior and PWD
+                    holders. It does not use the standard 20% discount or VAT
+                    exemption.
+                  </small>
                   {cart.map((line) => (
                     <label className="inventory-checkbox" key={line.product.id}>
                       <input
@@ -3208,8 +3230,9 @@ export function CheckoutPage() {
               )}
               {bnpcPolicy && !bnpcPolicy.enabled && (
                 <small className="field-hint">
-                  BNPC is disabled pending the current policy review, store
-                  eligibility decision, and owner/accountant approval.
+                  {bnpcPolicy.discountRateBasisPoints !== 500
+                    ? `BNPC is disabled because the saved rate is ${bnpcPolicy.discountRateBasisPoints / 100}%. Ask an owner to save a new policy version at the fixed 5% rate.`
+                    : "BNPC is disabled pending the current policy review, store eligibility decision, and owner/accountant approval."}
                 </small>
               )}
               {hasBnpc && (
