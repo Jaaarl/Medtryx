@@ -97,9 +97,7 @@ type StockEvent = {
 };
 
 const EMPTY_FORM = {
-  sku: "",
   name: "",
-  barcode: "",
   unit: "piece",
   sellingPrice: "",
   taxClass: "VATABLE" as Product["taxClass"],
@@ -115,7 +113,6 @@ const EMPTY_FORM = {
   openingLotCode: "",
   openingExpiryDate: "",
   openingSupplier: "",
-  reorderLevel: "",
 };
 
 function errorMessage(error: unknown): string {
@@ -326,9 +323,7 @@ export function ProductsPage() {
     setEditing(product);
     setForm({
       ...EMPTY_FORM,
-      sku: product.sku,
       name: product.name,
-      barcode: product.barcode ?? "",
       unit: product.unit,
       sellingPrice: product.sellingPrice,
       taxClass: product.taxClass,
@@ -338,8 +333,6 @@ export function ProductsPage() {
       bnpcCategory: product.bnpcCategory ?? "",
       productType: product.productType ?? "",
       tracksLots: product.tracksLots,
-      reorderLevel:
-        product.reorderLevel === null ? "" : String(product.reorderLevel),
     });
   }
 
@@ -356,7 +349,6 @@ export function ProductsPage() {
     setNotice("");
     const common = {
       name: form.name,
-      barcode: form.barcode || null,
       unit: form.unit,
       sellingPrice: form.sellingPrice,
       taxClass: form.taxClass,
@@ -370,7 +362,6 @@ export function ProductsPage() {
         : {}),
       tracksLots: form.tracksLots,
       ...(form.productType ? { productType: form.productType } : {}),
-      reorderLevel: form.reorderLevel === "" ? null : Number(form.reorderLevel),
     };
     try {
       if (editing) {
@@ -379,7 +370,6 @@ export function ProductsPage() {
       } else {
         const body = {
           ...common,
-          ...(form.sku.trim() ? { sku: form.sku.trim() } : {}),
           openingQuantity: Number(form.openingQuantity),
           ...(Number(form.openingQuantity) > 0
             ? { openingUnitCost: form.openingUnitCost }
@@ -550,7 +540,7 @@ export function ProductsPage() {
                     <td colSpan={10} className="table-loading">
                       {query
                         ? "No matching products."
-                        : "No products yet. Add the first SKU using the form."}
+                        : "No products yet. Add the first product using the form."}
                     </td>
                   </tr>
                 )}
@@ -579,24 +569,6 @@ export function ProductsPage() {
             className="form-stack inventory-form"
             onSubmit={(event) => void saveProduct(event)}
           >
-            {!editing && (
-              <Field id="product-sku" label="SKU (leave blank to generate)">
-                <input
-                  id="product-sku"
-                  className="text-input"
-                  value={form.sku}
-                  onChange={(event) =>
-                    setForm({ ...form, sku: event.target.value })
-                  }
-                  maxLength={48}
-                />
-              </Field>
-            )}
-            {editing && (
-              <div className="product-edit-sku">
-                SKU <strong>{editing.sku}</strong>
-              </div>
-            )}
             <Field id="product-name" label="Product name">
               <input
                 id="product-name"
@@ -609,31 +581,18 @@ export function ProductsPage() {
                 maxLength={160}
               />
             </Field>
-            <div className="inventory-two-fields">
-              <Field id="product-barcode" label="Barcode (optional)">
-                <input
-                  id="product-barcode"
-                  className="text-input"
-                  value={form.barcode}
-                  onChange={(event) =>
-                    setForm({ ...form, barcode: event.target.value })
-                  }
-                  maxLength={80}
-                />
-              </Field>
-              <Field id="product-unit" label="Stock unit">
-                <input
-                  id="product-unit"
-                  className="text-input"
-                  value={form.unit}
-                  onChange={(event) =>
-                    setForm({ ...form, unit: event.target.value })
-                  }
-                  required
-                  maxLength={32}
-                />
-              </Field>
-            </div>
+            <Field id="product-unit" label="Stock unit">
+              <input
+                id="product-unit"
+                className="text-input"
+                value={form.unit}
+                onChange={(event) =>
+                  setForm({ ...form, unit: event.target.value })
+                }
+                required
+                maxLength={32}
+              />
+            </Field>
             <Field id="product-price" label="Selling price (₱)">
               <input
                 id="product-price"
@@ -647,43 +606,27 @@ export function ProductsPage() {
                 pattern="[0-9]+(\.[0-9]{1,2})?"
               />
             </Field>
-            <div className="inventory-two-fields">
-              <Field id="product-tax-class" label="Tax class">
-                <select
-                  id="product-tax-class"
-                  className="text-input select-input"
-                  value={form.taxClass}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      taxClass: event.target.value as Product["taxClass"],
-                    })
-                  }
-                >
-                  <option value="VATABLE">VATable</option>
-                  <option value="VAT_EXEMPT">VAT exempt</option>
-                  <option value="ZERO_RATED" disabled={!zeroRatedAllowed}>
-                    {zeroRatedAllowed
-                      ? "Zero rated"
-                      : "Zero rated (approval required)"}
-                  </option>
-                </select>
-              </Field>
-              <Field id="product-reorder" label="Reorder at">
-                <input
-                  id="product-reorder"
-                  className="text-input"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={form.reorderLevel}
-                  onChange={(event) =>
-                    setForm({ ...form, reorderLevel: event.target.value })
-                  }
-                  placeholder="Optional"
-                />
-              </Field>
-            </div>
+            <Field id="product-tax-class" label="Tax class">
+              <select
+                id="product-tax-class"
+                className="text-input select-input"
+                value={form.taxClass}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    taxClass: event.target.value as Product["taxClass"],
+                  })
+                }
+              >
+                <option value="VATABLE">VATable</option>
+                <option value="VAT_EXEMPT">VAT exempt</option>
+                <option value="ZERO_RATED" disabled={!zeroRatedAllowed}>
+                  {zeroRatedAllowed
+                    ? "Zero rated"
+                    : "Zero rated (approval required)"}
+                </option>
+              </select>
+            </Field>
             <fieldset className="inventory-radio-group">
               <legend className="field-label">Product type</legend>
               <div className="inventory-radio-options">
