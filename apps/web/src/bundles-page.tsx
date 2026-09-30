@@ -78,6 +78,7 @@ export function BundlesPage() {
   );
   const [reductionValue, setReductionValue] = useState("10");
   const [promotionalPrice, setPromotionalPrice] = useState("");
+  const [priceOverridden, setPriceOverridden] = useState(false);
   const [components, setComponents] = useState<ComponentLine[]>([
     { productId: "", quantity: 1 },
     { productId: "", quantity: 1 },
@@ -140,6 +141,13 @@ export function BundlesPage() {
     const suggested = total - reduction;
     return { total, suggested };
   }, [components, products, reductionType, reductionValue]);
+  const calculatedPromotionalPrice =
+    pricing && pricing.suggested > 0n
+      ? moneyFromCents(pricing.suggested)
+      : "";
+  const finalPromotionalPrice = priceOverridden
+    ? promotionalPrice.trim()
+    : calculatedPromotionalPrice;
 
   function clearForm() {
     setEditingId("");
@@ -151,6 +159,7 @@ export function BundlesPage() {
     setReductionType("PERCENT");
     setReductionValue("10");
     setPromotionalPrice("");
+    setPriceOverridden(false);
     setComponents([
       { productId: "", quantity: 1 },
       { productId: "", quantity: 1 },
@@ -172,6 +181,9 @@ export function BundlesPage() {
         : moneyFromCents(BigInt(bundle.reductionValue)),
     );
     setPromotionalPrice(bundle.promotionalPrice);
+    setPriceOverridden(
+      bundle.promotionalPrice !== bundle.suggestedPromotionalPrice,
+    );
     setComponents(
       bundle.components.map(({ productId, quantity }) => ({
         productId,
@@ -194,7 +206,7 @@ export function BundlesPage() {
     event.preventDefault();
     setError("");
     setNotice("");
-    if (components.length < 2 || !confirmPrice || !promotionalPrice.trim()) {
+    if (components.length < 2 || !confirmPrice || !finalPromotionalPrice) {
       setError(
         "Choose at least two products and explicitly approve a final promotional price.",
       );
@@ -218,7 +230,7 @@ export function BundlesPage() {
         maxQuantityPerSale: maxQuantity ? Number(maxQuantity) : null,
         reductionType,
         reductionValue: reduction,
-        promotionalPrice: promotionalPrice.trim(),
+        promotionalPrice: finalPromotionalPrice,
         confirmFinalPrice: true,
         components,
       };
@@ -401,19 +413,40 @@ export function BundlesPage() {
                 required
               />
             </label>
-            <label className="inventory-field">
-              <span>Approved promotional price (PHP)</span>
-              <input
-                className="text-input"
-                inputMode="decimal"
-                value={promotionalPrice}
-                onChange={(event) => {
-                  setPromotionalPrice(event.target.value);
-                  setConfirmPrice(false);
-                }}
-                required
-              />
-            </label>
+            <div className="bundle-promotional-price">
+              <label className="inventory-field">
+                <span>Approved promotional price (PHP)</span>
+                <input
+                  className="text-input"
+                  inputMode="decimal"
+                  value={finalPromotionalPrice}
+                  onChange={(event) => {
+                    setPromotionalPrice(event.target.value);
+                    setPriceOverridden(true);
+                    setConfirmPrice(false);
+                  }}
+                  required
+                />
+                <small className="field-hint">
+                  {priceOverridden
+                    ? "Custom price. Use the calculated price to restore automatic pricing."
+                    : "Calculated automatically from the component prices and reduction rule. Edit to set a custom price."}
+                </small>
+              </label>
+              {priceOverridden && (
+                <button
+                  className="button button-quiet"
+                  type="button"
+                  onClick={() => {
+                    setPriceOverridden(false);
+                    setPromotionalPrice(calculatedPromotionalPrice);
+                    setConfirmPrice(false);
+                  }}
+                >
+                  Use calculated price
+                </button>
+              )}
+            </div>
           </div>
           <div className="settings-main-card">
             <div className="card-heading">
