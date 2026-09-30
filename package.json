@@ -29,6 +29,7 @@
     "test:e2e": "npm run build:server && node scripts/run-e2e.mjs",
     "db:migrate": "npm run build:server && node apps/server/dist/cli/migrate.js",
     "db:create-owner": "npm run build:server && node apps/server/dist/cli/create-owner.js",
+    "db:seed-products": "npm run build:server && node apps/server/dist/cli/seed-products.js",
     "live:preflight": "npm run build:server && node apps/server/dist/cli/live-preflight.js"
   },
   "devDependencies": {

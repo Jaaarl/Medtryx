@@ -12,6 +12,8 @@ The roadmap target is Node.js 24 LTS. The current development environment may us
 4. For a fresh development database only, set `MEDTRYX_OWNER_EMAIL` and `MEDTRYX_OWNER_PASSWORD` in `.env`, then run `npm run db:create-owner`. Bootstrap refuses to add an owner once that environment has any users.
 5. Run `npm run dev`. Vite is available at `http://127.0.0.1:5173`; Express listens on `http://127.0.0.1:3001` and Vite proxies `/api` requests.
 
+To seed the product-only catalog draft from `docs/Pharma - Compilation.csv`, run `npm run db:seed-products`. This idempotently inserts 80 inactive product records into the selected database. Suggested selling prices use each source acquisition cost multiplied by a saved random 2x or 3x multiplier. The command does not seed lot numbers, expiry dates, inventory, or stock events. Review the placeholder tax class, unit, and product type before activating products.
+
 `APP_ENV` selects an isolated SQLite file: `development`, `test`, or `live`. Development and test files default to the ignored `data/` directory; live requires an absolute `MEDTRYX_DATA_DIR` outside the repository. Do not copy development or test databases into live use. The test suite creates synthetic users and isolated test databases. No default staff accounts or real customer data are included.
 
 The local browser development server uses HTTP. App session cookies remain `Secure` by default; browsers permit secure cookies on loopback hosts. `COOKIE_SECURE=false` is reserved for the automated HTTP test server. A Caddy local-HTTPS example is included, but the live host, certificate trust, and client devices are not configured or tested yet.
