@@ -2195,6 +2195,7 @@ type CurrentShift = {
   openedAt: string;
   openingCash: string;
   expectedCash: string;
+  expectedQrSales: string;
 };
 
 export function CheckoutPage() {
@@ -3005,6 +3006,7 @@ export function CheckoutPage() {
             <div className="checkout-shift-open">
               <strong>Shift open</strong>
               <span>Expected physical cash: ₱{shift.expectedCash}</span>
+              <span>Expected QR sales: ₱{shift.expectedQrSales}</span>
               <details>
                 <summary>Close shift and count cash</summary>
                 <form

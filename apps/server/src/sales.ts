@@ -1658,6 +1658,16 @@ export function registerSalesRoutes(
 
   router.get("/shifts/current", requireAuth, (req, res) => {
     const shift = shiftForCashier(db, req.user!.id);
+    const qrSalesCentavos = shift
+      ? (
+          db
+            .prepare(
+              `SELECT COALESCE(SUM(amount_due_centavos), 0) AS qr_sales_centavos
+               FROM sales WHERE shift_id = ? AND payment_method = 'QR'`,
+            )
+            .get(shift.id) as { qr_sales_centavos: number }
+        ).qr_sales_centavos
+      : 0;
     const registerOpen = Boolean(
       db.prepare("SELECT 1 FROM shifts WHERE closed_at IS NULL LIMIT 1").get(),
     );
@@ -1668,6 +1678,7 @@ export function registerSalesRoutes(
             openedAt: shift.opened_at,
             openingCash: money(shift.opening_cash_centavos),
             expectedCash: money(shift.expected_cash_centavos),
+            expectedQrSales: money(qrSalesCentavos),
           }
         : null,
       registerOpen,
@@ -1819,6 +1830,7 @@ export function registerSalesRoutes(
           openedAt: now,
           openingCash: money(openingCashCentavos),
           expectedCash: money(openingCashCentavos),
+          expectedQrSales: money(0),
         },
       });
     } catch (error) {
