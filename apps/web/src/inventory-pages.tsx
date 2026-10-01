@@ -117,6 +117,7 @@ const EMPTY_FORM = {
   name: "",
   unit: "piece",
   sellingPrice: "",
+  reorderLevel: "",
   taxClass: "VATABLE" as Product["taxClass"],
   isScEligible: false,
   isPwdEligible: false,
@@ -390,6 +391,8 @@ export function ProductsPage() {
       name: product.name,
       unit: product.unit,
       sellingPrice: product.sellingPrice,
+      reorderLevel:
+        product.reorderLevel === null ? "" : String(product.reorderLevel),
       taxClass: product.taxClass,
       isScEligible: product.isScEligible,
       isPwdEligible: product.isPwdEligible,
@@ -415,6 +418,8 @@ export function ProductsPage() {
       name: form.name,
       unit: form.unit,
       sellingPrice: form.sellingPrice,
+      reorderLevel:
+        form.reorderLevel === "" ? null : Number(form.reorderLevel),
       taxClass: form.taxClass,
       isScEligible: form.isScEligible,
       isPwdEligible: form.isPwdEligible,
@@ -698,6 +703,19 @@ export function ProductsPage() {
                 }
                 required
                 pattern="[0-9]+(\.[0-9]{1,2})?"
+              />
+            </Field>
+            <Field id="product-reorder-level" label="Reorder level (optional)">
+              <input
+                id="product-reorder-level"
+                className="text-input"
+                type="number"
+                min="0"
+                step="1"
+                value={form.reorderLevel}
+                onChange={(event) =>
+                  setForm({ ...form, reorderLevel: event.target.value })
+                }
               />
             </Field>
             <Field id="product-tax-class" label="Tax class">
