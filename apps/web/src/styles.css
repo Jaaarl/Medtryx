@@ -1059,6 +1059,41 @@ a {
   height: 30px;
   padding: 0;
 }
+.inventory-table-scroll-controls {
+  align-items: center;
+  background: #f7f9f8;
+  border-bottom: 1px solid #e9efec;
+  color: #8c9a95;
+  display: flex;
+  font-size: 9px;
+  justify-content: space-between;
+  min-height: 35px;
+  padding: 4px 12px;
+}
+.inventory-table-scroll-controls > div {
+  display: flex;
+  gap: 5px;
+}
+.inventory-table-scroll-controls button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dce6e1;
+  border-radius: 5px;
+  color: #42675a;
+  display: inline-flex;
+  height: 25px;
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+}
+.inventory-table-scroll-controls button:hover:not(:disabled) {
+  background: #e9f4f0;
+  border-color: #bfd7ce;
+}
+.inventory-table-scroll-controls button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 .inventory-table-wrap {
   overflow-x: auto;
   width: 100%;

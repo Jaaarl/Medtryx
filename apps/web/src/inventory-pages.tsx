@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
   ArrowDownToLine,
+  ChevronLeft,
+  ChevronRight,
   CirclePlus,
   Package,
   Search,
@@ -302,12 +304,58 @@ function useProducts() {
 
 export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
+  const productTableRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   const [editing, setEditing] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [zeroRatedAllowed, setZeroRatedAllowed] = useState(false);
+  const [productTableScroll, setProductTableScroll] = useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+    isScrollable: false,
+  });
+
+  function updateProductTableScroll() {
+    const table = productTableRef.current;
+    if (!table) return;
+    const maxScrollLeft = table.scrollWidth - table.clientWidth;
+    const next = {
+      canScrollLeft: table.scrollLeft > 1,
+      canScrollRight: maxScrollLeft - table.scrollLeft > 1,
+      isScrollable: maxScrollLeft > 1,
+    };
+    setProductTableScroll((current) =>
+      current.canScrollLeft === next.canScrollLeft &&
+      current.canScrollRight === next.canScrollRight &&
+      current.isScrollable === next.isScrollable
+        ? current
+        : next,
+    );
+  }
+
+  function scrollProductTable(direction: -1 | 1) {
+    productTableRef.current?.scrollBy({
+      left: direction * 360,
+      behavior: "smooth",
+    });
+  }
+
+  useEffect(() => {
+    const table = productTableRef.current;
+    if (!table) return;
+    updateProductTableScroll();
+    const observer = new ResizeObserver(updateProductTableScroll);
+    observer.observe(table);
+    const tableContent = table.querySelector("table");
+    if (tableContent) observer.observe(tableContent);
+    window.addEventListener("resize", updateProductTableScroll);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateProductTableScroll);
+    };
+  }, [loading, products.length, query]);
   useEffect(() => {
     let active = true;
     void api
@@ -474,7 +522,36 @@ export function ProductsPage() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <div className="inventory-table-wrap">
+          {productTableScroll.isScrollable && (
+            <div className="inventory-table-scroll-controls">
+              <span>Scroll to see more columns</span>
+              <div>
+                <button
+                  type="button"
+                  aria-label="Scroll product table left"
+                  title="Scroll left"
+                  disabled={!productTableScroll.canScrollLeft}
+                  onClick={() => scrollProductTable(-1)}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Scroll product table right"
+                  title="Scroll right"
+                  disabled={!productTableScroll.canScrollRight}
+                  onClick={() => scrollProductTable(1)}
+                >
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          )}
+          <div
+            className="inventory-table-wrap"
+            ref={productTableRef}
+            onScroll={updateProductTableScroll}
+          >
             <table className="inventory-table">
               <thead>
                 <tr>
