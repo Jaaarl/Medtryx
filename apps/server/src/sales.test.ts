@@ -752,7 +752,7 @@ describe("checkout, sales, and cashier shifts", () => {
       .set("x-csrf-token", nextCsrf)
       .send({
         actualCashCount: "98.00",
-        varianceReason: "Synthetic count variance for test",
+        varianceReason: "Cashier Fault",
       });
     expect(closed.status).toBe(200);
     expect(closed.body.shift).toMatchObject({
@@ -783,7 +783,7 @@ describe("checkout, sales, and cashier shifts", () => {
         expectedCash: "100.00",
         actualCashCount: "98.00",
         variance: "-2.00",
-        cashierReason: "Synthetic count variance for test",
+        cashierReason: "Cashier Fault",
       },
     ]);
     const wrongOwnerCsrf = await csrfFor(owner);

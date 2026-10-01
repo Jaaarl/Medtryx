@@ -2233,7 +2233,9 @@ export function CheckoutPage() {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("0.00");
   const [closingCash, setClosingCash] = useState("0.00");
-  const [varianceReason, setVarianceReason] = useState("");
+  const [varianceReason, setVarianceReason] = useState<
+    "" | "Cashier Fault" | "Customer Fault" | "No Fault"
+  >("");
   const [preview, setPreview] = useState<CheckoutPreview | null>(null);
   const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
@@ -3028,15 +3030,21 @@ export function CheckoutPage() {
                     id="shift-variance-reason"
                     label="Variance reason if count differs"
                   >
-                    <input
+                    <select
                       id="shift-variance-reason"
-                      className="text-input"
+                      className="text-input select-input"
                       value={varianceReason}
                       onChange={(event) =>
-                        setVarianceReason(event.target.value)
+                        setVarianceReason(
+                          event.target.value as typeof varianceReason,
+                        )
                       }
-                      maxLength={500}
-                    />
+                    >
+                      <option value="">Choose a reason</option>
+                      <option value="Cashier Fault">Cashier Fault</option>
+                      <option value="Customer Fault">Customer Fault</option>
+                      <option value="No Fault">No Fault</option>
+                    </select>
                   </Field>
                   <button
                     className="button button-quiet"

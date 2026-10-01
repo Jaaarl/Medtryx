@@ -297,7 +297,9 @@ const openShiftSchema = z.object({ openingCash: moneySchema }).strict();
 const closeShiftSchema = z
   .object({
     actualCashCount: moneySchema,
-    varianceReason: z.string().trim().max(500).optional(),
+    varianceReason: z
+      .enum(["Cashier Fault", "Customer Fault", "No Fault"])
+      .optional(),
   })
   .strict();
 
