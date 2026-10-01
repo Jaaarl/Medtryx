@@ -1717,7 +1717,8 @@ export function registerSalesRoutes(
       .prepare(
         `SELECT s.id, s.opened_at, s.closed_at, s.opening_cash_centavos,
                 s.expected_cash_centavos, s.actual_cash_count_centavos,
-                s.variance_centavos, opened.email AS opened_by_email,
+                s.variance_centavos, s.variance_reason,
+                opened.email AS opened_by_email,
                 closed.email AS closed_by_email,
                 COALESCE(sales.cash_sales_centavos, 0) AS cash_sales_centavos,
                 COALESCE(sales.qr_sales_centavos, 0) AS qr_sales_centavos,
@@ -1762,6 +1763,7 @@ export function registerSalesRoutes(
       expected_cash_centavos: number | null;
       actual_cash_count_centavos: number | null;
       variance_centavos: number | null;
+      variance_reason: string | null;
       opened_by_email: string;
       closed_by_email: string | null;
       cash_sales_centavos: number;
@@ -1793,6 +1795,7 @@ export function registerSalesRoutes(
             : money(row.actual_cash_count_centavos),
         variance:
           row.variance_centavos === null ? null : money(row.variance_centavos),
+        varianceReason: row.variance_reason,
       })),
       hasMore: rows.length > limit.data,
     });

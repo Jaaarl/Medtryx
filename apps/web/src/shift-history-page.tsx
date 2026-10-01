@@ -18,6 +18,7 @@ type ShiftHistoryRow = {
   expectedCash: string;
   actualCashCount: string | null;
   variance: string | null;
+  varianceReason: string | null;
 };
 
 async function fetchShiftHistory(before?: ShiftHistoryRow): Promise<{
@@ -157,6 +158,7 @@ export function ShiftHistoryPage() {
                   <th>EXPECTED CASH</th>
                   <th>ACTUAL COUNT</th>
                   <th>VARIANCE</th>
+                  <th>VARIANCE REASON</th>
                 </tr>
               </thead>
               <tbody>
@@ -192,6 +194,7 @@ export function ShiftHistoryPage() {
                     <td>
                       {shift.variance === null ? "—" : `₱${shift.variance}`}
                     </td>
+                    <td>{shift.varianceReason ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
