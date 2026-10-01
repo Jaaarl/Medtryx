@@ -1660,19 +1660,32 @@ export function registerSalesRoutes(
 
   router.get("/shifts/current", requireAuth, (req, res) => {
     const shift = shiftForCashier(db, req.user!.id);
-    const qrSalesCentavos = shift
+    const registerShiftRow = db
+      .prepare(
+        `SELECT s.id, s.opened_at, s.opening_cash_centavos,
+                s.expected_cash_centavos, u.email AS opened_by_email
+         FROM shifts s JOIN users u ON u.id = s.cashier_user_id
+         WHERE s.closed_at IS NULL LIMIT 1`,
+      )
+      .get() as
+      | {
+          id: string;
+          opened_at: string;
+          opening_cash_centavos: number;
+          expected_cash_centavos: number;
+          opened_by_email: string;
+        }
+      | undefined;
+    const expectedQrSalesCentavos = registerShiftRow
       ? (
           db
             .prepare(
               `SELECT COALESCE(SUM(amount_due_centavos), 0) AS qr_sales_centavos
                FROM sales WHERE shift_id = ? AND payment_method = 'QR'`,
             )
-            .get(shift.id) as { qr_sales_centavos: number }
+            .get(registerShiftRow.id) as { qr_sales_centavos: number }
         ).qr_sales_centavos
       : 0;
-    const registerOpen = Boolean(
-      db.prepare("SELECT 1 FROM shifts WHERE closed_at IS NULL LIMIT 1").get(),
-    );
     res.json({
       shift: shift
         ? {
@@ -1680,10 +1693,20 @@ export function registerSalesRoutes(
             openedAt: shift.opened_at,
             openingCash: money(shift.opening_cash_centavos),
             expectedCash: money(shift.expected_cash_centavos),
-            expectedQrSales: money(qrSalesCentavos),
+            expectedQrSales: money(expectedQrSalesCentavos),
           }
         : null,
-      registerOpen,
+      registerOpen: Boolean(registerShiftRow),
+      registerShift: registerShiftRow
+        ? {
+            id: registerShiftRow.id,
+            openedAt: registerShiftRow.opened_at,
+            openedByEmail: registerShiftRow.opened_by_email,
+            openingCash: money(registerShiftRow.opening_cash_centavos),
+            expectedCash: money(registerShiftRow.expected_cash_centavos),
+            expectedQrSales: money(expectedQrSalesCentavos),
+          }
+        : null,
     });
   });
 
@@ -1843,7 +1866,11 @@ export function registerSalesRoutes(
     }
   });
 
-  router.post("/shifts/:id/close", requireAuth, csrf, (req, res) => {
+  function closeShiftRequest(
+    req: Request,
+    res: Response,
+    emergencyClose: boolean,
+  ) {
     const id = z.uuid().safeParse(req.params.id);
     const parsed = closeShiftSchema.safeParse(req.body);
     if (!id.success || !parsed.success || !req.user)
@@ -1853,10 +1880,13 @@ export function registerSalesRoutes(
       const result = db.transaction(() => {
         const shift = db
           .prepare(
-            `SELECT id, expected_cash_centavos FROM shifts
-             WHERE id = ? AND cashier_user_id = ? AND closed_at IS NULL`,
+            emergencyClose
+              ? `SELECT id, expected_cash_centavos FROM shifts
+                 WHERE id = ? AND closed_at IS NULL`
+              : `SELECT id, expected_cash_centavos FROM shifts
+                 WHERE id = ? AND cashier_user_id = ? AND closed_at IS NULL`,
           )
-          .get(id.data, req.user!.id) as
+          .get(...(emergencyClose ? [id.data] : [id.data, req.user!.id])) as
           | { id: string; expected_cash_centavos: number }
           | undefined;
         if (!shift) throw new SalesError(404, "open_shift_not_found");
@@ -1894,6 +1924,7 @@ export function registerSalesRoutes(
             varianceCentavos: variance,
             varianceReason: parsed.data.varianceReason?.trim() || null,
             varianceApprovalStatus,
+            emergencyClose,
           },
         });
         return {
@@ -1918,7 +1949,18 @@ export function registerSalesRoutes(
     } catch (error) {
       if (!handleSalesError(error, res)) throw error;
     }
+  }
+
+  router.post("/shifts/:id/close", requireAuth, csrf, (req, res) => {
+    closeShiftRequest(req, res, false);
   });
+
+  router.post(
+    "/shifts/:id/emergency-close",
+    requireAuth,
+    csrf,
+    (req, res) => closeShiftRequest(req, res, true),
+  );
 
   router.post("/sales/preview", requireAuth, csrf, (req, res) => {
     const parsed = checkoutBaseSchema.safeParse(req.body);

@@ -178,7 +178,7 @@ function errorMessage(error: unknown): string {
       "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
     open_shift_required: "Open a cashier shift before finalizing a sale.",
     shift_already_open:
-      "Only one cash register may be open at a time. Ask the active cashier to close the shift.",
+      "Only one cash register may be open at a time. Use emergency close if the previous cashier left a shift open.",
     product_not_senior_eligible:
       "This product is not marked eligible for a Senior Citizen benefit.",
     product_not_pwd_eligible:
@@ -2197,6 +2197,7 @@ type CurrentShift = {
   expectedCash: string;
   expectedQrSales: string;
 };
+type RegisterShift = CurrentShift & { openedByEmail: string };
 
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
@@ -2230,9 +2231,11 @@ export function CheckoutPage() {
   const [bnpcFourKindsChecked, setBnpcFourKindsChecked] = useState(false);
   const [policy, setPolicy] = useState<TaxPolicySummary | null>(null);
   const [shift, setShift] = useState<CurrentShift | null>(null);
+  const [registerShift, setRegisterShift] = useState<RegisterShift | null>(null);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("0.00");
   const [closingCash, setClosingCash] = useState("0.00");
+  const [emergencyClosingCash, setEmergencyClosingCash] = useState("");
   const [varianceReason, setVarianceReason] = useState<
     "" | "Cashier Fault" | "Customer Fault" | "No Fault"
   >("");
@@ -2273,9 +2276,11 @@ export function CheckoutPage() {
     let active = true;
     void Promise.all([
       api.get<{ policy: TaxPolicySummary }>("/tax-policy"),
-      api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
-        "/shifts/current",
-      ),
+      api.get<{
+        shift: CurrentShift | null;
+        registerOpen: boolean;
+        registerShift: RegisterShift | null;
+      }>("/shifts/current"),
       api.get<{ bundles: BundleOffer[] }>("/bundles/active"),
       api.get<{ policy: BnpcPolicySummary }>("/bnpc-policy"),
     ])
@@ -2283,6 +2288,7 @@ export function CheckoutPage() {
         if (!active) return;
         setPolicy(policyResult.policy);
         setShift(shiftResult.shift);
+        setRegisterShift(shiftResult.registerShift);
         setRegisterOpen(shiftResult.registerOpen);
         setBundleOffers(bundleResult.bundles);
         setBnpcPolicy(bnpcResult.policy);
@@ -2542,6 +2548,7 @@ export function CheckoutPage() {
         openingCash,
       });
       setShift(result.shift);
+      setRegisterShift(null);
       setRegisterOpen(true);
       setClosingCash(result.shift.expectedCash);
       setNotice("Cashier shift opened.");
@@ -2566,10 +2573,36 @@ export function CheckoutPage() {
           : {}),
       });
       setShift(null);
+      setRegisterShift(null);
       setRegisterOpen(false);
+      setVarianceReason("");
       setPreview(null);
       setRequestKey("");
       setNotice("Cashier shift closed.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function emergencyCloseShift(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!registerShift) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post(`/shifts/${registerShift.id}/emergency-close`, {
+        actualCashCount: emergencyClosingCash,
+        ...(varianceReason ? { varianceReason } : {}),
+      });
+      setShift(null);
+      setRegisterShift(null);
+      setRegisterOpen(false);
+      setVarianceReason("");
+      setEmergencyClosingCash("");
+      setNotice("Emergency shift close recorded.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -2690,15 +2723,18 @@ export function CheckoutPage() {
       setPreview(null);
       setRequestKey("");
       const [shiftResult, catalogResult, bundleResult] = await Promise.all([
-        api.get<{ shift: CurrentShift | null; registerOpen: boolean }>(
-          "/shifts/current",
-        ),
+        api.get<{
+          shift: CurrentShift | null;
+          registerOpen: boolean;
+          registerShift: RegisterShift | null;
+        }>("/shifts/current"),
         api.get<{ products: CatalogProduct[] }>(
           `/catalog${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ""}`,
         ),
         api.get<{ bundles: BundleOffer[] }>("/bundles/active"),
       ]);
       setShift(shiftResult.shift);
+      setRegisterShift(shiftResult.registerShift);
       setRegisterOpen(shiftResult.registerOpen);
       if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       setProducts(catalogResult.products);
@@ -2969,41 +3005,103 @@ export function CheckoutPage() {
                 : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
           {!operationsLoading && !shift ? (
-            <form
-              className="checkout-shift-form"
-              onSubmit={(event) => void openCurrentShift(event)}
-            >
-              <h3>Open a cashier shift</h3>
-              {registerOpen && (
-                <p className="register-in-use-note" role="status">
-                  The single cash register is already open. Wait for the active
-                  cashier to close the shift before opening it.
-                </p>
-              )}
-              <p>
-                Enter the physical cash placed in the drawer. QR declarations
-                are not counted as cash.
-              </p>
-              <Field id="shift-opening-cash" label="Opening cash (₱)">
-                <input
-                  id="shift-opening-cash"
-                  className="text-input"
-                  inputMode="decimal"
-                  value={openingCash}
-                  onChange={(event) => setOpeningCash(event.target.value)}
-                  disabled={registerOpen}
-                  required
-                  pattern="[0-9]+(\.[0-9]{1,2})?"
-                />
-              </Field>
-              <button
-                className="button button-primary"
-                type="submit"
-                disabled={saving || registerOpen}
+            <>
+              <form
+                className="checkout-shift-form"
+                onSubmit={(event) => void openCurrentShift(event)}
               >
-                {saving ? "Opening…" : "Open shift"}
-              </button>
-            </form>
+                <h3>Open a cashier shift</h3>
+                {registerOpen && (
+                  <p className="register-in-use-note" role="status">
+                    {registerShift
+                      ? `The register is still open under ${registerShift.openedByEmail}. Record a physical count and use emergency close below to release it.`
+                      : "The single cash register is already open. Close the active shift before opening another."}
+                  </p>
+                )}
+                <p>
+                  Enter the physical cash placed in the drawer. QR declarations
+                  are not counted as cash.
+                </p>
+                <Field id="shift-opening-cash" label="Opening cash (₱)">
+                  <input
+                    id="shift-opening-cash"
+                    className="text-input"
+                    inputMode="decimal"
+                    value={openingCash}
+                    onChange={(event) => setOpeningCash(event.target.value)}
+                    disabled={registerOpen}
+                    required
+                    pattern="[0-9]+(\.[0-9]{1,2})?"
+                  />
+                </Field>
+                <button
+                  className="button button-primary"
+                  type="submit"
+                  disabled={saving || registerOpen}
+                >
+                  {saving ? "Opening…" : "Open shift"}
+                </button>
+              </form>
+              {registerShift && (
+                <div className="checkout-shift-open emergency-shift-close">
+                  <strong>
+                    Emergency close: shift opened by {registerShift.openedByEmail}
+                  </strong>
+                  <span>
+                    Expected physical cash: ₱{registerShift.expectedCash}
+                  </span>
+                  <span>Expected QR sales: ₱{registerShift.expectedQrSales}</span>
+                  <form
+                    className="form-stack inventory-form"
+                    onSubmit={(event) => void emergencyCloseShift(event)}
+                  >
+                    <Field
+                      id="emergency-shift-cash-count"
+                      label="Actual physical cash count (₱)"
+                    >
+                      <input
+                        id="emergency-shift-cash-count"
+                        className="text-input"
+                        inputMode="decimal"
+                        value={emergencyClosingCash}
+                        onChange={(event) =>
+                          setEmergencyClosingCash(event.target.value)
+                        }
+                        required
+                        pattern="[0-9]+(\.[0-9]{1,2})?"
+                      />
+                    </Field>
+                    <Field
+                      id="emergency-shift-variance-reason"
+                      label="Variance reason if count differs"
+                    >
+                      <select
+                        id="emergency-shift-variance-reason"
+                        className="text-input select-input"
+                        value={varianceReason}
+                        onChange={(event) =>
+                          setVarianceReason(
+                            event.target.value as typeof varianceReason,
+                          )
+                        }
+                      >
+                        <option value="">Choose a reason</option>
+                        <option value="Cashier Fault">Cashier Fault</option>
+                        <option value="Customer Fault">Customer Fault</option>
+                        <option value="No Fault">No Fault</option>
+                      </select>
+                    </Field>
+                    <button
+                      className="button button-quiet"
+                      type="submit"
+                      disabled={saving}
+                    >
+                      Emergency close shift
+                    </button>
+                  </form>
+                </div>
+              )}
+            </>
           ) : shift ? (
             <div className="checkout-shift-open">
               <strong>Shift open</strong>
