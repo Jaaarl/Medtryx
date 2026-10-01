@@ -63,6 +63,7 @@ const createProductSchema = z
       .nullable()
       .optional(),
     zeroCostReason: reasonSchema.optional(),
+    openingReference: optionalNoteSchema,
     openingLotCode: lotCodeSchema.optional(),
     openingExpiryDate: expiryDateSchema.optional(),
     openingSupplier: supplierSchema,
@@ -822,7 +823,7 @@ export function registerInventoryRoutes(
             quantityDelta: parsed.data.openingQuantity,
             unitCostCents: openingCostCents,
             inventoryValueDeltaCents: inventoryValueCents,
-            reference: null,
+            reference: parsed.data.openingReference || null,
             supplier: parsed.data.openingSupplier ?? null,
             reason:
               openingCostCents === 0
@@ -869,6 +870,7 @@ export function registerInventoryRoutes(
               ? parsed.data.bnpcCategory
               : null,
             openingQuantity: parsed.data.openingQuantity,
+            openingReference: parsed.data.openingReference || null,
             taxClass: parsed.data.taxClass,
           },
         });

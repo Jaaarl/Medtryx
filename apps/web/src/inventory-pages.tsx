@@ -127,6 +127,7 @@ const EMPTY_FORM = {
   openingQuantity: "0",
   openingUnitCost: "",
   openingZeroCostReason: "",
+  openingReference: "",
   openingLotCode: "",
   openingExpiryDate: "",
   openingSupplier: "",
@@ -439,6 +440,7 @@ export function ProductsPage() {
             : {}),
           ...(form.tracksLots && Number(form.openingQuantity) > 0
             ? {
+                openingReference: form.openingReference.trim(),
                 openingLotCode: form.openingLotCode.trim(),
                 openingExpiryDate: form.openingExpiryDate,
                 ...(form.openingSupplier.trim()
@@ -918,6 +920,23 @@ export function ProductsPage() {
                 ) : null}
                 {form.tracksLots && Number(form.openingQuantity) > 0 && (
                   <>
+                    <Field
+                      id="opening-reference"
+                      label="Reference / supplier note"
+                    >
+                      <input
+                        id="opening-reference"
+                        className="text-input"
+                        value={form.openingReference}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            openingReference: event.target.value,
+                          })
+                        }
+                        maxLength={200}
+                      />
+                    </Field>
                     <Field
                       id="opening-lot-code"
                       label="Opening lot / batch code"
