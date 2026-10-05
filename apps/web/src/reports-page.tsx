@@ -113,6 +113,7 @@ const metricGroups: Array<{
         "Cash rounding adjustments (net of reversals)",
         "cashRoundingAdjustments",
       ],
+      ["QR rounding adjustments (net of reversals)", "qrRoundingAdjustments"],
       ["Cash refunds", "cashRefunds"],
       ["QR refunds", "qrRefunds"],
       ["Cash-in", "cashIn"],

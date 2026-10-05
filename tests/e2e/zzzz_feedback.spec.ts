@@ -192,6 +192,11 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     paymentSection.getByText("QR sales (before refunds)", { exact: true }),
   ).toBeVisible();
   await expect(
+    paymentSection.getByText("QR rounding adjustments (net of reversals)", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
     ownerPage.getByText(
       /Cancellations and reversals appear in separate cash or QR refund totals/,
     ),

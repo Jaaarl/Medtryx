@@ -322,6 +322,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       cashSales: "0.00",
       qrSales: "112.13",
       cashRoundingAdjustments: "0.00",
+      qrRoundingAdjustments: "0.00",
     });
     expect(report.body.report.transactionChanges).toEqual([
       expect.objectContaining({

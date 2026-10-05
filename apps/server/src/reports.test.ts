@@ -418,6 +418,7 @@ describe("daily owner reports and CSV export", () => {
     expect(beforeReversal.body.report.metrics).toMatchObject({
       cashSales: "112.25",
       cashRoundingAdjustments: "0.12",
+      qrRoundingAdjustments: "0.00",
       netSalesExcludingVat: "100.12",
       estimatedGrossProfit: "60.12",
     });
@@ -439,6 +440,7 @@ describe("daily owner reports and CSV export", () => {
       cashSales: "112.25",
       cashRefunds: "112.25",
       cashRoundingAdjustments: "0.00",
+      qrRoundingAdjustments: "0.00",
       netCashImpact: "0.00",
       netSalesExcludingVat: "0.00",
       estimatedGrossProfit: "0.00",
@@ -451,6 +453,9 @@ describe("daily owner reports and CSV export", () => {
     );
     expect(csv.text).toContain(
       '"Payments","Cash rounding adjustments (net of reversals)","0.00"',
+    );
+    expect(csv.text).toContain(
+      '"Payments","QR rounding adjustments (net of reversals)","0.00"',
     );
   });
 
