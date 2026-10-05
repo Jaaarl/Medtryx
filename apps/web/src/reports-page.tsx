@@ -36,6 +36,15 @@ type SalesReport = {
   notes: string[];
 };
 
+type BenefitTransaction = {
+  transactionId: string;
+  businessDate: string;
+  createdAt: string;
+  benefitType: "SENIOR_CITIZEN" | "PWD";
+  customerName: string;
+  products: Array<{ name: string; quantity: number }>;
+};
+
 function todayInManila(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Manila",
@@ -116,15 +125,30 @@ export function ReportsPage() {
   const [startDate, setStartDate] = useState(todayInManila);
   const [endDate, setEndDate] = useState(todayInManila);
   const [report, setReport] = useState<SalesReport | null>(null);
+  const [benefitTransactions, setBenefitTransactions] = useState<
+    BenefitTransaction[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   async function loadReport(selectedStart = startDate, selectedEnd = endDate) {
     try {
-      setReport(await fetchReport(selectedStart, selectedEnd));
+      const query = new URLSearchParams({
+        startDate: selectedStart,
+        endDate: selectedEnd,
+      });
+      const [nextReport, nextBenefits] = await Promise.all([
+        fetchReport(selectedStart, selectedEnd),
+        api.get<{ transactions: BenefitTransaction[] }>(
+          `/reports/beneficiaries/range?${query}`,
+        ),
+      ]);
+      setReport(nextReport);
+      setBenefitTransactions(nextBenefits.transactions);
       setError("");
     } catch {
       setReport(null);
+      setBenefitTransactions([]);
       setError("Unable to load the report. Check the date and try again.");
     } finally {
       setLoading(false);
@@ -133,16 +157,24 @@ export function ReportsPage() {
 
   useEffect(() => {
     let active = true;
-    void fetchReport(startDate, endDate)
-      .then((nextReport) => {
+    const query = new URLSearchParams({ startDate, endDate });
+    void Promise.all([
+      fetchReport(startDate, endDate),
+      api.get<{ transactions: BenefitTransaction[] }>(
+        `/reports/beneficiaries/range?${query}`,
+      ),
+    ])
+      .then(([nextReport, nextBenefits]) => {
         if (active) {
           setReport(nextReport);
+          setBenefitTransactions(nextBenefits.transactions);
           setError("");
         }
       })
       .catch(() => {
         if (active) {
           setReport(null);
+          setBenefitTransactions([]);
           setError("Unable to load the report. Check the date and try again.");
         }
       })
@@ -165,6 +197,22 @@ export function ReportsPage() {
     setLoading(true);
     setError("");
     setStartDate(`${today.slice(0, 7)}-01`);
+    setEndDate(today);
+  }
+
+  function selectToday() {
+    const today = todayInManila();
+    setLoading(true);
+    setError("");
+    setStartDate(today);
+    setEndDate(today);
+  }
+
+  function selectYearToDate() {
+    const today = todayInManila();
+    setLoading(true);
+    setError("");
+    setStartDate(`${today.slice(0, 4)}-01-01`);
     setEndDate(today);
   }
 
@@ -213,10 +261,26 @@ export function ReportsPage() {
           <button
             className="button button-secondary"
             type="button"
+            onClick={selectToday}
+            disabled={loading}
+          >
+            Today
+          </button>
+          <button
+            className="button button-secondary"
+            type="button"
             onClick={selectMonthToDate}
             disabled={loading}
           >
             Month to date
+          </button>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={selectYearToDate}
+            disabled={loading}
+          >
+            Year to date
           </button>
           <button
             className="button button-secondary"
@@ -283,6 +347,76 @@ export function ReportsPage() {
               </section>
             ))}
           </div>
+
+          <section className="settings-main-card report-low-stock">
+            <div className="card-heading">
+              <div>
+                <h2>Senior citizen and PWD customers</h2>
+                <p>
+                  Benefit use and products for each sale in the selected Manila
+                  date range.
+                </p>
+              </div>
+              <span className="count-chip">
+                {benefitTransactions.length} transactions
+              </span>
+            </div>
+            {benefitTransactions.length ? (
+              <div className="inventory-table-wrap">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Customer</th>
+                      <th>Benefit</th>
+                      <th>Products</th>
+                      <th>Transaction</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {benefitTransactions.map((transaction) => (
+                      <tr key={transaction.transactionId}>
+                        <td>
+                          {new Date(transaction.createdAt).toLocaleString(
+                            "en-PH",
+                            {
+                              timeZone: "Asia/Manila",
+                              dateStyle: "medium",
+                              timeStyle: "short",
+                            },
+                          )}
+                        </td>
+                        <td>{transaction.customerName}</td>
+                        <td>
+                          {transaction.benefitType === "SENIOR_CITIZEN"
+                            ? "Senior citizen"
+                            : "PWD"}
+                        </td>
+                        <td>
+                          {transaction.products
+                            .map(
+                              (product) =>
+                                `${product.name} × ${product.quantity}`,
+                            )
+                            .join(", ")}
+                        </td>
+                        <td>{transaction.transactionId}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="report-empty">
+                No senior citizen or PWD purchases appear in the selected
+                period.
+              </p>
+            )}
+            <small className="field-hint">
+              Customer names are shown to owners only. Each list view is
+              recorded in the audit history.
+            </small>
+          </section>
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">

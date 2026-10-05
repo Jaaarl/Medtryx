@@ -3,6 +3,8 @@ import type Database from "better-sqlite3";
 import express from "express";
 import { z } from "zod";
 import { requireAuthentication, requireRole } from "./auth.js";
+import { decryptCustomerField, CustomerDataError } from "./customer-data.js";
+import { writeAuditEvent } from "./db.js";
 import { getLotBalances, manilaCalendarDate } from "./lot-stock.js";
 
 const dateSchema = z
@@ -640,6 +642,82 @@ export function registerReportRoutes(
     }
     res.json({ report: reportRows(db, range.start, range.end) });
   });
+
+  router.get(
+    "/reports/beneficiaries/range",
+    requireAuth,
+    requireOwner,
+    (req, res) => {
+      const range = readRange(req.query.startDate, req.query.endDate);
+      if (!range) {
+        res.status(400).json({ error: "invalid_report_range" });
+        return;
+      }
+
+      const sales = db
+        .prepare(
+          `SELECT s.id, s.transaction_id, s.business_date, s.created_at,
+                  s.benefit_type, s.customer_name_ciphertext
+           FROM sales s
+           WHERE s.business_date >= ? AND s.business_date <= ?
+             AND s.benefit_type IN ('SENIOR_CITIZEN', 'PWD')
+           ORDER BY s.created_at, s.transaction_id`,
+        )
+        .all(range.start, range.end) as Array<{
+        id: string;
+        transaction_id: string;
+        business_date: string;
+        created_at: string;
+        benefit_type: "SENIOR_CITIZEN" | "PWD";
+        customer_name_ciphertext: string;
+      }>;
+
+      try {
+        const productsForSale = db.prepare(
+          `SELECT product_name_snapshot, quantity FROM sale_lines
+           WHERE sale_id = ? ORDER BY line_number`,
+        );
+        const transactions = sales.map((sale) => ({
+          transactionId: sale.transaction_id,
+          businessDate: sale.business_date,
+          createdAt: sale.created_at,
+          benefitType: sale.benefit_type,
+          customerName: decryptCustomerField(
+            sale.customer_name_ciphertext,
+            `${sale.id}/name`,
+          ),
+          products: (
+            productsForSale.all(sale.id) as Array<{
+              product_name_snapshot: string;
+              quantity: number;
+            }>
+          ).map((line) => ({
+            name: line.product_name_snapshot,
+            quantity: line.quantity,
+          })),
+        }));
+
+        writeAuditEvent(db, {
+          actorUserId: req.user!.id,
+          action: "report.beneficiary_list_viewed",
+          entityType: "report",
+          entityId: "beneficiary-list",
+          details: {
+            startDate: range.start,
+            endDate: range.end,
+            recordCount: transactions.length,
+          },
+        });
+        res.json({ transactions });
+      } catch (error) {
+        if (error instanceof CustomerDataError) {
+          res.status(503).json({ error: error.code });
+          return;
+        }
+        throw error;
+      }
+    },
+  );
 
   router.get("/reports/range.csv", requireAuth, requireOwner, (req, res) => {
     const range = readRange(req.query.startDate, req.query.endDate);
