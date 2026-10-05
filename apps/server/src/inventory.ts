@@ -120,6 +120,194 @@ const createProductSchema = z
     }
   });
 
+type CreateProductInput = z.infer<typeof createProductSchema>;
+type CsvRow = { row: number; values: Record<string, string> };
+type CsvIssue = { row: number; message: string };
+type CsvParseResult =
+  | { rows: CsvRow[]; issues: [] }
+  | { rows: []; issues: CsvIssue[] };
+
+const MAX_CSV_CHARACTERS = 200_000;
+const MAX_CSV_ROWS = 500;
+const PRODUCT_CSV_HEADERS = [
+  "sku",
+  "name",
+  "barcode",
+  "unit",
+  "sellingprice",
+  "taxclass",
+  "producttype",
+  "issceligible",
+  "ispwdeligible",
+  "bnpceligible",
+  "bnpccategory",
+  "trackslots",
+  "openingquantity",
+  "openingunitcost",
+  "reorderlevel",
+  "openingreference",
+  "openinglotcode",
+  "openingexpirydate",
+  "openingsupplier",
+  "zerocostreason",
+];
+
+function parseCsvRows(
+  source: unknown,
+  allowedHeaders: string[],
+  requiredHeaders: string[],
+): CsvParseResult {
+  if (typeof source !== "string" || source.length > MAX_CSV_CHARACTERS) {
+    return {
+      rows: [],
+      issues: [{ row: 1, message: "CSV must be smaller than 200 KB." }],
+    };
+  }
+  const csv = source.replace(/^\uFEFF/u, "");
+  const records: Array<{ row: number; cells: string[] }> = [];
+  let cells: string[] = [];
+  let field = "";
+  let quoted = false;
+  let closedQuote = false;
+  let line = 1;
+  let recordLine = 1;
+  let malformed = false;
+  const finishField = () => {
+    cells.push(field.trim());
+    field = "";
+    closedQuote = false;
+  };
+  const finishRecord = () => {
+    finishField();
+    if (cells.some((cell) => cell.length > 0)) {
+      records.push({ row: recordLine, cells });
+    }
+    cells = [];
+    recordLine = line;
+  };
+
+  for (let index = 0; index < csv.length; index += 1) {
+    const character = csv[index]!;
+    if (quoted) {
+      if (character === '"') {
+        if (csv[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+          closedQuote = true;
+        }
+      } else {
+        field += character;
+        if (character === "\n") line += 1;
+      }
+      continue;
+    }
+    if (character === '"') {
+      if (field.length !== 0 || closedQuote) {
+        malformed = true;
+        break;
+      }
+      quoted = true;
+    } else if (character === ",") {
+      finishField();
+    } else if (character === "\r" || character === "\n") {
+      finishRecord();
+      if (character === "\r" && csv[index + 1] === "\n") index += 1;
+      line += 1;
+      recordLine = line;
+    } else if (closedQuote && !/\s/u.test(character)) {
+      malformed = true;
+      break;
+    } else if (!closedQuote) {
+      field += character;
+    }
+  }
+  if (quoted) malformed = true;
+  if (malformed) {
+    return {
+      rows: [],
+      issues: [
+        { row: line, message: "CSV contains invalid quote formatting." },
+      ],
+    };
+  }
+  if (field.length > 0 || cells.length > 0 || closedQuote) finishRecord();
+  if (records.length < 2) {
+    return {
+      rows: [],
+      issues: [{ row: 1, message: "CSV needs a header and at least one row." }],
+    };
+  }
+  const headers = records[0]!.cells.map((header) => header.toLowerCase());
+  const issues: CsvIssue[] = [];
+  const headerSet = new Set<string>();
+  headers.forEach((header, index) => {
+    if (!header)
+      issues.push({ row: 1, message: "Header cells cannot be blank." });
+    else if (headerSet.has(header))
+      issues.push({ row: 1, message: `Duplicate header: ${header}.` });
+    else if (!allowedHeaders.includes(header))
+      issues.push({
+        row: 1,
+        message: `Unknown header: ${records[0]!.cells[index]}.`,
+      });
+    headerSet.add(header);
+  });
+  for (const required of requiredHeaders) {
+    if (!headerSet.has(required)) {
+      issues.push({ row: 1, message: `Missing required header: ${required}.` });
+    }
+  }
+  const dataRecords = records.slice(1);
+  if (dataRecords.length > MAX_CSV_ROWS) {
+    issues.push({
+      row: 1,
+      message: `CSV can contain at most ${MAX_CSV_ROWS} data rows.`,
+    });
+  }
+  const rows: CsvRow[] = [];
+  for (const record of dataRecords) {
+    if (record.cells.length !== headers.length) {
+      issues.push({
+        row: record.row,
+        message: `Expected ${headers.length} columns but found ${record.cells.length}.`,
+      });
+      continue;
+    }
+    rows.push({
+      row: record.row,
+      values: Object.fromEntries(
+        headers.map((header, index) => [header, record.cells[index]!]),
+      ),
+    });
+  }
+  return issues.length ? { rows: [], issues } : { rows, issues: [] };
+}
+
+function csvBoolean(
+  value: string | undefined,
+  defaultValue: boolean,
+  row: number,
+  field: string,
+  issues: CsvIssue[],
+): boolean {
+  if (!value) return defaultValue;
+  switch (value.toLowerCase()) {
+    case "true":
+    case "yes":
+    case "1":
+      return true;
+    case "false":
+    case "no":
+    case "0":
+      return false;
+    default:
+      issues.push({ row, message: `${field} must be TRUE or FALSE.` });
+      return defaultValue;
+  }
+}
+
 const updateProductSchema = z
   .object({
     name: z.string().trim().min(1).max(160).optional(),
@@ -383,9 +571,7 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
     isBnpcEligible: row.bnpc_eligible === 1,
     bnpcCategory: row.bnpc_category,
     productType:
-      row.product_type_applicable === 0
-        ? "NOT_APPLICABLE"
-        : row.product_type,
+      row.product_type_applicable === 0 ? "NOT_APPLICABLE" : row.product_type,
     tracksLots: row.tracks_lots === 1,
     quantityOnHand: row.quantity_on_hand,
     reorderLevel: row.reorder_level,
@@ -669,6 +855,128 @@ function addManilaDays(day: string, count: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function createProductRecord(
+  db: Database.Database,
+  input: CreateProductInput,
+  actorUserId: string,
+  now: string,
+): { id: string; sku: string; generatedSku: boolean } {
+  productFromBody(db, input);
+  const sellingPriceCents = parseMoney(input.sellingPrice);
+  const openingCostCents =
+    input.openingUnitCost === undefined
+      ? null
+      : parseMoney(input.openingUnitCost);
+  const inventoryValueCents =
+    input.openingQuantity > 0 && openingCostCents !== null
+      ? roundedInteger(new Decimal(input.openingQuantity).mul(openingCostCents))
+      : 0;
+  if (!Number.isSafeInteger(inventoryValueCents))
+    throw new InventoryError(400, "inventory_value_overflow");
+
+  const id = randomUUID();
+  let sku = input.sku?.toUpperCase();
+  if (!sku) {
+    do {
+      const sequence = db
+        .prepare("INSERT INTO product_sku_sequence DEFAULT VALUES")
+        .run();
+      sku = `MTX-${String(sequence.lastInsertRowid).padStart(6, "0")}`;
+    } while (
+      db.prepare("SELECT 1 FROM products WHERE sku = ? COLLATE NOCASE").get(sku)
+    );
+  }
+  db.prepare(
+    `INSERT INTO products
+      (id, sku, name, barcode, unit, selling_price_centavos, tax_class,
+       sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+       product_type_applicable, tracks_lots,
+       quantity_on_hand, inventory_value_centavos,
+       reorder_level, is_active, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+  ).run(
+    id,
+    sku,
+    input.name,
+    input.barcode?.trim() || null,
+    input.unit,
+    sellingPriceCents,
+    input.taxClass,
+    input.isScEligible || input.isPwdEligible ? 1 : 0,
+    input.isScEligible ? 1 : 0,
+    input.isPwdEligible ? 1 : 0,
+    input.productType === "NOT_APPLICABLE" ? null : input.productType,
+    input.productType === "NOT_APPLICABLE" ? 0 : 1,
+    input.tracksLots ? 1 : 0,
+    input.openingQuantity,
+    inventoryValueCents,
+    input.reorderLevel ?? null,
+    now,
+    now,
+  );
+  if (input.bnpcEligible) {
+    db.prepare(
+      `UPDATE products SET bnpc_eligible = 1, bnpc_category = ?,
+         bnpc_prescription_required = 0, bnpc_reviewed_at = ?,
+         bnpc_reviewed_by_user_id = ? WHERE id = ?`,
+    ).run(input.bnpcCategory!, now, actorUserId, id);
+  }
+  if (input.openingQuantity > 0 && openingCostCents !== null) {
+    const stockEventId = writeStockEvent(db, {
+      productId: id,
+      type: "OPENING",
+      quantityDelta: input.openingQuantity,
+      unitCostCents: openingCostCents,
+      inventoryValueDeltaCents: inventoryValueCents,
+      reference: input.openingReference || null,
+      supplier: input.openingSupplier ?? null,
+      reason: openingCostCents === 0 ? (input.zeroCostReason ?? null) : null,
+      actorUserId,
+      createdAt: now,
+    });
+    const lotId = input.tracksLots
+      ? getOrCreateLot(db, {
+          productId: id,
+          lotCode: input.openingLotCode!,
+          expiryDate: input.openingExpiryDate!,
+          actorUserId,
+          createdAt: now,
+        })
+      : null;
+    writeLotMovement(db, {
+      productId: id,
+      lotId,
+      type: "OPENING",
+      stockEventId,
+      quantityDelta: input.openingQuantity,
+      inventoryValueDeltaCentavos: inventoryValueCents,
+      unitCostCentavos: openingCostCents,
+      actorUserId,
+      createdAt: now,
+    });
+  }
+  writeAuditEvent(db, {
+    actorUserId,
+    action: "product.created",
+    entityType: "product",
+    entityId: id,
+    details: {
+      sku,
+      name: input.name,
+      productType: input.productType,
+      tracksLots: input.tracksLots,
+      isScEligible: input.isScEligible,
+      isPwdEligible: input.isPwdEligible,
+      isBnpcEligible: input.bnpcEligible,
+      bnpcCategory: input.bnpcEligible ? input.bnpcCategory : null,
+      openingQuantity: input.openingQuantity,
+      openingReference: input.openingReference || null,
+      taxClass: input.taxClass,
+    },
+  });
+  return { id, sku, generatedSku: !input.sku };
+}
+
 export function registerInventoryRoutes(
   router: express.Router,
   db: Database.Database,
@@ -738,6 +1046,189 @@ export function registerInventoryRoutes(
       ),
     });
   });
+
+  router.post(
+    "/products/import-csv",
+    requireAuth,
+    requireOwner,
+    csrf,
+    express.text({ type: "text/csv", limit: "256kb" }),
+    (req, res) => {
+      if (!req.user) {
+        res.status(401).json({ error: "authentication_required" });
+        return;
+      }
+      const document = parseCsvRows(req.body, PRODUCT_CSV_HEADERS, [
+        "name",
+        "unit",
+        "sellingprice",
+        "taxclass",
+        "producttype",
+        "openingquantity",
+      ]);
+      if (document.issues.length) {
+        res.status(400).json({
+          error: "csv_import_invalid",
+          rowErrors: document.issues,
+        });
+        return;
+      }
+
+      const rowErrors: CsvIssue[] = [];
+      const productRows: Array<{ row: number; input: CreateProductInput }> = [];
+      const seenSkus = new Set<string>();
+      const seenBarcodes = new Set<string>();
+      for (const row of document.rows) {
+        const values = row.values;
+        const isScEligible = csvBoolean(
+          values.issceligible,
+          false,
+          row.row,
+          "isScEligible",
+          rowErrors,
+        );
+        const isPwdEligible = csvBoolean(
+          values.ispwdeligible,
+          false,
+          row.row,
+          "isPwdEligible",
+          rowErrors,
+        );
+        const bnpcEligible = csvBoolean(
+          values.bnpceligible,
+          false,
+          row.row,
+          "bnpcEligible",
+          rowErrors,
+        );
+        const tracksLots = csvBoolean(
+          values.trackslots,
+          false,
+          row.row,
+          "tracksLots",
+          rowErrors,
+        );
+        const openingQuantity =
+          values.openingquantity === "" ? 0 : Number(values.openingquantity);
+        const reorderLevel =
+          values.reorderlevel === undefined || values.reorderlevel === ""
+            ? null
+            : Number(values.reorderlevel);
+        const candidate = {
+          ...(values.sku ? { sku: values.sku } : {}),
+          name: values.name ?? "",
+          ...(values.barcode ? { barcode: values.barcode } : {}),
+          unit: values.unit ?? "",
+          sellingPrice: values.sellingprice ?? "",
+          taxClass: values.taxclass?.toUpperCase(),
+          productType: values.producttype?.toUpperCase(),
+          isScEligible,
+          isPwdEligible,
+          bnpcEligible,
+          ...(values.bnpccategory
+            ? { bnpcCategory: values.bnpccategory.toUpperCase() }
+            : {}),
+          tracksLots,
+          openingQuantity,
+          ...(values.openingunitcost
+            ? { openingUnitCost: values.openingunitcost }
+            : {}),
+          reorderLevel,
+          ...(values.openingreference
+            ? { openingReference: values.openingreference }
+            : {}),
+          ...(values.openinglotcode
+            ? { openingLotCode: values.openinglotcode }
+            : {}),
+          ...(values.openingexpirydate
+            ? { openingExpiryDate: values.openingexpirydate }
+            : {}),
+          ...(values.openingsupplier
+            ? { openingSupplier: values.openingsupplier }
+            : {}),
+          ...(values.zerocostreason
+            ? { zeroCostReason: values.zerocostreason }
+            : {}),
+        };
+        const parsed = createProductSchema.safeParse(candidate);
+        if (!parsed.success) {
+          for (const issue of parsed.error.issues) {
+            rowErrors.push({
+              row: row.row,
+              message: `${issue.path.join(".") || "row"}: ${issue.message}`,
+            });
+          }
+          continue;
+        }
+        try {
+          productFromBody(db, parsed.data);
+        } catch (error) {
+          if (error instanceof InventoryError) {
+            rowErrors.push({ row: row.row, message: error.code });
+          } else {
+            throw error;
+          }
+        }
+        if (parsed.data.sku) {
+          const sku = parsed.data.sku.toUpperCase();
+          if (seenSkus.has(sku)) {
+            rowErrors.push({
+              row: row.row,
+              message: "SKU repeats in this file.",
+            });
+          } else if (
+            db
+              .prepare("SELECT 1 FROM products WHERE sku = ? COLLATE NOCASE")
+              .get(sku)
+          ) {
+            rowErrors.push({ row: row.row, message: "SKU already exists." });
+          }
+          seenSkus.add(sku);
+        }
+        if (parsed.data.barcode) {
+          const barcode = parsed.data.barcode.toLowerCase();
+          if (seenBarcodes.has(barcode)) {
+            rowErrors.push({
+              row: row.row,
+              message: "Barcode repeats in this file.",
+            });
+          } else if (
+            db
+              .prepare(
+                "SELECT 1 FROM products WHERE barcode = ? COLLATE NOCASE",
+              )
+              .get(parsed.data.barcode)
+          ) {
+            rowErrors.push({
+              row: row.row,
+              message: "Barcode already exists.",
+            });
+          }
+          seenBarcodes.add(barcode);
+        }
+        productRows.push({ row: row.row, input: parsed.data });
+      }
+      if (rowErrors.length) {
+        res.status(400).json({ error: "csv_import_invalid", rowErrors });
+        return;
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const created = db.transaction(() =>
+          productRows.map(({ input }) =>
+            createProductRecord(db, input, req.user!.id, now),
+          ),
+        )();
+        res.status(201).json({
+          createdCount: created.length,
+          products: created.map(({ id, sku }) => ({ id, sku })),
+        });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
 
   router.post("/products", requireAuth, requireOwner, csrf, (req, res) => {
     const parsed = createProductSchema.safeParse(req.body);
@@ -1711,9 +2202,7 @@ function currentValues(
       bnpcEligible: row.bnpc_eligible === 1,
       bnpcCategory: row.bnpc_category,
       productType:
-        row.product_type_applicable === 0
-          ? "NOT_APPLICABLE"
-          : row.product_type,
+        row.product_type_applicable === 0 ? "NOT_APPLICABLE" : row.product_type,
       productTypeApplicable: row.product_type_applicable === 1,
       tracksLots: row.tracks_lots === 1,
       reorderLevel: row.reorder_level,

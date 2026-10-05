@@ -4,6 +4,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly responseBody?: Record<string, unknown>,
   ) {
     super(code);
     this.name = "ApiError";
@@ -50,8 +51,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       authExpiredHandler?.();
     const body = (await response.json().catch(() => ({}))) as {
       error?: string;
+      [key: string]: unknown;
     };
-    throw new ApiError(response.status, body.error ?? "request_failed");
+    throw new ApiError(response.status, body.error ?? "request_failed", body);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -65,6 +67,13 @@ export const api = {
     return request<T>(path, {
       method: "POST",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  },
+  postCsv<T>(path: string, csv: string): Promise<T> {
+    return request(path, {
+      method: "POST",
+      body: csv,
+      headers: { "content-type": "text/csv" },
     });
   },
   patch<T>(path: string, body: unknown): Promise<T> {

@@ -117,6 +117,66 @@ afterAll(() => {
 });
 
 describe("owner catalog and stock operations", () => {
+  it("imports new products with opening lot stock and validates the full CSV before saving", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const headers =
+      "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity,openingUnitCost,openingLotCode,openingExpiryDate";
+    const validRow = `SYN-CSV-NEW-001,\"Synthetic, CSV medicine\",tablet,70.00,VATABLE,BRANDED,TRUE,12,40.00,SYN-CSV-LOT-01,${manilaDayAfter(30)}`;
+    const importToken = await csrfFor(owner);
+    const imported = await owner
+      .post("/api/products/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", importToken)
+      .send(`${headers}\n${validRow}\n`);
+    expect(imported.status, JSON.stringify(imported.body)).toBe(201);
+    expect(imported.body).toMatchObject({
+      createdCount: 1,
+      products: [{ sku: "SYN-CSV-NEW-001" }],
+    });
+
+    const products = await owner.get("/api/products?q=SYN-CSV-NEW-001");
+    expect(products.body.products[0]).toMatchObject({
+      sku: "SYN-CSV-NEW-001",
+      name: "Synthetic, CSV medicine",
+      tracksLots: true,
+      quantityOnHand: 12,
+      saleableQuantity: 12,
+      weightedAverageUnitCost: "40.00",
+    });
+    const lots = await owner.get("/api/stock/lots");
+    expect(lots.body.lots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sku: "SYN-CSV-NEW-001",
+          lotCode: "SYN-CSV-LOT-01",
+          expiryDate: manilaDayAfter(30),
+          quantity: 12,
+        }),
+      ]),
+    );
+
+    const invalidToken = await csrfFor(owner);
+    const invalidBatch = await owner
+      .post("/api/products/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", invalidToken)
+      .send(
+        `${headers}\n${`SYN-CSV-NEW-002,Valid row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-02,${manilaDayAfter(30)}`}\n${`SYN-CSV-NEW-003,Expired row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-03,${manilaDayAfter(-1)}`}`,
+      );
+    expect(invalidBatch.status).toBe(400);
+    expect(invalidBatch.body.error).toBe("csv_import_invalid");
+    expect(invalidBatch.body.rowErrors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ row: 3 })]),
+    );
+    expect(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM products WHERE sku LIKE 'SYN-CSV-NEW-%'",
+        )
+        .get(),
+    ).toEqual({ count: 1 });
+  });
+
   it("requires real lot identifiers for tracked opening stock and preserves receipt snapshots", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const missing = await createOpeningProduct(owner, {

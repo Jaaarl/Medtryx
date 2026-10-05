@@ -304,6 +304,125 @@ function useProducts() {
   return { products, setProducts, loading, error, setError, refresh };
 }
 
+function productCsvErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError))
+    return "The CSV import could not be completed. No products were imported.";
+  if (error.code === "csv_import_invalid") {
+    const rowErrors = error.responseBody?.rowErrors;
+    if (Array.isArray(rowErrors)) {
+      const details = rowErrors
+        .map((item) => {
+          if (typeof item !== "object" || item === null) return "";
+          const row = "row" in item ? item.row : "?";
+          const message = "message" in item ? item.message : "Invalid row.";
+          return `Row ${String(row)}: ${String(message)}`;
+        })
+        .filter(Boolean)
+        .join(" ");
+      if (details) return `No products were imported. ${details}`;
+    }
+    return "The CSV headers or rows are invalid. No products were imported.";
+  }
+  if (error.code === "sku_already_exists")
+    return "A SKU already exists. No products were imported.";
+  if (error.code === "barcode_already_exists")
+    return "A barcode already exists. No products were imported.";
+  if (error.code === "zero_rated_not_approved")
+    return "Zero-rated products are unavailable until tax settings are approved. No products were imported.";
+  return "The CSV import failed. Check the product rows and try again.";
+}
+
+function ProductCsvImportPanel({
+  onImported,
+}: {
+  onImported: () => Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function importCsv(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file) return;
+    if (file.size > 200_000) {
+      setError("Choose a CSV file that is 200 KB or smaller.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.postCsv<{ createdCount: number }>(
+        "/products/import-csv",
+        await file.text(),
+      );
+      setNotice(
+        `Imported ${result.createdCount} product${result.createdCount === 1 ? "" : "s"} with opening stock.`,
+      );
+      setFile(null);
+      if (inputRef.current) inputRef.current.value = "";
+      await onImported().catch(() => {
+        setError("Products imported, but the catalog could not be refreshed.");
+      });
+    } catch (caught) {
+      setError(productCsvErrorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-main-card csv-import-card">
+      <div className="card-heading">
+        <div>
+          <h2>Import new products from CSV</h2>
+          <p>
+            Create catalog products with opening stock and optional lot and
+            expiry details. The whole file is checked before any products are
+            added; up to 500 rows and 200 KB per file.
+          </p>
+        </div>
+      </div>
+      {error && (
+        <div className="banner banner-error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="banner banner-success" role="status">
+          {notice}
+        </div>
+      )}
+      <form
+        className="csv-import-form"
+        onSubmit={(event) => void importCsv(event)}
+      >
+        <Field id="product-csv-file" label="New products CSV file">
+          <input
+            ref={inputRef}
+            id="product-csv-file"
+            className="text-input"
+            type="file"
+            accept=".csv,text/csv"
+            required
+            disabled={saving}
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+        </Field>
+        <button
+          className="button button-secondary"
+          type="submit"
+          disabled={saving || !file}
+        >
+          {saving ? "Importing products…" : "Import products"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
   const productTableRef = useRef<HTMLDivElement>(null);
@@ -510,6 +629,7 @@ export function ProductsPage() {
           {error || notice}
         </div>
       )}
+      <ProductCsvImportPanel onImported={refresh} />
       <div className="inventory-layout">
         <section className="settings-main-card product-list-card">
           <div className="card-heading inventory-card-heading">
@@ -3216,44 +3336,47 @@ export function CheckoutPage() {
                     ? line.product.isScEligible
                     : line.product.isPwdEligible,
                 ) && (
-                <div className="checkout-benefit-lines">
-                  <strong>
-                    Choose lines for the standard{" "}
-                    {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
-                    benefit (20% discount + VAT exemption)
-                  </strong>
-                  {cart
-                    .filter((line) =>
-                      benefitType === "SENIOR_CITIZEN"
-                        ? line.product.isScEligible
-                        : line.product.isPwdEligible,
-                    )
-                    .map((line) => (
-                    <label className="inventory-checkbox" key={line.product.id}>
-                      <input
-                        type="checkbox"
-                        checked={line.benefitTreatment === benefitType}
-                        onChange={(event) =>
-                          setBenefitForLine(
-                            line.product.id,
-                            event.target.checked ? benefitType : "REGULAR",
-                          )
-                        }
-                      />
-                      <span>
-                        {line.product.name} · 20% + VAT exemption
-                        {(
-                          benefitType === "SENIOR_CITIZEN"
-                            ? line.product.isScEligible
-                            : line.product.isPwdEligible
-                        )
-                          ? " · eligible"
-                          : " · not eligible"}
-                      </span>
-                    </label>
-                    ))}
-                </div>
-              )}
+                  <div className="checkout-benefit-lines">
+                    <strong>
+                      Choose lines for the standard{" "}
+                      {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                      benefit (20% discount + VAT exemption)
+                    </strong>
+                    {cart
+                      .filter((line) =>
+                        benefitType === "SENIOR_CITIZEN"
+                          ? line.product.isScEligible
+                          : line.product.isPwdEligible,
+                      )
+                      .map((line) => (
+                        <label
+                          className="inventory-checkbox"
+                          key={line.product.id}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={line.benefitTreatment === benefitType}
+                            onChange={(event) =>
+                              setBenefitForLine(
+                                line.product.id,
+                                event.target.checked ? benefitType : "REGULAR",
+                              )
+                            }
+                          />
+                          <span>
+                            {line.product.name} · 20% + VAT exemption
+                            {(
+                              benefitType === "SENIOR_CITIZEN"
+                                ? line.product.isScEligible
+                                : line.product.isPwdEligible
+                            )
+                              ? " · eligible"
+                              : " · not eligible"}
+                          </span>
+                        </label>
+                      ))}
+                  </div>
+                )}
               {benefitType !== "REGULAR" &&
                 bundleCart.some((bundleLine) =>
                   bundleLine.offer.components.some((component) =>
@@ -3262,56 +3385,58 @@ export function CheckoutPage() {
                       : component.isPwdEligible,
                   ),
                 ) && (
-                <div className="checkout-benefit-lines">
-                  <strong>
-                    Choose bundle components for the standard{" "}
-                    {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
-                    benefit (20% discount + VAT exemption)
-                  </strong>
-                  {bundleCart.flatMap((bundleLine) =>
-                    bundleLine.offer.components
-                      .filter((component) =>
-                        benefitType === "SENIOR_CITIZEN"
-                          ? component.isScEligible
-                          : component.isPwdEligible,
-                      )
-                      .map((component) => {
-                      const eligible =
-                        benefitType === "SENIOR_CITIZEN"
-                          ? component.isScEligible
-                          : component.isPwdEligible;
-                      return (
-                        <label
-                          className="inventory-checkbox"
-                          key={`${bundleLine.offerKey}-${component.productId}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={
-                              bundleLine.componentBenefits[
-                                component.productId
-                              ] === benefitType
-                            }
-                            disabled={!eligible}
-                            onChange={(event) =>
-                              setBundleBenefit(
-                                bundleLine.offerKey,
-                                component.productId,
-                                event.target.checked ? benefitType : "REGULAR",
-                              )
-                            }
-                          />
-                          <span>
-                            {bundleLine.offer.name} · {component.name} · 20% +
-                            VAT exemption
-                            {eligible ? " · eligible" : " · not eligible"}
-                          </span>
-                        </label>
-                      );
-                    }),
-                  )}
-                </div>
-              )}
+                  <div className="checkout-benefit-lines">
+                    <strong>
+                      Choose bundle components for the standard{" "}
+                      {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                      benefit (20% discount + VAT exemption)
+                    </strong>
+                    {bundleCart.flatMap((bundleLine) =>
+                      bundleLine.offer.components
+                        .filter((component) =>
+                          benefitType === "SENIOR_CITIZEN"
+                            ? component.isScEligible
+                            : component.isPwdEligible,
+                        )
+                        .map((component) => {
+                          const eligible =
+                            benefitType === "SENIOR_CITIZEN"
+                              ? component.isScEligible
+                              : component.isPwdEligible;
+                          return (
+                            <label
+                              className="inventory-checkbox"
+                              key={`${bundleLine.offerKey}-${component.productId}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={
+                                  bundleLine.componentBenefits[
+                                    component.productId
+                                  ] === benefitType
+                                }
+                                disabled={!eligible}
+                                onChange={(event) =>
+                                  setBundleBenefit(
+                                    bundleLine.offerKey,
+                                    component.productId,
+                                    event.target.checked
+                                      ? benefitType
+                                      : "REGULAR",
+                                  )
+                                }
+                              />
+                              <span>
+                                {bundleLine.offer.name} · {component.name} · 20%
+                                + VAT exemption
+                                {eligible ? " · eligible" : " · not eligible"}
+                              </span>
+                            </label>
+                          );
+                        }),
+                    )}
+                  </div>
+                )}
               {bnpcPolicy?.enabled &&
                 benefitType !== "REGULAR" &&
                 (cart.some((line) => line.product.isBnpcEligible) ||
@@ -3320,73 +3445,77 @@ export function CheckoutPage() {
                       (component) => component.isBnpcEligible,
                     ),
                   )) && (
-                <div className="checkout-benefit-lines">
-                  <strong>
-                    Separate BNPC benefit: 5% discount; VAT remains
-                  </strong>
-                  <small className="field-hint">
-                    BNPC product eligibility works for both senior and PWD
-                    holders. It does not use the standard 20% discount or VAT
-                    exemption.
-                  </small>
-                  {cart
-                    .filter((line) => line.product.isBnpcEligible)
-                    .map((line) => (
-                    <label className="inventory-checkbox" key={line.product.id}>
-                      <input
-                        type="checkbox"
-                        checked={line.benefitTreatment === "BNPC"}
-                        disabled={!line.product.isBnpcEligible}
-                        onChange={(event) =>
-                          setBenefitForLine(
-                            line.product.id,
-                            event.target.checked ? "BNPC" : "REGULAR",
-                          )
-                        }
-                      />
-                      <span>
-                        {line.product.name} · BNPC 5%{" "}
-                        {line.product.isBnpcEligible
-                          ? "eligible"
-                          : "not eligible"}
-                      </span>
-                    </label>
-                    ))}
-                  {bundleCart.flatMap((bundleLine) =>
-                    bundleLine.offer.components
-                      .filter((component) => component.isBnpcEligible)
-                      .map((component) => (
-                      <label
-                        className="inventory-checkbox"
-                        key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={
-                            bundleLine.componentBenefits[
-                              component.productId
-                            ] === "BNPC"
-                          }
-                          disabled={!component.isBnpcEligible}
-                          onChange={(event) =>
-                            setBundleBenefit(
-                              bundleLine.offerKey,
-                              component.productId,
-                              event.target.checked ? "BNPC" : "REGULAR",
-                            )
-                          }
-                        />
-                        <span>
-                          {bundleLine.offer.name} · {component.name} · BNPC 5%{" "}
-                          {component.isBnpcEligible
-                            ? "eligible"
-                            : "not eligible"}
-                        </span>
-                      </label>
-                    )),
-                  )}
-                </div>
-              )}
+                  <div className="checkout-benefit-lines">
+                    <strong>
+                      Separate BNPC benefit: 5% discount; VAT remains
+                    </strong>
+                    <small className="field-hint">
+                      BNPC product eligibility works for both senior and PWD
+                      holders. It does not use the standard 20% discount or VAT
+                      exemption.
+                    </small>
+                    {cart
+                      .filter((line) => line.product.isBnpcEligible)
+                      .map((line) => (
+                        <label
+                          className="inventory-checkbox"
+                          key={line.product.id}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={line.benefitTreatment === "BNPC"}
+                            disabled={!line.product.isBnpcEligible}
+                            onChange={(event) =>
+                              setBenefitForLine(
+                                line.product.id,
+                                event.target.checked ? "BNPC" : "REGULAR",
+                              )
+                            }
+                          />
+                          <span>
+                            {line.product.name} · BNPC 5%{" "}
+                            {line.product.isBnpcEligible
+                              ? "eligible"
+                              : "not eligible"}
+                          </span>
+                        </label>
+                      ))}
+                    {bundleCart.flatMap((bundleLine) =>
+                      bundleLine.offer.components
+                        .filter((component) => component.isBnpcEligible)
+                        .map((component) => (
+                          <label
+                            className="inventory-checkbox"
+                            key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={
+                                bundleLine.componentBenefits[
+                                  component.productId
+                                ] === "BNPC"
+                              }
+                              disabled={!component.isBnpcEligible}
+                              onChange={(event) =>
+                                setBundleBenefit(
+                                  bundleLine.offerKey,
+                                  component.productId,
+                                  event.target.checked ? "BNPC" : "REGULAR",
+                                )
+                              }
+                            />
+                            <span>
+                              {bundleLine.offer.name} · {component.name} · BNPC
+                              5%{" "}
+                              {component.isBnpcEligible
+                                ? "eligible"
+                                : "not eligible"}
+                            </span>
+                          </label>
+                        )),
+                    )}
+                  </div>
+                )}
               {hasSelectedBenefit && benefitType !== "REGULAR" && (
                 <div className="checkout-customer-fields">
                   <Field id="benefit-customer-name" label="Customer name">
