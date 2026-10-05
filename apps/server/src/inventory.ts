@@ -363,6 +363,18 @@ const receiptSchema = z
       });
     }
   });
+type ReceiptInput = z.infer<typeof receiptSchema>;
+
+const STOCK_RECEIPT_CSV_HEADERS = [
+  "sku",
+  "quantity",
+  "unitcost",
+  "reference",
+  "supplier",
+  "lotcode",
+  "expirydate",
+  "zerocostreason",
+];
 
 const adjustmentSchema = z
   .object({
@@ -975,6 +987,94 @@ function createProductRecord(
     },
   });
   return { id, sku, generatedSku: !input.sku };
+}
+
+function receiveStockRecord(
+  db: Database.Database,
+  input: ReceiptInput,
+  actorUserId: string,
+  now: string,
+): string {
+  const costCents = parseMoney(input.unitCost);
+  const valueDelta = roundedInteger(new Decimal(costCents).mul(input.quantity));
+  const product = db
+    .prepare(
+      "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+    )
+    .get(input.productId) as
+    | {
+        id: string;
+        sku: string;
+        name: string;
+        tracks_lots: number;
+        quantity_on_hand: number;
+        inventory_value_centavos: number;
+      }
+    | undefined;
+  if (!product) throw new InventoryError(404, "product_not_found");
+  if (product.tracks_lots === 1) {
+    if (!input.lotCode || !input.expiryDate)
+      throw new InventoryError(400, "receipt_lot_required");
+    if (input.expiryDate < manilaCalendarDate())
+      throw new InventoryError(409, "expired_lot_not_allowed");
+  }
+  const quantity = product.quantity_on_hand + input.quantity;
+  const inventoryValue = product.inventory_value_centavos + valueDelta;
+  if (quantity > MAX_QUANTITY || !Number.isSafeInteger(inventoryValue)) {
+    throw new InventoryError(400, "inventory_value_overflow");
+  }
+  db.prepare(
+    "UPDATE products SET quantity_on_hand = ?, inventory_value_centavos = ?, updated_at = ? WHERE id = ?",
+  ).run(quantity, inventoryValue, now, product.id);
+  const stockEventId = writeStockEvent(db, {
+    productId: product.id,
+    type: "RECEIPT",
+    quantityDelta: input.quantity,
+    unitCostCents: costCents,
+    inventoryValueDeltaCents: valueDelta,
+    reference: input.reference || null,
+    supplier: input.supplier || null,
+    reason: costCents === 0 ? (input.zeroCostReason ?? null) : null,
+    actorUserId,
+    createdAt: now,
+  });
+  const lotId =
+    product.tracks_lots === 1
+      ? getOrCreateLot(db, {
+          productId: product.id,
+          lotCode: input.lotCode!,
+          expiryDate: input.expiryDate!,
+          actorUserId,
+          createdAt: now,
+        })
+      : null;
+  writeLotMovement(db, {
+    productId: product.id,
+    lotId,
+    type: "RECEIPT",
+    stockEventId,
+    quantityDelta: input.quantity,
+    inventoryValueDeltaCentavos: valueDelta,
+    unitCostCentavos: costCents,
+    actorUserId,
+    createdAt: now,
+  });
+  writeAuditEvent(db, {
+    actorUserId,
+    action: "stock.received",
+    entityType: "product",
+    entityId: product.id,
+    details: {
+      sku: product.sku,
+      quantity: input.quantity,
+      unitCostCentavos: costCents,
+      reference: input.reference ?? null,
+      supplier: input.supplier ?? null,
+      lotCode: input.lotCode ?? null,
+      expiryDate: input.expiryDate ?? null,
+    },
+  });
+  return product.id;
 }
 
 export function registerInventoryRoutes(
@@ -1885,6 +1985,124 @@ export function registerInventoryRoutes(
     );
     res.json({ events: events.map(presentStockEvent) });
   });
+
+  router.post(
+    "/stock/receipts/import-csv",
+    requireAuth,
+    requireOwner,
+    csrf,
+    express.text({ type: "text/csv", limit: "256kb" }),
+    (req, res) => {
+      if (!req.user) {
+        res.status(401).json({ error: "authentication_required" });
+        return;
+      }
+      const document = parseCsvRows(req.body, STOCK_RECEIPT_CSV_HEADERS, [
+        "sku",
+        "quantity",
+        "unitcost",
+      ]);
+      if (document.issues.length) {
+        res.status(400).json({
+          error: "csv_import_invalid",
+          rowErrors: document.issues,
+        });
+        return;
+      }
+
+      const rowErrors: CsvIssue[] = [];
+      const receipts: Array<{ row: number; input: ReceiptInput }> = [];
+      for (const row of document.rows) {
+        const sku = skuSchema.safeParse(row.values.sku);
+        if (!sku.success) {
+          rowErrors.push({
+            row: row.row,
+            message: "SKU is missing or invalid.",
+          });
+          continue;
+        }
+        const product = db
+          .prepare(
+            "SELECT id, tracks_lots FROM products WHERE sku = ? COLLATE NOCASE",
+          )
+          .get(sku.data) as { id: string; tracks_lots: number } | undefined;
+        if (!product) {
+          rowErrors.push({
+            row: row.row,
+            message: `SKU ${sku.data} was not found in the catalog.`,
+          });
+          continue;
+        }
+        const candidate = {
+          productId: product.id,
+          quantity:
+            row.values.quantity === ""
+              ? Number.NaN
+              : Number(row.values.quantity),
+          unitCost: row.values.unitcost ?? "",
+          ...(row.values.reference ? { reference: row.values.reference } : {}),
+          ...(row.values.supplier ? { supplier: row.values.supplier } : {}),
+          ...(row.values.lotcode ? { lotCode: row.values.lotcode } : {}),
+          ...(row.values.expirydate
+            ? { expiryDate: row.values.expirydate }
+            : {}),
+          ...(row.values.zerocostreason
+            ? { zeroCostReason: row.values.zerocostreason }
+            : {}),
+        };
+        const parsed = receiptSchema.safeParse(candidate);
+        const issueCountBeforeRow = rowErrors.length;
+        if (!parsed.success) {
+          for (const issue of parsed.error.issues) {
+            rowErrors.push({
+              row: row.row,
+              message: `${issue.path.join(".") || "row"}: ${issue.message}`,
+            });
+          }
+        } else if (product.tracks_lots === 1) {
+          if (!parsed.data.lotCode || !parsed.data.expiryDate) {
+            rowErrors.push({
+              row: row.row,
+              message: "Lot-tracked products require lotCode and expiryDate.",
+            });
+          } else if (parsed.data.expiryDate < manilaCalendarDate()) {
+            rowErrors.push({
+              row: row.row,
+              message: "Expired stock cannot be received.",
+            });
+          }
+        } else if (parsed.data.lotCode || parsed.data.expiryDate) {
+          rowErrors.push({
+            row: row.row,
+            message:
+              "This product does not track lots; leave lot fields blank.",
+          });
+        }
+        if (parsed.success && rowErrors.length === issueCountBeforeRow) {
+          receipts.push({ row: row.row, input: parsed.data });
+        }
+      }
+      if (rowErrors.length) {
+        res.status(400).json({ error: "csv_import_invalid", rowErrors });
+        return;
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const productIds = db.transaction(() =>
+          receipts.map(({ input }) =>
+            receiveStockRecord(db, input, req.user!.id, now),
+          ),
+        )();
+        res.status(201).json({
+          importedCount: receipts.length,
+          productsAffected: new Set(productIds).size,
+        });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
 
   router.post(
     "/stock/receipts",

@@ -423,6 +423,123 @@ function ProductCsvImportPanel({
   );
 }
 
+function stockCsvErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError))
+    return "The stock import could not be completed. No stock was changed.";
+  if (error.code === "csv_import_invalid") {
+    const rowErrors = error.responseBody?.rowErrors;
+    if (Array.isArray(rowErrors)) {
+      const details = rowErrors
+        .map((item) => {
+          if (typeof item !== "object" || item === null) return "";
+          const row = "row" in item ? item.row : "?";
+          const message = "message" in item ? item.message : "Invalid row.";
+          return `Row ${String(row)}: ${String(message)}`;
+        })
+        .filter(Boolean)
+        .join(" ");
+      if (details) return `No stock was changed. ${details}`;
+    }
+    return "The CSV headers or rows are invalid. No stock was changed.";
+  }
+  if (error.code === "inventory_value_overflow")
+    return "The import would exceed a stock limit. No stock was changed.";
+  return "The stock import failed. Check the SKU, quantity, cost, and lot details.";
+}
+
+function StockCsvImportPanel({
+  onImported,
+}: {
+  onImported: () => Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function importCsv(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file) return;
+    if (file.size > 200_000) {
+      setError("Choose a CSV file that is 200 KB or smaller.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.postCsv<{
+        importedCount: number;
+        productsAffected: number;
+      }>("/stock/receipts/import-csv", await file.text());
+      setNotice(
+        `Imported ${result.importedCount} stock receipt${result.importedCount === 1 ? "" : "s"} across ${result.productsAffected} product${result.productsAffected === 1 ? "" : "s"}.`,
+      );
+      setFile(null);
+      if (inputRef.current) inputRef.current.value = "";
+      await onImported().catch(() => {
+        setError(
+          "Stock was imported, but the stock view could not be refreshed.",
+        );
+      });
+    } catch (caught) {
+      setError(stockCsvErrorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-main-card csv-import-card">
+      <div className="card-heading">
+        <div>
+          <h2>Import stock for existing products</h2>
+          <p>
+            Add receipt rows to existing SKUs. Tracked products need a lot code
+            and expiry date. The whole file is checked before stock changes; up
+            to 500 rows and 200 KB per file.
+          </p>
+        </div>
+      </div>
+      {error && (
+        <div className="banner banner-error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="banner banner-success" role="status">
+          {notice}
+        </div>
+      )}
+      <form
+        className="csv-import-form"
+        onSubmit={(event) => void importCsv(event)}
+      >
+        <Field id="stock-csv-file" label="Existing products stock CSV file">
+          <input
+            ref={inputRef}
+            id="stock-csv-file"
+            className="text-input"
+            type="file"
+            accept=".csv,text/csv"
+            required
+            disabled={saving}
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+        </Field>
+        <button
+          className="button button-secondary"
+          type="submit"
+          disabled={saving || !file}
+        >
+          {saving ? "Importing stock…" : "Import stock"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
   const productTableRef = useRef<HTMLDivElement>(null);
@@ -1209,6 +1326,13 @@ export function StockPage() {
     setWarningDays(result.warningDays);
     setWarningDaysInput(String(result.warningDays));
   }
+  async function refreshAfterCsvImport() {
+    await Promise.all([
+      refreshProducts(),
+      refreshEvents(selectedId),
+      refreshLots(),
+    ]);
+  }
   useEffect(() => {
     let active = true;
     void Promise.all([
@@ -1432,6 +1556,7 @@ export function StockPage() {
           {error || notice}
         </div>
       )}
+      <StockCsvImportPanel onImported={refreshAfterCsvImport} />
       <div className="stock-summary-grid">
         <div className="stock-summary-card">
           <span>PRODUCTS</span>

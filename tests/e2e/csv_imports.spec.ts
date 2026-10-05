@@ -45,4 +45,32 @@ test("owner imports new products with opening stock, lots, and expiry from CSV",
       }),
     ]),
   );
+
+  await page.goto("/stock");
+  const stockCsv = [
+    "sku,quantity,unitCost,reference,supplier,lotCode,expiryDate,zeroCostReason",
+    "SYN-CSV-IMPORT-001,3,22.00,Synthetic stock CSV receipt,Synthetic supplier,SYN-CSV-LOT-002,2036-12-31,",
+  ].join("\r\n");
+  await page.getByLabel("Existing products stock CSV file").setInputFiles({
+    name: "existing-product-stock.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(stockCsv),
+  });
+  await page.getByRole("button", { name: "Import stock" }).click();
+  await expect(
+    page.getByRole("status").filter({
+      hasText: "Imported 1 stock receipt across 1 product.",
+    }),
+  ).toBeVisible();
+  const updatedLotsResponse = await page.request.get("/api/stock/lots");
+  expect((await updatedLotsResponse.json()).lots).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        sku: "SYN-CSV-IMPORT-001",
+        lotCode: "SYN-CSV-LOT-002",
+        expiryDate: "2036-12-31",
+        quantity: 3,
+      }),
+    ]),
+  );
 });

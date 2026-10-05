@@ -177,6 +177,78 @@ describe("owner catalog and stock operations", () => {
     ).toEqual({ count: 1 });
   });
 
+  it("imports receipts for existing products and preserves lot, cost, and atomicity", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const tracked = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-RECEIPT-LOT",
+      barcode: "SYN-CSV-RECEIPT-LOT-BC",
+      tracksLots: true,
+      openingLotCode: "SYN-CSV-OPENING-LOT",
+      openingExpiryDate: manilaDayAfter(60),
+    });
+    const regular = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-RECEIPT-REGULAR",
+      barcode: "SYN-CSV-RECEIPT-REG-BC",
+      tracksLots: false,
+    });
+    expect(tracked.status).toBe(201);
+    expect(regular.status).toBe(201);
+
+    const headers =
+      "sku,quantity,unitCost,reference,supplier,lotCode,expiryDate,zeroCostReason";
+    const csv = [
+      headers,
+      `SYN-CSV-RECEIPT-LOT,4,45.00,SYN-CSV-PO-01,Synthetic supplier,SYN-CSV-LOT-A,${manilaDayAfter(90)},`,
+      "SYN-CSV-RECEIPT-REGULAR,2,12.00,SYN-CSV-PO-02,Synthetic supplier,,,",
+    ].join("\n");
+    const token = await csrfFor(owner);
+    const imported = await owner
+      .post("/api/stock/receipts/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send(csv);
+    expect(imported.status, JSON.stringify(imported.body)).toBe(201);
+    expect(imported.body).toEqual({ importedCount: 2, productsAffected: 2 });
+
+    const trackedProduct = await owner.get(
+      `/api/products?q=SYN-CSV-RECEIPT-LOT`,
+    );
+    expect(trackedProduct.body.products[0]).toMatchObject({
+      quantityOnHand: 14,
+      inventoryValue: "580.00",
+    });
+    const regularProduct = await owner.get(
+      `/api/products?q=SYN-CSV-RECEIPT-REGULAR`,
+    );
+    expect(regularProduct.body.products[0].quantityOnHand).toBe(12);
+    const lots = await owner.get("/api/stock/lots");
+    expect(lots.body.lots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sku: "SYN-CSV-RECEIPT-LOT",
+          lotCode: "SYN-CSV-LOT-A",
+          expiryDate: manilaDayAfter(90),
+          quantity: 4,
+        }),
+      ]),
+    );
+
+    const invalidToken = await csrfFor(owner);
+    const invalid = await owner
+      .post("/api/stock/receipts/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", invalidToken)
+      .send(
+        `${headers}\nSYN-CSV-RECEIPT-REGULAR,1,10.00,,,,,\nSYN-CSV-RECEIPT-LOT,1,10.00,,,SYN-CSV-EXPIRED,${manilaDayAfter(-1)},`,
+      );
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe("csv_import_invalid");
+    const afterInvalid = await owner.get(
+      "/api/products?q=SYN-CSV-RECEIPT-REGULAR",
+    );
+    expect(afterInvalid.body.products[0].quantityOnHand).toBe(12);
+  });
+
   it("requires real lot identifiers for tracked opening stock and preserves receipt snapshots", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const missing = await createOpeningProduct(owner, {
