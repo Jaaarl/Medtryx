@@ -2110,6 +2110,77 @@ a {
 .checkout-benefit-lines .inventory-checkbox {
   line-height: 1.4;
 }
+.recent-transactions-card {
+  margin-top: 16px;
+}
+.recent-transactions-card .card-heading {
+  margin-bottom: 14px;
+}
+.recent-transactions-list {
+  display: grid;
+  gap: 12px;
+}
+.recent-transaction {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px;
+}
+.recent-transaction-heading {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.recent-transaction-heading > div {
+  display: grid;
+  gap: 4px;
+}
+.recent-transaction-heading > div:last-child {
+  text-align: right;
+}
+.recent-transaction-heading strong {
+  font-size: 13px;
+}
+.recent-transaction-heading small,
+.recent-transaction-products small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.recent-transaction-products {
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 12px 0;
+  padding: 12px 0;
+}
+.recent-transaction-products li {
+  display: grid;
+  gap: 5px;
+}
+.recent-transaction-products li > strong {
+  font-size: 12px;
+}
+.recent-stock-choice {
+  display: grid;
+  gap: 7px;
+  margin-top: 5px;
+}
+.recent-stock-choice label {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  gap: 7px;
+}
+.recent-cancel-form {
+  display: grid;
+  gap: 9px;
+}
+.recent-cancel-form .field-hint {
+  margin: 0;
+}
 .tax-policy-card {
   margin-top: 16px;
   overflow: hidden;

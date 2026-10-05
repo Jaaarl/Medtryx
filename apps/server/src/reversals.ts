@@ -24,9 +24,10 @@ const cashMovementSchema = z
   .strict();
 const reversalSchema = z
   .object({
-    ownerPassword: z.string().min(1).max(128),
+    ownerPassword: z.string().min(1).max(128).optional(),
     reason: z.string().trim().min(3).max(500),
     refundMethod: z.enum(["CASH", "QR"]),
+    qrRefundConfirmed: z.boolean().optional(),
     refundShiftId: z.uuid().optional(),
     lines: z
       .array(
@@ -107,6 +108,13 @@ function businessDate(now: Date): string {
     parts.map((part) => [part.type, part.value]),
   );
   return `${values.year}${values.month}${values.day}`;
+}
+
+const QUICK_ACTION_WINDOW_MS = 10 * 60 * 1000;
+
+function isWithinQuickActionWindow(createdAt: string): boolean {
+  const elapsed = Date.now() - new Date(createdAt).getTime();
+  return elapsed >= 0 && elapsed <= QUICK_ACTION_WINDOW_MS;
 }
 
 function validationFailure(res: Response): void {
@@ -233,6 +241,75 @@ export function registerReversalRoutes(
       )
       .all(limit.data) as SaleSummaryRow[];
     res.json({ sales: rows.map(presentSaleSummary) });
+  });
+
+  router.get("/sales/recent", requireAuth, (req, res) => {
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const rows = db
+      .prepare(
+        `SELECT s.id, s.transaction_id, s.payment_method,
+                s.amount_due_centavos, s.created_at, r.reversal_transaction_id,
+                r.created_at AS reversal_created_at
+         FROM sales s
+         LEFT JOIN sale_reversals r ON r.sale_id = s.id
+         WHERE s.created_at >= ? AND (? = 1 OR s.cashier_user_id = ?)
+         ORDER BY s.created_at DESC LIMIT 50`,
+      )
+      .all(cutoff, req.user!.role === "owner" ? 1 : 0, req.user!.id) as Array<{
+      id: string;
+      transaction_id: string;
+      payment_method: "CASH" | "QR";
+      amount_due_centavos: number;
+      created_at: string;
+      reversal_transaction_id: string | null;
+      reversal_created_at: string | null;
+    }>;
+    const linesForSale = db.prepare(
+      `SELECT sl.id, sl.product_name_snapshot, sl.sku_snapshot, sl.quantity
+       FROM sale_lines sl WHERE sl.sale_id = ? ORDER BY sl.line_number`,
+    );
+    const lotsForLine = db.prepare(
+      `SELECT a.lot_id, l.lot_code, l.expiry_date, a.quantity
+       FROM sale_line_lot_allocations a
+       JOIN inventory_lots l ON l.id = a.lot_id
+       WHERE a.sale_line_id = ? ORDER BY l.expiry_date, l.lot_code`,
+    );
+    res.json({
+      sales: rows.map((sale) => ({
+        transactionId: sale.transaction_id,
+        paymentMethod: sale.payment_method,
+        amountDue: money(sale.amount_due_centavos),
+        createdAt: sale.created_at,
+        status: sale.reversal_transaction_id ? "REVERSED" : "FINALIZED",
+        reversalTransactionId: sale.reversal_transaction_id,
+        lines: (
+          linesForSale.all(sale.id) as Array<{
+            id: string;
+            product_name_snapshot: string;
+            sku_snapshot: string;
+            quantity: number;
+          }>
+        ).map((line) => ({
+          saleLineId: line.id,
+          productName: line.product_name_snapshot,
+          sku: line.sku_snapshot,
+          quantity: line.quantity,
+          lotAllocations: (
+            lotsForLine.all(line.id) as Array<{
+              lot_id: string;
+              lot_code: string;
+              expiry_date: string;
+              quantity: number;
+            }>
+          ).map((lot) => ({
+            lotId: lot.lot_id,
+            lotCode: lot.lot_code,
+            expiryDate: lot.expiry_date,
+            quantity: lot.quantity,
+          })),
+        })),
+      })),
+    });
   });
 
   router.get("/shifts/open", requireAuth, requireOwner, (_req, res) => {
@@ -513,7 +590,6 @@ export function registerReversalRoutes(
   router.post(
     "/sales/:transactionId/reversals",
     requireAuth,
-    requireOwner,
     csrf,
     reversalRateLimit,
     async (req, res): Promise<void> => {
@@ -527,12 +603,16 @@ export function registerReversalRoutes(
 
       const sale = db
         .prepare(
-          `SELECT id, amount_due_centavos, cash_rounding_adjustment_centavos
+          `SELECT id, cashier_user_id, payment_method, created_at,
+                  amount_due_centavos, cash_rounding_adjustment_centavos
            FROM sales WHERE transaction_id = ?`,
         )
         .get(transactionId.data) as
         | {
             id: string;
+            cashier_user_id: string;
+            payment_method: "CASH" | "QR";
+            created_at: string;
             amount_due_centavos: number;
             cash_rounding_adjustment_centavos: number;
           }
@@ -542,36 +622,96 @@ export function registerReversalRoutes(
         return;
       }
 
-      const owner = db
-        .prepare(
-          "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
-        )
-        .get(req.user.id) as { password_hash: string } | undefined;
-      let verified = false;
-      try {
-        verified =
-          !!owner &&
-          (await argon2.verify(owner.password_hash, parsed.data.ownerPassword));
-      } catch {
-        verified = false;
-      }
-      if (!verified || !owner) {
-        res.status(403).json({ error: "reauthentication_failed" });
-        return;
+      const quickCancel = parsed.data.ownerPassword === undefined;
+      let owner: { password_hash: string } | undefined;
+      if (quickCancel) {
+        if (sale.cashier_user_id !== req.user.id) {
+          res.status(403).json({ error: "forbidden" });
+          return;
+        }
+        if (!isWithinQuickActionWindow(sale.created_at)) {
+          res.status(409).json({ error: "quick_action_window_expired" });
+          return;
+        }
+        if (parsed.data.refundMethod !== sale.payment_method) {
+          res
+            .status(400)
+            .json({ error: "quick_cancel_refund_method_must_match" });
+          return;
+        }
+        if (
+          sale.payment_method === "QR" &&
+          parsed.data.qrRefundConfirmed !== true
+        ) {
+          res.status(400).json({ error: "qr_refund_confirmation_required" });
+          return;
+        }
+      } else {
+        if (req.user.role !== "owner") {
+          res.status(403).json({ error: "forbidden" });
+          return;
+        }
+        owner = db
+          .prepare(
+            "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+          )
+          .get(req.user.id) as { password_hash: string } | undefined;
+        let verified = false;
+        try {
+          verified =
+            !!owner &&
+            (await argon2.verify(
+              owner.password_hash,
+              parsed.data.ownerPassword!,
+            ));
+        } catch {
+          verified = false;
+        }
+        if (!verified || !owner) {
+          res.status(403).json({ error: "reauthentication_failed" });
+          return;
+        }
       }
 
       try {
         const result = db.transaction(() => {
-          const currentOwner = db
-            .prepare(
-              "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
-            )
-            .get(req.user!.id) as { password_hash: string } | undefined;
-          if (
-            !currentOwner ||
-            currentOwner.password_hash !== owner.password_hash
-          ) {
-            throw new ReversalError(403, "reauthentication_failed");
+          if (quickCancel) {
+            const currentSale = db
+              .prepare(
+                "SELECT cashier_user_id, payment_method, created_at FROM sales WHERE id = ?",
+              )
+              .get(sale.id) as
+              | {
+                  cashier_user_id: string;
+                  payment_method: "CASH" | "QR";
+                  created_at: string;
+                }
+              | undefined;
+            if (!currentSale || currentSale.cashier_user_id !== req.user!.id) {
+              throw new ReversalError(403, "forbidden");
+            }
+            if (!isWithinQuickActionWindow(currentSale.created_at)) {
+              throw new ReversalError(409, "quick_action_window_expired");
+            }
+            if (currentSale.payment_method !== parsed.data.refundMethod) {
+              throw new ReversalError(
+                409,
+                "quick_cancel_refund_method_must_match",
+              );
+            }
+          } else {
+            const currentOwner = db
+              .prepare(
+                "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+              )
+              .get(req.user!.id) as { password_hash: string } | undefined;
+            if (
+              !owner ||
+              !currentOwner ||
+              currentOwner.password_hash !== owner.password_hash
+            ) {
+              throw new ReversalError(403, "reauthentication_failed");
+            }
           }
           const original = db
             .prepare(
@@ -953,7 +1093,7 @@ export function registerReversalRoutes(
 
           writeAuditEvent(db, {
             actorUserId: req.user!.id,
-            action: "sale.reversed",
+            action: quickCancel ? "sale.cancelled" : "sale.reversed",
             entityType: "sale_reversal",
             entityId: reversalId,
             details: {
@@ -1041,7 +1181,7 @@ export function registerReversalRoutes(
               writeoff: money(line.writeoff_centavos),
             })),
           },
-          sale: getSavedSale(db, reversal.sale_id),
+          sale: getSavedSale(db, reversal.sale_id, req.user!.role === "owner"),
         });
       } catch (error) {
         if (!handleReversalError(error, res)) throw error;

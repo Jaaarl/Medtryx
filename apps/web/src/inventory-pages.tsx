@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { api, ApiError } from "./api";
+import { RecentTransactions } from "./recent-transactions";
 
 type Product = {
   id: string;
@@ -2243,6 +2244,7 @@ export function CheckoutPage() {
   const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
   const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
+  const [recentSalesRefresh, setRecentSalesRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [operationsLoading, setOperationsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2718,6 +2720,7 @@ export function CheckoutPage() {
         },
       );
       setSaleRecord(result.sale);
+      setRecentSalesRefresh((value) => value + 1);
       setCart([]);
       setBundleCart([]);
       setPreview(null);
@@ -3807,6 +3810,10 @@ export function CheckoutPage() {
           )}
         </aside>
       </div>
+      <RecentTransactions
+        refundShift={shift ?? registerShift}
+        refreshKey={recentSalesRefresh}
+      />
     </section>
   );
 }
