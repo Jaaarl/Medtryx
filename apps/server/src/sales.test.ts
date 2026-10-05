@@ -731,6 +731,7 @@ describe("checkout, sales, and cashier shifts", () => {
       "second.cashier.sales@example.test",
       secondCashierPassword,
     );
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
     const opened = await openShift(cashier, "100.00");
     expect(opened.status).toBe(201);
     expect(opened.body.shift.expectedCash).toBe("100.00");
@@ -745,6 +746,19 @@ describe("checkout, sales, and cashier shifts", () => {
       .send({ actualCashCount: "98.00" });
     expect(rejected.status).toBe(400);
     expect(rejected.body.error).toBe("variance_reason_required");
+
+    const unsupportedReasonCsrf = await csrfFor(cashier);
+    const unsupportedReason = await cashier
+      .post(`/api/shifts/${shiftId}/close`)
+      .set("x-csrf-token", unsupportedReasonCsrf)
+      .send({
+        actualCashCount: "98.00",
+        varianceReason: "Synthetic free text is no longer allowed",
+      });
+    expect(
+      unsupportedReason.status,
+      JSON.stringify(unsupportedReason.body),
+    ).toBe(400);
 
     const nextCsrf = await csrfFor(cashier);
     const closed = await cashier
@@ -764,6 +778,11 @@ describe("checkout, sales, and cashier shifts", () => {
     expect((await cashier.get("/api/shifts/current")).body.shift).toBeNull();
     expect((await openShift(secondCashier, "20.00")).status).toBe(201);
 
+    const history = await owner.get("/api/shifts/history");
+    expect(
+      history.body.shifts.find((shift: { id: string }) => shift.id === shiftId),
+    ).toMatchObject({ varianceReason: "Cashier Fault" });
+
     const cashierCsrf = await csrfFor(cashier);
     const cashierApproval = await cashier
       .post(`/api/shifts/${shiftId}/variance-approval`)
@@ -775,7 +794,6 @@ describe("checkout, sales, and cashier shifts", () => {
       });
     expect(cashierApproval.status).toBe(403);
 
-    const owner = await signIn("owner.sales@example.test", ownerPassword);
     const pending = await owner.get("/api/shifts/variance-approvals");
     expect(pending.body.shifts).toMatchObject([
       {
@@ -821,6 +839,84 @@ describe("checkout, sales, and cashier shifts", () => {
       variance_approval_status: "APPROVED",
       variance_centavos: -200,
     });
+  });
+
+  it("lets another cashier and the owner emergency-close an abandoned shift", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const secondCashier = await signIn(
+      "second.cashier.sales@example.test",
+      secondCashierPassword,
+    );
+
+    const opened = await openShift(cashier, "120.00");
+    expect(opened.status).toBe(201);
+    const shiftId = opened.body.shift.id as string;
+    const otherCashierCurrent = await secondCashier.get("/api/shifts/current");
+    expect(otherCashierCurrent.body).toMatchObject({
+      shift: null,
+      registerOpen: true,
+      registerShift: {
+        id: shiftId,
+        openedByEmail: "cashier.sales@example.test",
+        expectedCash: "120.00",
+        expectedQrSales: "0.00",
+      },
+    });
+
+    const missingReasonCsrf = await csrfFor(secondCashier);
+    const missingReason = await secondCashier
+      .post(`/api/shifts/${shiftId}/emergency-close`)
+      .set("x-csrf-token", missingReasonCsrf)
+      .send({ actualCashCount: "118.00" });
+    expect(missingReason.status, JSON.stringify(missingReason.body)).toBe(400);
+    expect(missingReason.body.error).toBe("variance_reason_required");
+
+    const freeTextReasonCsrf = await csrfFor(secondCashier);
+    const freeTextReason = await secondCashier
+      .post(`/api/shifts/${shiftId}/emergency-close`)
+      .set("x-csrf-token", freeTextReasonCsrf)
+      .send({
+        actualCashCount: "118.00",
+        varianceReason: "Synthetic free text is not an option",
+      });
+    expect(freeTextReason.status).toBe(400);
+
+    const cashierCloseCsrf = await csrfFor(secondCashier);
+    const cashierClose = await secondCashier
+      .post(`/api/shifts/${shiftId}/emergency-close`)
+      .set("x-csrf-token", cashierCloseCsrf)
+      .send({ actualCashCount: "118.00", varianceReason: "Customer Fault" });
+    expect(cashierClose.status).toBe(200);
+    expect(cashierClose.body.shift).toMatchObject({
+      expectedCash: "120.00",
+      actualCashCount: "118.00",
+      variance: "-2.00",
+    });
+    const cashierClosedHistory = await owner.get("/api/shifts/history");
+    expect(
+      cashierClosedHistory.body.shifts.find(
+        (shift: { id: string }) => shift.id === shiftId,
+      ),
+    ).toMatchObject({
+      closedByEmail: "second.cashier.sales@example.test",
+      varianceReason: "Customer Fault",
+    });
+
+    const nextShift = await openShift(cashier, "50.00");
+    expect(nextShift.status).toBe(201);
+    const ownerCloseCsrf = await csrfFor(owner);
+    const ownerClose = await owner
+      .post(`/api/shifts/${nextShift.body.shift.id as string}/emergency-close`)
+      .set("x-csrf-token", ownerCloseCsrf)
+      .send({ actualCashCount: "50.00" });
+    expect(ownerClose.status).toBe(200);
+    const ownerClosedHistory = await owner.get("/api/shifts/history");
+    expect(
+      ownerClosedHistory.body.shifts.find(
+        (shift: { id: string }) => shift.id === nextShift.body.shift.id,
+      ),
+    ).toMatchObject({ closedByEmail: "owner.sales@example.test" });
   });
 
   it("allows only one of two simultaneous cashier shift opens", async () => {

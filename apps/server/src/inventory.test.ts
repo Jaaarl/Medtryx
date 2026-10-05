@@ -131,6 +131,7 @@ describe("owner catalog and stock operations", () => {
       openingLotCode: "SYN-BATCH-01",
       openingExpiryDate: manilaDayAfter(30),
       openingSupplier: "Synthetic distributor",
+      openingReference: "SYN-OPENING-PO-01",
     });
     expect(created.status).toBe(201);
     expect(created.body.product).toMatchObject({
@@ -140,6 +141,17 @@ describe("owner catalog and stock operations", () => {
       unallocatedQuantity: 0,
     });
     activeProductId = created.body.product.id as string;
+    expect(
+      db
+        .prepare(
+          `SELECT reference, supplier FROM stock_events
+           WHERE product_id = ? AND event_type = 'OPENING'`,
+        )
+        .get(activeProductId),
+    ).toEqual({
+      reference: "SYN-OPENING-PO-01",
+      supplier: "Synthetic distributor",
+    });
 
     const token = await csrfFor(owner);
     const expired = await owner

@@ -1,0 +1,227 @@
+import { randomUUID } from "node:crypto";
+import { expect, test } from "@playwright/test";
+
+const owner = {
+  email: "owner@example.test",
+  password: "SyntheticOwnerPassword-48!",
+};
+const cashier = {
+  email: "cashier@example.test",
+  password: "SyntheticCashierPassword-72!",
+};
+
+async function signIn(
+  page: import("@playwright/test").Page,
+  credentials: { email: string; password: string },
+) {
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill(credentials.email);
+  await page.getByLabel("Password", { exact: true }).fill(credentials.password);
+  const checkoutReached = page
+    .waitForURL(/\/checkout$/, {
+      timeout: credentials.email === cashier.email ? 1_500 : 5_000,
+    })
+    .then(
+      () => true,
+      () => false,
+    );
+  await page.getByRole("button", { name: "Sign in" }).click();
+  if (!(await checkoutReached) && credentials.email === cashier.email) {
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("SyntheticCashierPassword-84!");
+    await page.getByRole("button", { name: "Sign in" }).click();
+  }
+  await expect(page).toHaveURL(/\/checkout$/);
+}
+
+async function postApi(
+  page: import("@playwright/test").Page,
+  path: string,
+  data: Record<string, unknown>,
+) {
+  const csrf = await page.request.get("/api/auth/csrf");
+  const { token } = (await csrf.json()) as { token: string };
+  return page.request.post(path, {
+    data,
+    headers: { "x-csrf-token": token },
+  });
+}
+
+function manilaDayAfter(days: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const today = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  const date = new Date(
+    Date.UTC(Number(today.year), Number(today.month) - 1, Number(today.day)),
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+test("product form saves reorder level and opening lot references", async ({
+  page,
+}) => {
+  await signIn(page, owner);
+  await page.goto("/products");
+
+  const productName = `Synthetic Lot Product ${randomUUID().slice(0, 8)}`;
+  const reference = `SYN-E2E-PO-${randomUUID().slice(0, 8)}`;
+  const supplier = "Synthetic e2e supplier";
+  const lotCode = `SYN-E2E-LOT-${randomUUID().slice(0, 8)}`;
+
+  await page.getByLabel("Product name").fill(productName);
+  await page.getByLabel("Stock unit").fill("box");
+  await page.getByLabel("Selling price (₱)").fill("15.00");
+  await page.getByLabel("Reorder level (optional)").fill("3");
+  await page.getByLabel("Generic", { exact: true }).check();
+  await page.getByLabel("Track lots and expiry for this product").check();
+  await page.getByLabel("Counted quantity").fill("5");
+  await page.getByLabel("Unit cost (₱)").fill("4.00");
+  await page.getByLabel("Reference / supplier note").fill(reference);
+  await page.getByLabel("Opening lot / batch code").fill(lotCode);
+  await page
+    .getByLabel("Expiry date (last saleable day)")
+    .fill(manilaDayAfter(30));
+  await page.getByLabel("Supplier (optional)").fill(supplier);
+  await page.getByRole("button", { name: "Create product" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Product created" }),
+  ).toBeVisible();
+
+  const catalogResponse = await page.request.get("/api/products");
+  expect(catalogResponse.status()).toBe(200);
+  const catalog = (await catalogResponse.json()) as {
+    products: Array<{ id: string; name: string; reorderLevel: number | null }>;
+  };
+  const product = catalog.products.find((item) => item.name === productName);
+  expect(product).toMatchObject({ reorderLevel: 3 });
+
+  const eventsResponse = await page.request.get(
+    `/api/stock/events?productId=${product!.id}`,
+  );
+  expect(eventsResponse.status()).toBe(200);
+  const events = (await eventsResponse.json()) as {
+    events: Array<{
+      type: string;
+      reference: string | null;
+      supplier: string | null;
+    }>;
+  };
+  expect(events.events[0]).toMatchObject({
+    type: "OPENING",
+    reference,
+    supplier,
+  });
+});
+
+test("checkout shows QR totals and an owner can emergency-close a cashier shift", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+
+  const cashierContext = await browser.newContext();
+  const cashierPage = await cashierContext.newPage();
+  await signIn(cashierPage, cashier);
+
+  const existingShiftResponse = await ownerPage.request.get(
+    "/api/shifts/current",
+  );
+  const existingShift = (await existingShiftResponse.json()) as {
+    registerShift: null | { id: string; expectedCash: string };
+  };
+  if (existingShift.registerShift) {
+    const cleanup = await postApi(
+      ownerPage,
+      `/api/shifts/${existingShift.registerShift.id}/emergency-close`,
+      { actualCashCount: existingShift.registerShift.expectedCash },
+    );
+    expect(cleanup.status()).toBe(200);
+  }
+
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-QR-${randomUUID().slice(0, 8)}`,
+    name: `Synthetic QR Shift Product ${randomUUID().slice(0, 8)}`,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 5,
+    openingUnitCost: "4.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  const { product } = (await productResponse.json()) as {
+    product: { id: string };
+  };
+
+  const openedResponse = await postApi(cashierPage, "/api/shifts", {
+    openingCash: "100.00",
+  });
+  expect(openedResponse.status()).toBe(201);
+  const { shift } = (await openedResponse.json()) as {
+    shift: { id: string };
+  };
+  const saleResponse = await postApi(cashierPage, "/api/sales", {
+    benefitType: "REGULAR",
+    paymentMethod: "QR",
+    requestKey: randomUUID(),
+    items: [{ productId: product.id, quantity: 1, benefitApplied: false }],
+  });
+  expect(saleResponse.status()).toBe(201);
+
+  await cashierPage.goto("/checkout");
+  await expect(
+    cashierPage.getByText("Expected physical cash: ₱100.00"),
+  ).toBeVisible();
+  await expect(
+    cashierPage.getByText("Expected QR sales: ₱15.00"),
+  ).toBeVisible();
+
+  await ownerPage.goto("/checkout");
+  await expect(
+    ownerPage.getByText(
+      /Emergency close: shift opened by cashier@example\.test/u,
+    ),
+  ).toBeVisible();
+  await expect(
+    ownerPage.locator("#emergency-shift-variance-reason option"),
+  ).toHaveCount(4);
+  await ownerPage.getByLabel("Actual physical cash count (₱)").fill("98.00");
+  await ownerPage
+    .getByLabel("Variance reason if count differs")
+    .selectOption({ label: "Customer Fault" });
+  await ownerPage
+    .getByRole("button", { name: "Emergency close shift" })
+    .click();
+  await expect(
+    ownerPage
+      .getByRole("status")
+      .filter({ hasText: "Emergency shift close recorded." }),
+  ).toBeVisible();
+
+  const historyResponse = await ownerPage.request.get("/api/shifts/history");
+  const history = (await historyResponse.json()) as {
+    shifts: Array<{
+      id: string;
+      closedByEmail: string | null;
+      varianceReason: string | null;
+    }>;
+  };
+  expect(history.shifts.find((item) => item.id === shift.id)).toMatchObject({
+    closedByEmail: owner.email,
+    varianceReason: "Customer Fault",
+  });
+
+  await cashierContext.close();
+  await ownerContext.close();
+});
