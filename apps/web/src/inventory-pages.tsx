@@ -2540,6 +2540,18 @@ export function CheckoutPage() {
     );
   }
 
+  async function refreshShiftState(): Promise<void> {
+    const result = await api.get<{
+      shift: CurrentShift | null;
+      registerOpen: boolean;
+      registerShift: RegisterShift | null;
+    }>("/shifts/current");
+    setShift(result.shift);
+    setRegisterShift(result.registerShift);
+    setRegisterOpen(result.registerOpen);
+    if (result.shift) setClosingCash(result.shift.expectedCash);
+  }
+
   async function openCurrentShift(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -3813,6 +3825,7 @@ export function CheckoutPage() {
       <RecentTransactions
         refundShift={shift ?? registerShift}
         refreshKey={recentSalesRefresh}
+        onUpdated={refreshShiftState}
       />
     </section>
   );

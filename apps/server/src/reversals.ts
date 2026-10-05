@@ -67,6 +67,9 @@ const reversalSchema = z
       });
     }
   });
+const paymentSwitchSchema = z
+  .object({ reason: z.string().trim().min(3).max(500) })
+  .strict();
 const varianceApprovalSchema = z
   .object({
     ownerPassword: z.string().min(1).max(128),
@@ -248,7 +251,8 @@ export function registerReversalRoutes(
     const rows = db
       .prepare(
         `SELECT s.id, s.transaction_id, s.payment_method,
-                s.amount_due_centavos, s.created_at, r.reversal_transaction_id,
+                s.amount_due_centavos, s.cash_rounding_adjustment_centavos,
+                s.created_at, r.reversal_transaction_id,
                 r.created_at AS reversal_created_at
          FROM sales s
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
@@ -260,6 +264,7 @@ export function registerReversalRoutes(
       transaction_id: string;
       payment_method: "CASH" | "QR";
       amount_due_centavos: number;
+      cash_rounding_adjustment_centavos: number;
       created_at: string;
       reversal_transaction_id: string | null;
       reversal_created_at: string | null;
@@ -279,6 +284,9 @@ export function registerReversalRoutes(
         transactionId: sale.transaction_id,
         paymentMethod: sale.payment_method,
         amountDue: money(sale.amount_due_centavos),
+        qrAmountIfSwitched: money(
+          sale.amount_due_centavos - sale.cash_rounding_adjustment_centavos,
+        ),
         createdAt: sale.created_at,
         status: sale.reversal_transaction_id ? "REVERSED" : "FINALIZED",
         reversalTransactionId: sale.reversal_transaction_id,
@@ -311,6 +319,267 @@ export function registerReversalRoutes(
       })),
     });
   });
+
+  router.post(
+    "/sales/:transactionId/payment-switches",
+    requireAuth,
+    csrf,
+    reversalRateLimit,
+    (req, res) => {
+      const transactionId = z
+        .string()
+        .regex(/^MTX-\d{8}-\d{6,}$/)
+        .safeParse(req.params.transactionId);
+      const parsed = paymentSwitchSchema.safeParse(req.body);
+      if (!transactionId.success || !parsed.success || !req.user)
+        return validationFailure(res);
+
+      const sale = db
+        .prepare(
+          `SELECT id, cashier_user_id, shift_id, payment_method,
+                  amount_due_centavos, cash_rounding_adjustment_centavos,
+                  created_at
+           FROM sales WHERE transaction_id = ?`,
+        )
+        .get(transactionId.data) as
+        | {
+            id: string;
+            cashier_user_id: string;
+            shift_id: string;
+            payment_method: "CASH" | "QR";
+            amount_due_centavos: number;
+            cash_rounding_adjustment_centavos: number;
+            created_at: string;
+          }
+        | undefined;
+      if (!sale) {
+        res.status(404).json({ error: "sale_not_found" });
+        return;
+      }
+      if (req.user.role !== "owner" && sale.cashier_user_id !== req.user.id) {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      if (!isWithinQuickActionWindow(sale.created_at)) {
+        res.status(409).json({ error: "quick_action_window_expired" });
+        return;
+      }
+
+      try {
+        const result = db.transaction(() => {
+          const original = db
+            .prepare(
+              `SELECT id, cashier_user_id, shift_id, payment_method,
+                      amount_due_centavos, cash_rounding_adjustment_centavos,
+                      created_at
+               FROM sales WHERE id = ?`,
+            )
+            .get(sale.id) as
+            | {
+                id: string;
+                cashier_user_id: string;
+                shift_id: string;
+                payment_method: "CASH" | "QR";
+                amount_due_centavos: number;
+                cash_rounding_adjustment_centavos: number;
+                created_at: string;
+              }
+            | undefined;
+          if (!original) throw new ReversalError(404, "sale_not_found");
+          if (
+            req.user!.role !== "owner" &&
+            original.cashier_user_id !== req.user!.id
+          ) {
+            throw new ReversalError(403, "forbidden");
+          }
+          if (!isWithinQuickActionWindow(original.created_at)) {
+            throw new ReversalError(409, "quick_action_window_expired");
+          }
+          if (original.payment_method !== "CASH") {
+            throw new ReversalError(409, "payment_switch_requires_cash_sale");
+          }
+          if (
+            db
+              .prepare("SELECT 1 FROM sale_reversals WHERE sale_id = ?")
+              .get(original.id)
+          ) {
+            throw new ReversalError(409, "sale_already_reversed");
+          }
+          if (
+            db
+              .prepare("SELECT 1 FROM sale_payment_switches WHERE sale_id = ?")
+              .get(original.id)
+          ) {
+            throw new ReversalError(409, "payment_switch_already_saved");
+          }
+
+          const lineTotal = (
+            db
+              .prepare(
+                "SELECT COALESCE(SUM(amount_due_centavos), 0) AS total FROM sale_lines WHERE sale_id = ?",
+              )
+              .get(original.id) as { total: number }
+          ).total;
+          const qrAmount =
+            original.amount_due_centavos -
+            original.cash_rounding_adjustment_centavos;
+          if (
+            !Number.isSafeInteger(qrAmount) ||
+            qrAmount < 0 ||
+            lineTotal !== qrAmount
+          ) {
+            throw new ReversalError(409, "sale_totals_do_not_reconcile");
+          }
+
+          const cashShift = db
+            .prepare(
+              `SELECT id, expected_cash_centavos, closed_at,
+                      actual_cash_count_centavos, variance_reason
+               FROM shifts WHERE id = ?`,
+            )
+            .get(original.shift_id) as
+            | {
+                id: string;
+                expected_cash_centavos: number | null;
+                closed_at: string | null;
+                actual_cash_count_centavos: number | null;
+                variance_reason: string | null;
+              }
+            | undefined;
+          if (!cashShift || cashShift.expected_cash_centavos === null) {
+            throw new ReversalError(409, "cash_shift_unavailable");
+          }
+          if (cashShift.expected_cash_centavos < original.amount_due_centavos) {
+            throw new ReversalError(409, "insufficient_shift_cash");
+          }
+          const adjustedExpectedCash =
+            cashShift.expected_cash_centavos - original.amount_due_centavos;
+          const now = new Date().toISOString();
+          const switchId = randomUUID();
+
+          if (cashShift.closed_at === null) {
+            db.prepare(
+              `UPDATE shifts SET expected_cash_centavos = ?
+               WHERE id = ? AND closed_at IS NULL`,
+            ).run(adjustedExpectedCash, cashShift.id);
+          } else {
+            if (cashShift.actual_cash_count_centavos === null) {
+              throw new ReversalError(409, "cash_shift_unavailable");
+            }
+            const variance =
+              cashShift.actual_cash_count_centavos - adjustedExpectedCash;
+            const varianceReason =
+              variance === 0
+                ? cashShift.variance_reason
+                : (cashShift.variance_reason ??
+                  "Payment method corrected after shift close.");
+            db.prepare(
+              `UPDATE shifts
+               SET expected_cash_centavos = ?, variance_centavos = ?,
+                   variance_reason = ?,
+                   variance_approval_status = ?,
+                   variance_approved_by_user_id = NULL,
+                   variance_approved_at = NULL, variance_approval_note = NULL
+               WHERE id = ? AND closed_at IS NOT NULL`,
+            ).run(
+              adjustedExpectedCash,
+              variance,
+              varianceReason,
+              variance === 0 ? "NONE" : "PENDING",
+              cashShift.id,
+            );
+          }
+
+          const updatedSale = db
+            .prepare(
+              `UPDATE sales SET payment_method = 'QR', amount_due_centavos = ?,
+                  cash_rounding_adjustment_centavos = 0
+               WHERE id = ? AND payment_method = 'CASH'`,
+            )
+            .run(qrAmount, original.id);
+          if (updatedSale.changes !== 1) {
+            throw new ReversalError(409, "payment_switch_already_saved");
+          }
+          db.prepare(
+            `INSERT INTO sale_payment_switches
+               (id, sale_id, cash_shift_id, changed_by_user_id, reason,
+                from_method, to_method, cash_amount_centavos,
+                qr_amount_centavos, cash_rounding_adjustment_centavos,
+                created_at)
+             VALUES (?, ?, ?, ?, ?, 'CASH', 'QR', ?, ?, ?, ?)`,
+          ).run(
+            switchId,
+            original.id,
+            cashShift.id,
+            req.user!.id,
+            parsed.data.reason,
+            original.amount_due_centavos,
+            qrAmount,
+            original.cash_rounding_adjustment_centavos,
+            now,
+          );
+          const products = db
+            .prepare(
+              `SELECT product_name_snapshot, sku_snapshot, quantity
+               FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
+            )
+            .all(original.id) as Array<{
+            product_name_snapshot: string;
+            sku_snapshot: string;
+            quantity: number;
+          }>;
+          writeAuditEvent(db, {
+            actorUserId: req.user!.id,
+            action: "sale.payment_method_switched",
+            entityType: "sale",
+            entityId: original.id,
+            details: {
+              transactionId: transactionId.data,
+              reason: parsed.data.reason,
+              fromMethod: "CASH",
+              toMethod: "QR",
+              cashAmountCentavos: original.amount_due_centavos,
+              qrAmountCentavos: qrAmount,
+              cashRoundingAdjustmentCentavos:
+                original.cash_rounding_adjustment_centavos,
+              cashShiftId: cashShift.id,
+              products: products.map((product) => ({
+                name: product.product_name_snapshot,
+                sku: product.sku_snapshot,
+                quantity: product.quantity,
+              })),
+            },
+          });
+          return {
+            id: switchId,
+            saleId: original.id,
+            cashShiftId: cashShift.id,
+            cashAmount: original.amount_due_centavos,
+            qrAmount,
+            cashRoundingAdjustment: original.cash_rounding_adjustment_centavos,
+            createdAt: now,
+          };
+        })();
+
+        res.status(201).json({
+          paymentSwitch: {
+            id: result.id,
+            transactionId: transactionId.data,
+            fromMethod: "CASH",
+            toMethod: "QR",
+            cashAmount: money(result.cashAmount),
+            qrAmount: money(result.qrAmount),
+            cashRoundingAdjustment: money(result.cashRoundingAdjustment),
+            cashShiftId: result.cashShiftId,
+            createdAt: result.createdAt,
+          },
+          sale: getSavedSale(db, result.saleId, req.user.role === "owner"),
+        });
+      } catch (error) {
+        if (!handleReversalError(error, res)) throw error;
+      }
+    },
+  );
 
   router.get("/shifts/open", requireAuth, requireOwner, (_req, res) => {
     const rows = db

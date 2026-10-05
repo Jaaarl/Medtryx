@@ -200,6 +200,7 @@ beforeEach(() => {
   clearLotLedgerForTest(db);
   db.exec(
     `DELETE FROM sale_reversal_lines;
+     DELETE FROM sale_payment_switches;
      DELETE FROM cash_movements;
      DELETE FROM sale_reversals;
      DELETE FROM reversal_sequences;
@@ -241,6 +242,93 @@ afterAll(() => {
 });
 
 describe("owner-approved full-sale reversals and cash movements", () => {
+  it("switches a cash sale to QR and reconciles cash, QR, report, and shift totals", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+    const product = await createProduct(owner, { sellingPrice: "112.13" });
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const openedShift = await openShift(cashier, "200.00");
+    expect(openedShift.status).toBe(201);
+    const sale = await sell(cashier, product.id, "CASH");
+    expect(sale.amountDue).toBe("112.25");
+
+    const beforeSwitch = (await cashier.get("/api/shifts/current")).body
+      .shift as { expectedCash: string; expectedQrSales: string };
+    expect(beforeSwitch).toMatchObject({
+      expectedCash: "312.25",
+      expectedQrSales: "0.00",
+    });
+
+    const switched = await postWithCsrf(
+      cashier,
+      `/api/sales/${sale.transactionId}/payment-switches`,
+      { reason: "Customer paid by QR after the cash sale was saved" },
+    );
+    expect(switched.status, JSON.stringify(switched.body)).toBe(201);
+    expect(switched.body.paymentSwitch).toMatchObject({
+      fromMethod: "CASH",
+      toMethod: "QR",
+      cashAmount: "112.25",
+      qrAmount: "112.13",
+      cashRoundingAdjustment: "0.12",
+    });
+    expect(switched.body.sale).toMatchObject({
+      paymentMethod: "QR",
+      amountDue: "112.13",
+      cashRoundingAdjustment: "0.00",
+    });
+
+    const afterSwitch = (await cashier.get("/api/shifts/current")).body
+      .shift as { expectedCash: string; expectedQrSales: string };
+    expect(afterSwitch).toMatchObject({
+      expectedCash: "200.00",
+      expectedQrSales: "112.13",
+    });
+    const saleDetails = await owner.get(`/api/sales/${sale.transactionId}`);
+    const report = await owner.get(
+      `/api/reports/daily?date=${saleDetails.body.sale.businessDate}`,
+    );
+    expect(report.body.report.metrics).toMatchObject({
+      cashSales: "0.00",
+      qrSales: "112.13",
+      cashRoundingAdjustments: "0.00",
+    });
+
+    const shifts = await owner.get("/api/shifts/history");
+    const savedShift = shifts.body.shifts.find(
+      (shift: { id: string }) => shift.id === openedShift.body.shift.id,
+    );
+    expect(savedShift).toMatchObject({
+      cashSales: "0.00",
+      qrSales: "112.13",
+      expectedCash: "200.00",
+    });
+    const paymentChange = db
+      .prepare(
+        `SELECT from_method, to_method, cash_amount_centavos,
+                qr_amount_centavos, cash_rounding_adjustment_centavos,
+                changed_by_user_id FROM sale_payment_switches`,
+      )
+      .get() as {
+      from_method: string;
+      to_method: string;
+      cash_amount_centavos: number;
+      qr_amount_centavos: number;
+      cash_rounding_adjustment_centavos: number;
+      changed_by_user_id: string;
+    };
+    expect(paymentChange).toMatchObject({
+      from_method: "CASH",
+      to_method: "QR",
+      cash_amount_centavos: 11_225,
+      qr_amount_centavos: 11_213,
+      cash_rounding_adjustment_centavos: 12,
+    });
+  });
+
   it("returns verified sellable stock to its original lots and writes off a quarantined lot", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner);

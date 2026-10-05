@@ -6,6 +6,7 @@ type RecentTransaction = {
   transactionId: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  qrAmountIfSwitched: string;
   createdAt: string;
   status: "FINALIZED" | "REVERSED";
   reversalTransactionId: string | null;
@@ -38,6 +39,12 @@ function transactionError(error: unknown): string {
     qr_refund_confirmation_required:
       "Confirm that the QR refund was sent before recording the cancellation.",
     sale_already_reversed: "This sale has already been cancelled or reversed.",
+    payment_switch_requires_cash_sale:
+      "Only an uncorrected cash sale can be switched to QR.",
+    payment_switch_already_saved:
+      "This transaction has already had a payment correction.",
+    cash_shift_unavailable:
+      "The original cash drawer could not be updated. Ask an owner to review it.",
     lot_return_verification_required:
       "Confirm the returned products match their original lots before restocking.",
     returned_lot_not_saleable:
@@ -65,9 +72,11 @@ function transactionDate(value: string): string {
 export function RecentTransactions({
   refundShift,
   refreshKey,
+  onUpdated,
 }: {
   refundShift: RefundShift | null;
   refreshKey: number;
+  onUpdated: () => Promise<void>;
 }) {
   const [transactions, setTransactions] = useState<RecentTransaction[]>([]);
   const [restockChoices, setRestockChoices] = useState<Record<string, boolean>>(
@@ -75,6 +84,9 @@ export function RecentTransactions({
   );
   const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [switchReasons, setSwitchReasons] = useState<Record<string, string>>(
+    {},
+  );
   const [qrRefundConfirmed, setQrRefundConfirmed] = useState<
     Record<string, boolean>
   >({});
@@ -171,6 +183,33 @@ export function RecentTransactions({
         `Cancellation ${result.reversal.transactionId} recorded for ₱${result.reversal.amount}.`,
       );
       setLocalRefresh((value) => value + 1);
+      await onUpdated();
+    } catch (caught) {
+      setError(transactionError(caught));
+    } finally {
+      setSavingId("");
+    }
+  }
+
+  async function switchToQr(
+    event: FormEvent<HTMLFormElement>,
+    transaction: RecentTransaction,
+  ) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setSavingId(transaction.transactionId);
+    try {
+      const result = await api.post<{
+        paymentSwitch: { cashAmount: string; qrAmount: string };
+      }>(`/sales/${transaction.transactionId}/payment-switches`, {
+        reason: switchReasons[transaction.transactionId] ?? "",
+      });
+      setNotice(
+        `Payment switched: cash reduced by ₱${result.paymentSwitch.cashAmount}; QR now shows ₱${result.paymentSwitch.qrAmount}.`,
+      );
+      setLocalRefresh((value) => value + 1);
+      await onUpdated();
     } catch (caught) {
       setError(transactionError(caught));
     } finally {
@@ -309,78 +348,125 @@ export function RecentTransactions({
                     Cancelled as {transaction.reversalTransactionId}.
                   </small>
                 ) : canCancel ? (
-                  <form
-                    className="recent-cancel-form"
-                    onSubmit={(event) =>
-                      void cancelTransaction(event, transaction)
-                    }
-                  >
-                    <label
-                      className="field-label"
-                      htmlFor={`reason-${transaction.transactionId}`}
-                    >
-                      Cancellation reason
-                    </label>
-                    <textarea
-                      id={`reason-${transaction.transactionId}`}
-                      className="text-input reversal-reason-input"
-                      required
-                      minLength={3}
-                      maxLength={500}
-                      value={reasons[transaction.transactionId] ?? ""}
-                      onChange={(event) =>
-                        setReasons((current) => ({
-                          ...current,
-                          [transaction.transactionId]: event.target.value,
-                        }))
-                      }
-                    />
-                    {transaction.paymentMethod === "QR" ? (
-                      <label className="inventory-checkbox">
-                        <input
-                          type="checkbox"
+                  <>
+                    {transaction.paymentMethod === "CASH" && (
+                      <form
+                        className="recent-cancel-form recent-payment-switch-form"
+                        onSubmit={(event) =>
+                          void switchToQr(event, transaction)
+                        }
+                      >
+                        <strong>Correct a cash sale to QR</strong>
+                        <small className="field-hint">
+                          Cash will decrease by ₱{transaction.amountDue}; QR
+                          will increase by ₱{transaction.qrAmountIfSwitched}.
+                          The QR total does not include cash rounding.
+                        </small>
+                        <label
+                          className="field-label"
+                          htmlFor={`switch-reason-${transaction.transactionId}`}
+                        >
+                          Reason for payment correction
+                        </label>
+                        <textarea
+                          id={`switch-reason-${transaction.transactionId}`}
+                          className="text-input reversal-reason-input"
                           required
-                          checked={
-                            qrRefundConfirmed[transaction.transactionId] ===
-                            true
-                          }
+                          minLength={3}
+                          maxLength={500}
+                          value={switchReasons[transaction.transactionId] ?? ""}
                           onChange={(event) =>
-                            setQrRefundConfirmed((current) => ({
+                            setSwitchReasons((current) => ({
                               ...current,
-                              [transaction.transactionId]: event.target.checked,
+                              [transaction.transactionId]: event.target.value,
                             }))
                           }
                         />
-                        <span>I sent the QR refund to the customer.</span>
-                      </label>
-                    ) : refundShift ? (
-                      <small className="field-hint">
-                        Cash refund will come from this drawer (expected ₱
-                        {refundShift.expectedCash}).
-                      </small>
-                    ) : (
-                      <small className="field-hint field-hint-error">
-                        Open a cash drawer before recording this cash refund.
-                      </small>
+                        <button
+                          className="button button-secondary"
+                          type="submit"
+                          disabled={savingId === transaction.transactionId}
+                        >
+                          {savingId === transaction.transactionId
+                            ? "Updating payment…"
+                            : "Switch cash to QR"}
+                        </button>
+                      </form>
                     )}
-                    <small className="field-hint">
-                      Cancellation window closes in{" "}
-                      {Math.floor(secondsRemaining / 60)}:
-                      {String(secondsRemaining % 60).padStart(2, "0")}.
-                    </small>
-                    <button
-                      className="button button-primary"
-                      type="submit"
-                      disabled={
-                        savingId === transaction.transactionId ||
-                        (transaction.paymentMethod === "CASH" && !refundShift)
+                    <form
+                      className="recent-cancel-form"
+                      onSubmit={(event) =>
+                        void cancelTransaction(event, transaction)
                       }
                     >
-                      {savingId === transaction.transactionId
-                        ? "Recording cancellation…"
-                        : "Cancel and refund sale"}
-                    </button>
-                  </form>
+                      <label
+                        className="field-label"
+                        htmlFor={`reason-${transaction.transactionId}`}
+                      >
+                        Cancellation reason
+                      </label>
+                      <textarea
+                        id={`reason-${transaction.transactionId}`}
+                        className="text-input reversal-reason-input"
+                        required
+                        minLength={3}
+                        maxLength={500}
+                        value={reasons[transaction.transactionId] ?? ""}
+                        onChange={(event) =>
+                          setReasons((current) => ({
+                            ...current,
+                            [transaction.transactionId]: event.target.value,
+                          }))
+                        }
+                      />
+                      {transaction.paymentMethod === "QR" ? (
+                        <label className="inventory-checkbox">
+                          <input
+                            type="checkbox"
+                            required
+                            checked={
+                              qrRefundConfirmed[transaction.transactionId] ===
+                              true
+                            }
+                            onChange={(event) =>
+                              setQrRefundConfirmed((current) => ({
+                                ...current,
+                                [transaction.transactionId]:
+                                  event.target.checked,
+                              }))
+                            }
+                          />
+                          <span>I sent the QR refund to the customer.</span>
+                        </label>
+                      ) : refundShift ? (
+                        <small className="field-hint">
+                          Cash refund will come from this drawer (expected ₱
+                          {refundShift.expectedCash}).
+                        </small>
+                      ) : (
+                        <small className="field-hint field-hint-error">
+                          Open a cash drawer before recording this cash refund.
+                        </small>
+                      )}
+                      <small className="field-hint">
+                        Cancellation window closes in{" "}
+                        {Math.floor(secondsRemaining / 60)}:
+                        {String(secondsRemaining % 60).padStart(2, "0")}.
+                      </small>
+                      <button
+                        className="button button-primary"
+                        type="submit"
+                        disabled={
+                          savingId === transaction.transactionId ||
+                          (transaction.paymentMethod === "CASH" && !refundShift)
+                        }
+                      >
+                        {savingId === transaction.transactionId
+                          ? "Recording cancellation…"
+                          : "Cancel and refund sale"}
+                      </button>
+                    </form>
+                  </>
                 ) : (
                   <small className="field-hint">
                     Cancellation window expired.
