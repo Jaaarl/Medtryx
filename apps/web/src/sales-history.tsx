@@ -62,6 +62,33 @@ type SaleLine = {
   }>;
 };
 
+type SaleChange = {
+  id: string;
+  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+  createdAt: string;
+  actorEmail: string;
+  reason: string;
+  products: Array<{
+    name: string;
+    sku: string;
+    quantity: number;
+    stockTreatment: "RESTOCK" | "WRITE_OFF" | null;
+  }>;
+  payment: null | {
+    fromMethod: "CASH";
+    toMethod: "QR";
+    cashAmount: string;
+    qrAmount: string;
+    cashRoundingAdjustment: string;
+  };
+  refund: null | {
+    transactionId: string;
+    method: "CASH" | "QR";
+    amount: string;
+    cashRoundingAdjustment: string;
+  };
+};
+
 type SaleDetails = {
   id: string;
   transactionId: string;
@@ -71,6 +98,7 @@ type SaleDetails = {
   cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
   cashRoundingAdjustment: string;
   createdAt: string;
+  changes: SaleChange[];
   label: string;
   lines: SaleLine[];
 };
@@ -726,6 +754,54 @@ export function SalesHistoryPage() {
                 <span>Full refund amount</span>
                 <strong>₱{sale.amountDue}</strong>
               </div>
+
+              {sale.changes.length > 0 && (
+                <section className="transaction-change-list">
+                  <h3>Transaction changes</h3>
+                  {sale.changes.map((change) => (
+                    <article className="transaction-change" key={change.id}>
+                      <div className="transaction-change-heading">
+                        <strong>
+                          {change.kind === "PAYMENT_SWITCH"
+                            ? "Payment switched"
+                            : change.kind === "CANCELLATION"
+                              ? "Sale cancelled"
+                              : "Sale reversed"}
+                        </strong>
+                        <small>
+                          {dateText(change.createdAt)} · {change.actorEmail}
+                        </small>
+                      </div>
+                      <p>{change.reason}</p>
+                      {change.payment && (
+                        <p>
+                          {change.payment.fromMethod} →{" "}
+                          {change.payment.toMethod}: cash ₱
+                          {change.payment.cashAmount}, QR ₱
+                          {change.payment.qrAmount}; cash rounding adjustment ₱
+                          {change.payment.cashRoundingAdjustment}
+                        </p>
+                      )}
+                      {change.refund && (
+                        <p>
+                          Refund {change.refund.transactionId} ·{" "}
+                          {change.refund.method} · ₱{change.refund.amount}
+                        </p>
+                      )}
+                      <ul>
+                        {change.products.map((product) => (
+                          <li key={`${change.id}-${product.sku}`}>
+                            {product.name} ({product.sku}) × {product.quantity}
+                            {product.stockTreatment
+                              ? ` · ${product.stockTreatment === "RESTOCK" ? "restocked" : "written off"}`
+                              : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </article>
+                  ))}
+                </section>
+              )}
 
               {selectedSummary?.reversal ? (
                 <div className="reversal-saved-note" role="status">

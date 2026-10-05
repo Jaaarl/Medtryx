@@ -2323,6 +2323,46 @@ a {
 .sale-detail-total strong {
   font-size: 18px;
 }
+.transaction-change-list {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.transaction-change-list h3 {
+  font-size: 13px;
+}
+.transaction-change {
+  background: #f8faf9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+.transaction-change-heading {
+  display: grid;
+  gap: 4px;
+}
+.transaction-change-heading strong {
+  font-size: 12px;
+}
+.transaction-change-heading small,
+.transaction-change p,
+.transaction-change li {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.transaction-change p {
+  margin: 0;
+}
+.transaction-change ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
 .reversal-form {
   border-top: 1px solid var(--line);
   margin-top: 3px;

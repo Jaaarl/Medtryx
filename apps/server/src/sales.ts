@@ -1299,6 +1299,33 @@ type SaleRow = {
   created_at: string;
 };
 
+type SaleChange = {
+  id: string;
+  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+  createdAt: string;
+  actorEmail: string;
+  reason: string;
+  products: Array<{
+    name: string;
+    sku: string;
+    quantity: number;
+    stockTreatment: "RESTOCK" | "WRITE_OFF" | null;
+  }>;
+  payment: null | {
+    fromMethod: "CASH";
+    toMethod: "QR";
+    cashAmount: string;
+    qrAmount: string;
+    cashRoundingAdjustment: string;
+  };
+  refund: null | {
+    transactionId: string;
+    method: "CASH" | "QR";
+    amount: string;
+    cashRoundingAdjustment: string;
+  };
+};
+
 export function getSavedSale(
   db: Database.Database,
   id: string,
@@ -1360,6 +1387,121 @@ export function getSavedSale(
     allocated_cogs_centavos: number;
     tax_policy_version: string;
   }[];
+  const changes: SaleChange[] = [];
+  const paymentSwitch = db
+    .prepare(
+      `SELECT p.id, p.reason, p.from_method, p.to_method,
+              p.cash_amount_centavos, p.qr_amount_centavos,
+              p.cash_rounding_adjustment_centavos, p.created_at,
+              u.email AS actor_email
+       FROM sale_payment_switches p
+       JOIN users u ON u.id = p.changed_by_user_id
+       WHERE p.sale_id = ?`,
+    )
+    .get(id) as
+    | {
+        id: string;
+        reason: string;
+        from_method: "CASH";
+        to_method: "QR";
+        cash_amount_centavos: number;
+        qr_amount_centavos: number;
+        cash_rounding_adjustment_centavos: number;
+        created_at: string;
+        actor_email: string;
+      }
+    | undefined;
+  if (paymentSwitch) {
+    changes.push({
+      id: paymentSwitch.id,
+      kind: "PAYMENT_SWITCH",
+      createdAt: paymentSwitch.created_at,
+      actorEmail: paymentSwitch.actor_email,
+      reason: paymentSwitch.reason,
+      products: lines.map((line) => ({
+        name: line.product_name_snapshot,
+        sku: line.sku_snapshot,
+        quantity: line.quantity,
+        stockTreatment: null,
+      })),
+      payment: {
+        fromMethod: paymentSwitch.from_method,
+        toMethod: paymentSwitch.to_method,
+        cashAmount: money(paymentSwitch.cash_amount_centavos),
+        qrAmount: money(paymentSwitch.qr_amount_centavos),
+        cashRoundingAdjustment: money(
+          paymentSwitch.cash_rounding_adjustment_centavos,
+        ),
+      },
+      refund: null,
+    });
+  }
+  const reversal = db
+    .prepare(
+      `SELECT r.id, r.reversal_transaction_id, r.reason, r.refund_method,
+              r.amount_centavos, r.cash_rounding_adjustment_centavos,
+              r.created_at, u.email AS actor_email, e.action
+       FROM sale_reversals r
+       JOIN users u ON u.id = r.approved_by_user_id
+       LEFT JOIN audit_events e ON e.entity_id = r.id
+         AND e.entity_type = 'sale_reversal'
+         AND e.action IN ('sale.cancelled', 'sale.reversed')
+       WHERE r.sale_id = ? ORDER BY e.created_at DESC LIMIT 1`,
+    )
+    .get(id) as
+    | {
+        id: string;
+        reversal_transaction_id: string;
+        reason: string;
+        refund_method: "CASH" | "QR";
+        amount_centavos: number;
+        cash_rounding_adjustment_centavos: number;
+        created_at: string;
+        actor_email: string;
+        action: "sale.cancelled" | "sale.reversed" | null;
+      }
+    | undefined;
+  if (reversal) {
+    const reversalLines = db
+      .prepare(
+        `SELECT sl.product_name_snapshot, sl.sku_snapshot, rl.quantity,
+                rl.stock_treatment
+         FROM sale_reversal_lines rl
+         JOIN sale_lines sl ON sl.id = rl.sale_line_id
+         WHERE rl.reversal_id = ? ORDER BY sl.line_number`,
+      )
+      .all(reversal.id) as Array<{
+      product_name_snapshot: string;
+      sku_snapshot: string;
+      quantity: number;
+      stock_treatment: "RESTOCK" | "WRITE_OFF";
+    }>;
+    changes.push({
+      id: reversal.id,
+      kind: reversal.action === "sale.cancelled" ? "CANCELLATION" : "REVERSAL",
+      createdAt: reversal.created_at,
+      actorEmail: reversal.actor_email,
+      reason: reversal.reason,
+      products: reversalLines.map((line) => ({
+        name: line.product_name_snapshot,
+        sku: line.sku_snapshot,
+        quantity: line.quantity,
+        stockTreatment: line.stock_treatment,
+      })),
+      payment: null,
+      refund: {
+        transactionId: reversal.reversal_transaction_id,
+        method: reversal.refund_method,
+        amount: money(reversal.amount_centavos),
+        cashRoundingAdjustment: money(
+          reversal.cash_rounding_adjustment_centavos,
+        ),
+      },
+    });
+  }
+  changes.sort((first, second) =>
+    first.createdAt.localeCompare(second.createdAt),
+  );
   return {
     id: sale.id,
     transactionId: sale.transaction_id,
@@ -1378,6 +1520,7 @@ export function getSavedSale(
     cashRoundingAdjustment: money(sale.cash_rounding_adjustment_centavos),
     taxPolicyVersion: sale.tax_policy_version,
     createdAt: sale.created_at,
+    changes,
     label: "INTERNAL SALES RECORD — NOT AN INVOICE",
     lines: lines.map((line) => ({
       saleLineId: line.id,
@@ -1955,11 +2098,8 @@ export function registerSalesRoutes(
     closeShiftRequest(req, res, false);
   });
 
-  router.post(
-    "/shifts/:id/emergency-close",
-    requireAuth,
-    csrf,
-    (req, res) => closeShiftRequest(req, res, true),
+  router.post("/shifts/:id/emergency-close", requireAuth, csrf, (req, res) =>
+    closeShiftRequest(req, res, true),
   );
 
   router.post("/sales/preview", requireAuth, csrf, (req, res) => {

@@ -1005,7 +1005,8 @@ export function registerReversalRoutes(
 
           const saleLines = db
             .prepare(
-              `SELECT id, product_id, quantity, amount_due_centavos,
+              `SELECT id, product_id, product_name_snapshot, sku_snapshot,
+                      quantity, amount_due_centavos,
                       allocated_cogs_centavos,
                       EXISTS(SELECT 1 FROM sale_line_lot_allocations a
                              WHERE a.sale_line_id = sale_lines.id) AS lot_tracked
@@ -1014,6 +1015,8 @@ export function registerReversalRoutes(
             .all(sale.id) as {
             id: string;
             product_id: string;
+            product_name_snapshot: string;
+            sku_snapshot: string;
             quantity: number;
             amount_due_centavos: number;
             allocated_cogs_centavos: number;
@@ -1374,6 +1377,14 @@ export function registerReversalRoutes(
               restoredCogsCentavos: restoredCogs,
               writeoffCentavos: writeoffCogs,
               lineCount: saleLines.length,
+              products: saleLines.map((line) => ({
+                name: line.product_name_snapshot,
+                sku: line.sku_snapshot,
+                quantity: line.quantity,
+                stockTreatment: decisionByLine.get(line.id)!.restock
+                  ? "RESTOCK"
+                  : "WRITE_OFF",
+              })),
               cashShiftId: cashShift?.id ?? null,
               lotActions: reversalLotActions,
             },
