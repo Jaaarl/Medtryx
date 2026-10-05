@@ -42,6 +42,7 @@ type BenefitTransaction = {
   createdAt: string;
   benefitType: "SENIOR_CITIZEN" | "PWD";
   customerName: string;
+  customerIdNumber: string;
   products: Array<{ name: string; quantity: number }>;
 };
 
@@ -368,6 +369,7 @@ export function ReportsPage() {
                     <tr>
                       <th>Date</th>
                       <th>Customer</th>
+                      <th>ID number</th>
                       <th>Benefit</th>
                       <th>Products</th>
                       <th>Transaction</th>
@@ -387,6 +389,7 @@ export function ReportsPage() {
                           )}
                         </td>
                         <td>{transaction.customerName}</td>
+                        <td>{transaction.customerIdNumber}</td>
                         <td>
                           {transaction.benefitType === "SENIOR_CITIZEN"
                             ? "Senior citizen"
@@ -413,8 +416,8 @@ export function ReportsPage() {
               </p>
             )}
             <small className="field-hint">
-              Customer names are shown to owners only. Each list view is
-              recorded in the audit history.
+              Customer names and ID numbers are shown to owners only. Each list
+              view is recorded in the audit history.
             </small>
           </section>
 

@@ -691,6 +691,7 @@ describe("beneficiary transaction range report", () => {
       businessDate: today,
       benefitType: "PWD",
       customerName: "Synthetic PWD Report Person",
+      customerIdNumber: "SYN-PWD-REPORT-2",
       products: [{ name: "Synthetic beneficiary medicine", quantity: 1 }],
     });
 
@@ -705,12 +706,14 @@ describe("beneficiary transaction range report", () => {
           businessDate: yesterday,
           benefitType: "SENIOR_CITIZEN",
           customerName: "Synthetic Senior Report Person",
+          customerIdNumber: "SYN-SC-REPORT-1",
         }),
         expect.objectContaining({
           transactionId: pwdSale.transactionId,
           businessDate: today,
           benefitType: "PWD",
           customerName: "Synthetic PWD Report Person",
+          customerIdNumber: "SYN-PWD-REPORT-2",
         }),
       ]),
     );
@@ -741,6 +744,9 @@ describe("beneficiary transaction range report", () => {
     });
     expect(JSON.stringify(reportAudit.details)).not.toContain(
       "Synthetic PWD Report Person",
+    );
+    expect(JSON.stringify(reportAudit.details)).not.toContain(
+      "SYN-PWD-REPORT-2",
     );
   });
 });

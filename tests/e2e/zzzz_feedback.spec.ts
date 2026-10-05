@@ -94,6 +94,7 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     benefitType: "REGULAR" | "SENIOR_CITIZEN" | "PWD",
     paymentMethod: "CASH" | "QR",
     customerName?: string,
+    customerIdNumber?: string,
   ) => {
     const response = await postApi(cashierPage, "/api/sales", {
       benefitType,
@@ -110,7 +111,9 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
         ? {
             customerName,
             customerIdType: `${benefitType} Card`,
-            customerIdNumber: `SYN-${benefitType}-${randomUUID().slice(0, 8)}`,
+            customerIdNumber:
+              customerIdNumber ??
+              `SYN-${benefitType}-${randomUUID().slice(0, 8)}`,
             customerIdChecked: true,
           }
         : {}),
@@ -123,8 +126,14 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     "SENIOR_CITIZEN",
     "QR",
     "Synthetic E2E Senior",
+    "SYN-SC-FEEDBACK-001",
   );
-  const pwdSale = await createSale("PWD", "QR", "Synthetic E2E PWD");
+  const pwdSale = await createSale(
+    "PWD",
+    "QR",
+    "Synthetic E2E PWD",
+    "SYN-PWD-FEEDBACK-002",
+  );
   const correctionSale = await createSale("REGULAR", "CASH");
 
   await cashierPage.goto("/checkout");
@@ -166,6 +175,8 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
   const benefitTable = ownerPage.locator(".report-low-stock table").first();
   await expect(benefitTable.getByText("Synthetic E2E Senior")).toBeVisible();
   await expect(benefitTable.getByText("Synthetic E2E PWD")).toBeVisible();
+  await expect(benefitTable.getByText("SYN-SC-FEEDBACK-001")).toBeVisible();
+  await expect(benefitTable.getByText("SYN-PWD-FEEDBACK-002")).toBeVisible();
   await expect(
     benefitTable.getByText(/Synthetic Feedback Medicine/).first(),
   ).toBeVisible();

@@ -657,7 +657,8 @@ export function registerReportRoutes(
       const sales = db
         .prepare(
           `SELECT s.id, s.transaction_id, s.business_date, s.created_at,
-                  s.benefit_type, s.customer_name_ciphertext
+                  s.benefit_type, s.customer_name_ciphertext,
+                  s.customer_id_number_ciphertext
            FROM sales s
            WHERE s.business_date >= ? AND s.business_date <= ?
              AND s.benefit_type IN ('SENIOR_CITIZEN', 'PWD')
@@ -670,6 +671,7 @@ export function registerReportRoutes(
         created_at: string;
         benefit_type: "SENIOR_CITIZEN" | "PWD";
         customer_name_ciphertext: string;
+        customer_id_number_ciphertext: string;
       }>;
 
       try {
@@ -685,6 +687,10 @@ export function registerReportRoutes(
           customerName: decryptCustomerField(
             sale.customer_name_ciphertext,
             `${sale.id}/name`,
+          ),
+          customerIdNumber: decryptCustomerField(
+            sale.customer_id_number_ciphertext,
+            `${sale.id}/id-number`,
           ),
           products: (
             productsForSale.all(sale.id) as Array<{
