@@ -1,0 +1,2 @@
+sku,quantity,unitCost,reference,supplier,lotCode,expiryDate,zeroCostReason
+REPLACE-WITH-EXISTING-SKU,10,12.50,Example delivery reference,Example supplier,SAMPLE-LOT-001,2099-12-31,

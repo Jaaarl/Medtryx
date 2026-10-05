@@ -1,0 +1,2 @@
+sku,name,barcode,unit,sellingPrice,taxClass,productType,isScEligible,isPwdEligible,bnpcEligible,bnpcCategory,tracksLots,openingQuantity,openingUnitCost,reorderLevel,openingReference,openingLotCode,openingExpiryDate,openingSupplier,zeroCostReason
+SAMPLE-NEW-PRODUCT-001,Example tracked product,,tablet,25.00,VATABLE,GENERIC,FALSE,FALSE,FALSE,,TRUE,10,12.50,2,Opening stock example,SAMPLE-LOT-001,2099-12-31,Example supplier,

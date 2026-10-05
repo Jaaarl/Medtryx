@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 test("owner imports new products with opening stock, lots, and expiry from CSV", async ({
   page,
@@ -11,6 +12,19 @@ test("owner imports new products with opening stock, lots, and expiry from CSV",
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(/\/checkout$/);
   await page.goto("/products");
+
+  const [productTemplateDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page
+      .getByRole("link", { name: "Download new products CSV sample" })
+      .click(),
+  ]);
+  expect(productTemplateDownload.suggestedFilename()).toBe(
+    "new-products-opening-stock.csv",
+  );
+  expect(
+    await readFile((await productTemplateDownload.path())!, "utf8"),
+  ).toContain("openingLotCode");
 
   const csv = [
     "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity,openingUnitCost,openingReference,openingLotCode,openingExpiryDate,openingSupplier",
@@ -47,6 +61,19 @@ test("owner imports new products with opening stock, lots, and expiry from CSV",
   );
 
   await page.goto("/stock");
+  const [stockTemplateDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page
+      .getByRole("link", { name: "Download existing stock CSV sample" })
+      .click(),
+  ]);
+  expect(stockTemplateDownload.suggestedFilename()).toBe(
+    "existing-products-stock.csv",
+  );
+  expect(
+    await readFile((await stockTemplateDownload.path())!, "utf8"),
+  ).toContain("quantity,unitCost,reference");
+
   const stockCsv = [
     "sku,quantity,unitCost,reference,supplier,lotCode,expiryDate,zeroCostReason",
     "SYN-CSV-IMPORT-001,3,22.00,Synthetic stock CSV receipt,Synthetic supplier,SYN-CSV-LOT-002,2036-12-31,",

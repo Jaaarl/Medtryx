@@ -1036,6 +1036,13 @@ a {
 .csv-import-card {
   margin-bottom: 16px;
 }
+.csv-template-download {
+  align-items: center;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  margin-top: 8px;
+}
 .csv-import-form {
   align-items: end;
   display: grid;

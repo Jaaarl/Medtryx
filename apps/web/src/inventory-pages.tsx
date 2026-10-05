@@ -381,8 +381,17 @@ function ProductCsvImportPanel({
           <p>
             Create catalog products with opening stock and optional lot and
             expiry details. The whole file is checked before any products are
-            added; up to 500 rows and 200 KB per file.
+            added; up to 500 rows and 200 KB per file. Replace or remove the
+            downloaded sample row before importing.
           </p>
+          <a
+            className="text-action csv-template-download"
+            href="/csv-templates/new-products-opening-stock.csv"
+            download
+          >
+            <ArrowDownToLine size={14} />
+            Download new products CSV sample
+          </a>
         </div>
       </div>
       {error && (
@@ -498,8 +507,17 @@ function StockCsvImportPanel({
           <p>
             Add receipt rows to existing SKUs. Tracked products need a lot code
             and expiry date. The whole file is checked before stock changes; up
-            to 500 rows and 200 KB per file.
+            to 500 rows and 200 KB per file. Replace or remove the downloaded
+            sample row before importing.
           </p>
+          <a
+            className="text-action csv-template-download"
+            href="/csv-templates/existing-products-stock.csv"
+            download
+          >
+            <ArrowDownToLine size={14} />
+            Download existing stock CSV sample
+          </a>
         </div>
       </div>
       {error && (
