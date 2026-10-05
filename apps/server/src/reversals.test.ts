@@ -187,6 +187,33 @@ async function reverse(
     });
 }
 
+async function quickCancel(
+  cashier: Agent,
+  transactionId: string,
+  saleLineId: string,
+  options: {
+    method: "CASH" | "QR";
+    shiftId?: string;
+    restock: boolean;
+    qrRefundConfirmed?: boolean;
+    reason?: string;
+  },
+) {
+  const csrf = await csrfFor(cashier);
+  return cashier
+    .post(`/api/sales/${transactionId}/reversals`)
+    .set("x-csrf-token", csrf)
+    .send({
+      reason: options.reason ?? "Synthetic quick cancellation test",
+      refundMethod: options.method,
+      ...(options.shiftId ? { refundShiftId: options.shiftId } : {}),
+      ...(options.qrRefundConfirmed !== undefined
+        ? { qrRefundConfirmed: options.qrRefundConfirmed }
+        : {}),
+      lines: [{ saleLineId, restock: options.restock }],
+    });
+}
+
 beforeAll(async () => {
   dataDirectory = mkdtempSync(join(tmpdir(), "medtryx-reversals-test-"));
   db = openDatabase("test", dataDirectory);
@@ -327,6 +354,258 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       qr_amount_centavos: 11_213,
       cash_rounding_adjustment_centavos: 12,
     });
+
+    const detailsAfterSwitch = await owner.get(
+      `/api/sales/${sale.transactionId}`,
+    );
+    expect(detailsAfterSwitch.body.sale.changes).toEqual([
+      expect.objectContaining({
+        kind: "PAYMENT_SWITCH",
+        actorEmail: "cashier.reversals@example.test",
+        reason: "Customer paid by QR after the cash sale was saved",
+        products: [
+          expect.objectContaining({
+            name: "Synthetic Reversal Product",
+            sku: "SYN-REVERSAL-001",
+            quantity: 1,
+          }),
+        ],
+        payment: {
+          fromMethod: "CASH",
+          toMethod: "QR",
+          cashAmount: "112.25",
+          qrAmount: "112.13",
+          cashRoundingAdjustment: "0.12",
+        },
+        refund: null,
+      }),
+    ]);
+  });
+
+  it("cancels a cash sale within ten minutes, refunds the drawer, restocks, and logs who changed it", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+    const product = await createProduct(owner, { sellingPrice: "112.13" });
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const shift = await openShift(cashier, "200.00");
+    expect(shift.status).toBe(201);
+    const sale = await sell(cashier, product.id, "CASH");
+    expect(sale.amountDue).toBe("112.25");
+
+    const recent = await cashier.get("/api/sales/recent");
+    expect(recent.status).toBe(200);
+    expect(recent.body.sales).toEqual([
+      expect.objectContaining({
+        transactionId: sale.transactionId,
+        paymentMethod: "CASH",
+        amountDue: "112.25",
+        qrAmountIfSwitched: "112.13",
+        status: "FINALIZED",
+        lines: [
+          expect.objectContaining({
+            productName: "Synthetic Reversal Product",
+            sku: "SYN-REVERSAL-001",
+            quantity: 1,
+          }),
+        ],
+      }),
+    ]);
+
+    const cancelled = await quickCancel(
+      cashier,
+      sale.transactionId,
+      sale.lines[0]!.saleLineId,
+      {
+        method: "CASH",
+        shiftId: shift.body.shift.id as string,
+        restock: true,
+        reason: "Customer changed their mind before leaving",
+      },
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(201);
+    expect(cancelled.body.reversal).toMatchObject({
+      saleTransactionId: sale.transactionId,
+      reason: "Customer changed their mind before leaving",
+      refundMethod: "CASH",
+      amount: "112.25",
+      approvedBy: "cashier.reversals@example.test",
+      lines: [
+        expect.objectContaining({
+          productName: "Synthetic Reversal Product",
+          quantity: 1,
+          stockTreatment: "RESTOCK",
+        }),
+      ],
+    });
+    expect(
+      (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+    ).toBe("200.00");
+    expect(
+      db
+        .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 5 });
+    expect(
+      db
+        .prepare(
+          "SELECT movement_type, amount_delta_centavos FROM cash_movements",
+        )
+        .get(),
+    ).toEqual({ movement_type: "CASH_REFUND", amount_delta_centavos: -11_225 });
+
+    const saved = await owner.get(`/api/sales/${sale.transactionId}`);
+    expect(saved.body.sale.changes).toEqual([
+      expect.objectContaining({
+        kind: "CANCELLATION",
+        actorEmail: "cashier.reversals@example.test",
+        reason: "Customer changed their mind before leaving",
+        products: [
+          {
+            name: "Synthetic Reversal Product",
+            sku: "SYN-REVERSAL-001",
+            quantity: 1,
+            stockTreatment: "RESTOCK",
+          },
+        ],
+        payment: null,
+        refund: expect.objectContaining({
+          method: "CASH",
+          amount: "112.25",
+        }),
+      }),
+    ]);
+    expect(
+      (await cashier.get("/api/sales/recent")).body.sales[0],
+    ).toMatchObject({
+      transactionId: sale.transactionId,
+      status: "REVERSED",
+      reversalTransactionId: cancelled.body.reversal.transactionId,
+    });
+  });
+
+  it("requires QR refund confirmation before cancellation and records write-offs in history", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const shift = await openShift(cashier, "100.00");
+    const sale = await sell(cashier, product.id, "QR");
+    const saleLineId = sale.lines[0]!.saleLineId;
+
+    const unconfirmed = await quickCancel(
+      cashier,
+      sale.transactionId,
+      saleLineId,
+      { method: "QR", restock: false },
+    );
+    expect(unconfirmed.status).toBe(400);
+    expect(unconfirmed.body.error).toBe("qr_refund_confirmation_required");
+    expect(
+      (
+        db.prepare("SELECT COUNT(*) AS count FROM sale_reversals").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
+
+    const cancelled = await quickCancel(
+      cashier,
+      sale.transactionId,
+      saleLineId,
+      { method: "QR", restock: false, qrRefundConfirmed: true },
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(201);
+    expect(cancelled.body.reversal).toMatchObject({
+      refundMethod: "QR",
+      amount: "112.00",
+      lines: [expect.objectContaining({ stockTreatment: "WRITE_OFF" })],
+    });
+    expect(
+      (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+    ).toBe("100.00");
+    expect(
+      db
+        .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 4 });
+    const saved = await owner.get(`/api/sales/${sale.transactionId}`);
+    expect(saved.body.sale.changes[0]).toMatchObject({
+      kind: "CANCELLATION",
+      products: [
+        {
+          name: "Synthetic Reversal Product",
+          sku: "SYN-REVERSAL-001",
+          quantity: 1,
+          stockTreatment: "WRITE_OFF",
+        },
+      ],
+      refund: { method: "QR", amount: "112.00" },
+    });
+    expect(
+      (
+        db.prepare("SELECT COUNT(*) AS count FROM cash_movements").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
+  });
+
+  it("hides and rejects cancellation and payment changes after the ten-minute window", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const shift = await openShift(cashier, "200.00");
+    const sale = await sell(cashier, product.id, "CASH");
+    db.prepare("UPDATE sales SET created_at = ? WHERE transaction_id = ?").run(
+      new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+      sale.transactionId,
+    );
+
+    expect((await cashier.get("/api/sales/recent")).body.sales).toEqual([]);
+    const cancel = await quickCancel(
+      cashier,
+      sale.transactionId,
+      sale.lines[0]!.saleLineId,
+      {
+        method: "CASH",
+        shiftId: shift.body.shift.id as string,
+        restock: true,
+      },
+    );
+    expect(cancel.status).toBe(409);
+    expect(cancel.body.error).toBe("quick_action_window_expired");
+
+    const switched = await postWithCsrf(
+      cashier,
+      `/api/sales/${sale.transactionId}/payment-switches`,
+      { reason: "Synthetic attempt after the correction window" },
+    );
+    expect(switched.status).toBe(409);
+    expect(switched.body.error).toBe("quick_action_window_expired");
+    expect(
+      (
+        db.prepare("SELECT COUNT(*) AS count FROM sale_reversals").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
+    expect(
+      (
+        db
+          .prepare("SELECT COUNT(*) AS count FROM sale_payment_switches")
+          .get() as { count: number }
+      ).count,
+    ).toBe(0);
   });
 
   it("returns verified sellable stock to its original lots and writes off a quarantined lot", async () => {

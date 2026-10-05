@@ -605,3 +605,142 @@ describe("daily owner reports and CSV export", () => {
     ).toBe(200);
   });
 });
+
+describe("beneficiary transaction range report", () => {
+  it("lists SC and PWD customers and products only inside the owner-selected date range", async () => {
+    const owner = await signIn("owner.reports@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.reports@example.test",
+      cashierPassword,
+    );
+    const configured = await postWithCsrf(owner, "/settings/tax-policy", {
+      confirmApproved: true,
+      version: "SYNTHETIC-BENEFICIARY-TAX",
+      vatRateBasisPoints: 1_200,
+      seniorDiscountBasisPoints: 2_000,
+      pwdDiscountBasisPoints: 2_000,
+      vatInclusivePrices: true,
+      allowZeroRated: false,
+      roundingMode: "HALF_UP",
+      approvalReference: "Synthetic beneficiary report test only",
+      costBasisDescription: "Synthetic weighted-average acquisition cost",
+    });
+    expect(configured.status).toBe(200);
+    const productResponse = await postWithCsrf(owner, "/products", {
+      sku: "SYN-BENEFICIARY-001",
+      name: "Synthetic beneficiary medicine",
+      unit: "piece",
+      sellingPrice: "112.00",
+      taxClass: "VATABLE",
+      productType: "BRANDED",
+      isScEligible: true,
+      isPwdEligible: true,
+      openingQuantity: 5,
+      openingUnitCost: "40.00",
+    });
+    expect(productResponse.status, JSON.stringify(productResponse.body)).toBe(
+      201,
+    );
+    const productId = productResponse.body.product.id as string;
+    expect(
+      (await postWithCsrf(cashier, "/shifts", { openingCash: "100.00" }))
+        .status,
+    ).toBe(201);
+
+    const createBeneficiarySale = async (
+      benefitType: "SENIOR_CITIZEN" | "PWD",
+      customerName: string,
+      idNumber: string,
+    ) => {
+      const response = await postWithCsrf(cashier, "/sales", {
+        benefitType,
+        items: [{ productId, quantity: 1, benefitApplied: true }],
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        customerName,
+        customerIdType: `${benefitType} Card`,
+        customerIdNumber: idNumber,
+        customerIdChecked: true,
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      return response.body.sale as { transactionId: string };
+    };
+    const seniorSale = await createBeneficiarySale(
+      "SENIOR_CITIZEN",
+      "Synthetic Senior Report Person",
+      "SYN-SC-REPORT-1",
+    );
+    const pwdSale = await createBeneficiarySale(
+      "PWD",
+      "Synthetic PWD Report Person",
+      "SYN-PWD-REPORT-2",
+    );
+    const today = manilaDayAfter(0);
+    const yesterday = manilaDayAfter(-1);
+    db.prepare(
+      "UPDATE sales SET business_date = ? WHERE transaction_id = ?",
+    ).run(yesterday, seniorSale.transactionId);
+
+    const todayOnly = await owner.get(
+      `/api/reports/beneficiaries/range?startDate=${today}&endDate=${today}`,
+    );
+    expect(todayOnly.status, JSON.stringify(todayOnly.body)).toBe(200);
+    expect(todayOnly.body.transactions).toHaveLength(1);
+    expect(todayOnly.body.transactions[0]).toMatchObject({
+      transactionId: pwdSale.transactionId,
+      businessDate: today,
+      benefitType: "PWD",
+      customerName: "Synthetic PWD Report Person",
+      products: [{ name: "Synthetic beneficiary medicine", quantity: 1 }],
+    });
+
+    const bothDays = await owner.get(
+      `/api/reports/beneficiaries/range?startDate=${yesterday}&endDate=${today}`,
+    );
+    expect(bothDays.status).toBe(200);
+    expect(bothDays.body.transactions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          transactionId: seniorSale.transactionId,
+          businessDate: yesterday,
+          benefitType: "SENIOR_CITIZEN",
+          customerName: "Synthetic Senior Report Person",
+        }),
+        expect.objectContaining({
+          transactionId: pwdSale.transactionId,
+          businessDate: today,
+          benefitType: "PWD",
+          customerName: "Synthetic PWD Report Person",
+        }),
+      ]),
+    );
+
+    expect(
+      (
+        await cashier.get(
+          `/api/reports/beneficiaries/range?startDate=${today}&endDate=${today}`,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await owner.get(
+          `/api/reports/beneficiaries/range?startDate=${today}&endDate=${yesterday}`,
+        )
+      ).status,
+    ).toBe(400);
+    const audit = await owner.get("/api/audit?limit=20");
+    const reportAudit = audit.body.events.find(
+      (event: { action: string }) =>
+        event.action === "report.beneficiary_list_viewed",
+    );
+    expect(reportAudit.details).toMatchObject({
+      startDate: yesterday,
+      endDate: today,
+      recordCount: 2,
+    });
+    expect(JSON.stringify(reportAudit.details)).not.toContain(
+      "Synthetic PWD Report Person",
+    );
+  });
+});

@@ -413,9 +413,11 @@ export function createApp(
   registerBackupRoutes(inventoryRouter, db);
   app.use("/api", inventoryRouter);
   const salesRouter = express.Router();
+  // Register fixed sales paths such as /sales/recent before the parameterized
+  // /sales/:transactionId detail route, which would otherwise consume them.
+  registerReversalRoutes(salesRouter, db);
   registerSalesRoutes(salesRouter, db);
   registerBnpcPolicyRoutes(salesRouter, db);
-  registerReversalRoutes(salesRouter, db);
   registerReportRoutes(salesRouter, db);
   app.use("/api", salesRouter);
 
