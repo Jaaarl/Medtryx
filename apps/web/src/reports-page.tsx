@@ -105,10 +105,10 @@ const metricGroups: Array<{
     ],
   },
   {
-    heading: "Declared payments and cash movement",
+    heading: "Payments and refunds",
     metrics: [
-      ["Cash sales", "cashSales"],
-      ["QR sales", "qrSales"],
+      ["Cash sales (before refunds)", "cashSales"],
+      ["QR sales (before refunds)", "qrSales"],
       [
         "Cash rounding adjustments (net of reversals)",
         "cashRoundingAdjustments",

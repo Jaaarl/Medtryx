@@ -185,6 +185,17 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
   await expect(benefitTable.getByText("Synthetic E2E PWD")).toBeVisible();
   await expect(benefitTable.getByText("SYN-SC-FEEDBACK-001")).toBeVisible();
   await expect(benefitTable.getByText("SYN-PWD-FEEDBACK-002")).toBeVisible();
+  const paymentSection = ownerPage.locator(".report-group-card").filter({
+    has: ownerPage.getByRole("heading", { name: "Payments and refunds" }),
+  });
+  await expect(
+    paymentSection.getByText("QR sales (before refunds)", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    ownerPage.getByText(
+      /Cancellations and reversals appear in separate cash or QR refund totals/,
+    ),
+  ).toBeVisible();
   await expect(
     benefitTable.getByText(/Synthetic Feedback Medicine/).first(),
   ).toBeVisible();

@@ -443,6 +443,9 @@ describe("daily owner reports and CSV export", () => {
       netSalesExcludingVat: "0.00",
       estimatedGrossProfit: "0.00",
     });
+    expect(afterReversal.body.report.notes).toContain(
+      "Cash and QR sales show staff-declared payments before refunds. Cancellations and reversals appear in separate cash or QR refund totals on their recorded reversal date; compare sales and refunds for the selected date range to understand net collections.",
+    );
     const csv = await owner.get(
       `/api/reports/daily.csv?date=${sale.businessDate}`,
     );
@@ -585,7 +588,9 @@ describe("daily owner reports and CSV export", () => {
     expect(csv.text).toContain(
       '"Report","Manila business dates","2026-04-30 to 2026-05-01"',
     );
-    expect(csv.text).toContain('"Payments","Cash declared sales","112.00"');
+    expect(csv.text).toContain(
+      '"Payments","Cash sales before refunds","112.00"',
+    );
     expect(csv.text).toContain('"Payments","QR refunds","112.00"');
     expect(csv.text).toContain(startSale.transactionId);
     expect(csv.text).toContain("owner.reports@example.test");
