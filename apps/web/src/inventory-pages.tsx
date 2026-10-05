@@ -41,7 +41,6 @@ type Product = {
   unitPriceSpread: string;
   estimatedUnitGrossProfit: string;
   grossProfitEstimateApproved: boolean;
-  grossProfitEstimateNote: string;
 };
 
 type CatalogProduct = Pick<
@@ -647,13 +646,6 @@ export function ProductsPage() {
               </tbody>
             </table>
           </div>
-          <div className="inventory-estimate-note">
-            <AlertTriangle size={14} />
-            <span>
-              {products[0]?.grossProfitEstimateNote ??
-                "Gross-profit estimates use a provisional 12% VAT-inclusive assumption until tax and acquisition-cost settings are approved."}
-            </span>
-          </div>
         </section>
         <aside className="create-card inventory-form-card">
           <span className="create-card-icon">
@@ -808,21 +800,6 @@ export function ProductsPage() {
                 />
                 <span>BNPC 5% discount eligible</span>
               </label>
-              <small className="field-hint">
-                Senior/PWD eligibility controls the standard 20% discount and
-                VAT exemption. BNPC is a separate 5% discount and is available
-                to either holder type without selecting either standard flag.{" "}
-                BNPC covers only goods on the official Basic Necessities and
-                Prime Commodities list. Check the exact product before turning
-                this on; toiletries like shampoo are not automatically covered.{" "}
-                <a
-                  href="https://ncda.gov.ph/2024-revised-rules-on-granting-special-discounts-to-senior-citizens-and-persons-with-disability-on-purchase-of-basic-necessities-and-prime-commodities-joint-administrative-order-no-24-02-series-of-2/"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open JAO No. 24-02 (2024)
-                </a>
-              </small>
             </div>
             {form.isBnpcEligible && (
               <div

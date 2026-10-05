@@ -404,9 +404,6 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
       netRegularRevenueCents.minus(averageCostCents),
     ),
     grossProfitEstimateApproved: policy.approved,
-    grossProfitEstimateNote: policy.approved
-      ? `Regular-sale estimate uses approved ${policy.version} tax settings and the configured acquisition-cost basis (${policy.costBasisDescription}); benefit discounts and operating expenses are excluded.`
-      : "Provisional 12% VAT-inclusive estimate; tax rate and acquisition-cost basis require approval.",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

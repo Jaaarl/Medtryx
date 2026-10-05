@@ -503,9 +503,7 @@ describe("owner catalog and stock operations", () => {
     expect(created.status).toBe(201);
     expect(created.body.product.estimatedUnitGrossProfit).toBe("60.00");
     expect(created.body.product.grossProfitEstimateApproved).toBe(true);
-    expect(created.body.product.grossProfitEstimateNote).toContain(
-      "SYNTHETIC-GROSS-PROFIT-POLICY",
-    );
+    expect(created.body.product.grossProfitEstimateNote).toBeUndefined();
   });
 
   it("rejects a zero selling price before it reaches the database constraint", async () => {
