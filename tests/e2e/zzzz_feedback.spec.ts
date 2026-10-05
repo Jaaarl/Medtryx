@@ -143,7 +143,7 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
   await expect(recentTransaction).toBeVisible();
   await recentTransaction
     .getByLabel("Reason for payment correction")
-    .fill("Synthetic customer changed payment method");
+    .selectOption("Cashier Fault");
   await recentTransaction
     .getByRole("button", { name: "Switch cash to QR" })
     .click();
@@ -153,6 +153,9 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
 
   await recentTransaction
     .getByLabel("Cancellation reason")
+    .selectOption("Custom");
+  await recentTransaction
+    .getByLabel("Custom cancellation reason")
     .fill("Synthetic customer cancelled after payment correction");
   await recentTransaction.getByLabel("Returned and saleable; restock").check();
   await recentTransaction
@@ -200,7 +203,7 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     correctionSection.getByText(`${cashier.email} (cashier)`),
   ).toHaveCount(2);
   await expect(
-    correctionSection.getByText("Synthetic customer changed payment method"),
+    correctionSection.getByText("Cashier Fault", { exact: true }),
   ).toBeVisible();
   await expect(
     correctionSection.getByText(
@@ -247,7 +250,7 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
   await expect(changes.getByText("Payment switched")).toBeVisible();
   await expect(changes.getByText("Sale cancelled")).toBeVisible();
   await expect(
-    changes.getByText("Synthetic customer changed payment method"),
+    changes.getByText("Cashier Fault", { exact: true }),
   ).toBeVisible();
   await expect(
     changes.getByText("Synthetic customer cancelled after payment correction"),

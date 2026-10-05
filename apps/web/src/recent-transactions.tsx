@@ -27,6 +27,12 @@ type RecentTransaction = {
 type RefundShift = { id: string; expectedCash: string };
 
 const ACTION_WINDOW_MS = 10 * 60 * 1000;
+type ReasonChoice = "" | "Cashier Fault" | "Customer Fault" | "Custom";
+
+function recordedReason(choice: ReasonChoice, customReason: string): string {
+  if (choice !== "Custom") return choice;
+  return customReason.trim() || "Custom";
+}
 
 function transactionError(error: unknown): string {
   if (!(error instanceof ApiError))
@@ -83,10 +89,16 @@ export function RecentTransactions({
     {},
   );
   const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [switchReasons, setSwitchReasons] = useState<Record<string, string>>(
+  const [reasons, setReasons] = useState<Record<string, ReasonChoice>>({});
+  const [customReasons, setCustomReasons] = useState<Record<string, string>>(
     {},
   );
+  const [switchReasons, setSwitchReasons] = useState<
+    Record<string, ReasonChoice>
+  >({});
+  const [customSwitchReasons, setCustomSwitchReasons] = useState<
+    Record<string, string>
+  >({});
   const [qrRefundConfirmed, setQrRefundConfirmed] = useState<
     Record<string, boolean>
   >({});
@@ -172,7 +184,10 @@ export function RecentTransactions({
       const result = await api.post<{
         reversal: { transactionId: string; amount: string };
       }>(`/sales/${transaction.transactionId}/reversals`, {
-        reason: reasons[transaction.transactionId] ?? "",
+        reason: recordedReason(
+          reasons[transaction.transactionId] ?? "",
+          customReasons[transaction.transactionId] ?? "",
+        ),
         refundMethod: transaction.paymentMethod,
         ...(transaction.paymentMethod === "CASH"
           ? { refundShiftId: refundShift!.id }
@@ -203,7 +218,10 @@ export function RecentTransactions({
       const result = await api.post<{
         paymentSwitch: { cashAmount: string; qrAmount: string };
       }>(`/sales/${transaction.transactionId}/payment-switches`, {
-        reason: switchReasons[transaction.transactionId] ?? "",
+        reason: recordedReason(
+          switchReasons[transaction.transactionId] ?? "",
+          customSwitchReasons[transaction.transactionId] ?? "",
+        ),
       });
       setNotice(
         `Payment switched: cash reduced by ₱${result.paymentSwitch.cashAmount}; QR now shows ₱${result.paymentSwitch.qrAmount}.`,
@@ -368,20 +386,45 @@ export function RecentTransactions({
                         >
                           Reason for payment correction
                         </label>
-                        <textarea
+                        <select
                           id={`switch-reason-${transaction.transactionId}`}
-                          className="text-input reversal-reason-input"
+                          className="text-input select-input"
                           required
-                          minLength={3}
-                          maxLength={500}
                           value={switchReasons[transaction.transactionId] ?? ""}
                           onChange={(event) =>
                             setSwitchReasons((current) => ({
                               ...current,
-                              [transaction.transactionId]: event.target.value,
+                              [transaction.transactionId]: event.target
+                                .value as ReasonChoice,
                             }))
                           }
-                        />
+                        >
+                          <option value="" disabled>
+                            Select a reason
+                          </option>
+                          <option value="Cashier Fault">Cashier Fault</option>
+                          <option value="Customer Fault">Customer Fault</option>
+                          <option value="Custom">Custom</option>
+                        </select>
+                        {switchReasons[transaction.transactionId] ===
+                          "Custom" && (
+                          <textarea
+                            aria-label="Custom payment correction reason"
+                            className="text-input reversal-reason-input"
+                            placeholder="Add a custom reason (optional)"
+                            maxLength={500}
+                            value={
+                              customSwitchReasons[transaction.transactionId] ??
+                              ""
+                            }
+                            onChange={(event) =>
+                              setCustomSwitchReasons((current) => ({
+                                ...current,
+                                [transaction.transactionId]: event.target.value,
+                              }))
+                            }
+                          />
+                        )}
                         <button
                           className="button button-secondary"
                           type="submit"
@@ -405,20 +448,41 @@ export function RecentTransactions({
                       >
                         Cancellation reason
                       </label>
-                      <textarea
+                      <select
                         id={`reason-${transaction.transactionId}`}
-                        className="text-input reversal-reason-input"
+                        className="text-input select-input"
                         required
-                        minLength={3}
-                        maxLength={500}
                         value={reasons[transaction.transactionId] ?? ""}
                         onChange={(event) =>
                           setReasons((current) => ({
                             ...current,
-                            [transaction.transactionId]: event.target.value,
+                            [transaction.transactionId]: event.target
+                              .value as ReasonChoice,
                           }))
                         }
-                      />
+                      >
+                        <option value="" disabled>
+                          Select a reason
+                        </option>
+                        <option value="Cashier Fault">Cashier Fault</option>
+                        <option value="Customer Fault">Customer Fault</option>
+                        <option value="Custom">Custom</option>
+                      </select>
+                      {reasons[transaction.transactionId] === "Custom" && (
+                        <textarea
+                          aria-label="Custom cancellation reason"
+                          className="text-input reversal-reason-input"
+                          placeholder="Add a custom reason (optional)"
+                          maxLength={500}
+                          value={customReasons[transaction.transactionId] ?? ""}
+                          onChange={(event) =>
+                            setCustomReasons((current) => ({
+                              ...current,
+                              [transaction.transactionId]: event.target.value,
+                            }))
+                          }
+                        />
+                      )}
                       {transaction.paymentMethod === "QR" ? (
                         <label className="inventory-checkbox">
                           <input
