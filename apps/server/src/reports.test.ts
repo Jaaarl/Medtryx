@@ -558,6 +558,18 @@ describe("daily owner reports and CSV export", () => {
     const lastDay = await owner.get("/api/reports/daily?date=2026-05-01");
     expect(firstDay.body.report.metrics.grossSales).toBe("112.00");
     expect(lastDay.body.report.metrics.grossSales).toBe("0.00");
+    expect(firstDay.body.report.transactionChanges).toEqual([]);
+    expect(lastDay.body.report.transactionChanges).toEqual([
+      expect.objectContaining({
+        transactionId: startSale.transactionId,
+        changedAt: "2026-05-01T04:00:00.000Z",
+        changedByEmail: "owner.reports@example.test",
+        changedByRole: "owner",
+        kind: "REVERSAL",
+        reason: "Synthetic cross-day report reversal",
+        refund: { method: "QR", amount: "112.00" },
+      }),
+    ]);
     expect(
       Number(firstDay.body.report.metrics.grossSales) +
         Number(lastDay.body.report.metrics.grossSales),
@@ -575,6 +587,9 @@ describe("daily owner reports and CSV export", () => {
     );
     expect(csv.text).toContain('"Payments","Cash declared sales","112.00"');
     expect(csv.text).toContain('"Payments","QR refunds","112.00"');
+    expect(csv.text).toContain(startSale.transactionId);
+    expect(csv.text).toContain("owner.reports@example.test");
+    expect(csv.text).toContain("Synthetic cross-day report reversal");
   });
 
   it("rejects invalid business dates and report ranges", async () => {

@@ -243,6 +243,50 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     }
   }
 
+  const transactionChangeRows = db
+    .prepare(
+      `SELECT s.transaction_id, p.created_at AS changed_at, p.reason,
+              u.email AS actor_email, u.role AS actor_role,
+              'PAYMENT_SWITCH' AS kind,
+              p.from_method, p.to_method, p.cash_amount_centavos,
+              p.qr_amount_centavos, NULL AS refund_method,
+              NULL AS refund_amount_centavos
+       FROM sale_payment_switches p
+       JOIN sales s ON s.id = p.sale_id
+       JOIN users u ON u.id = p.changed_by_user_id
+       WHERE p.created_at >= ? AND p.created_at < ?
+       UNION ALL
+       SELECT s.transaction_id, r.created_at AS changed_at, r.reason,
+              u.email AS actor_email, u.role AS actor_role,
+              CASE WHEN a.action = 'sale.cancelled'
+                   THEN 'CANCELLATION' ELSE 'REVERSAL' END AS kind,
+              NULL AS from_method, NULL AS to_method,
+              NULL AS cash_amount_centavos, NULL AS qr_amount_centavos,
+              r.refund_method, r.amount_centavos AS refund_amount_centavos
+       FROM sale_reversals r
+       JOIN sales s ON s.id = r.sale_id
+       JOIN users u ON u.id = r.approved_by_user_id
+       LEFT JOIN audit_events a ON a.entity_type = 'sale_reversal'
+         AND a.entity_id = r.id
+         AND a.action IN ('sale.cancelled', 'sale.reversed')
+       WHERE r.created_at >= ? AND r.created_at < ?
+       ORDER BY changed_at, transaction_id`,
+    )
+    .all(window.start, window.end, window.start, window.end) as Array<{
+    transaction_id: string;
+    changed_at: string;
+    reason: string;
+    actor_email: string;
+    actor_role: "owner" | "cashier";
+    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+    from_method: "CASH" | null;
+    to_method: "QR" | null;
+    cash_amount_centavos: number | null;
+    qr_amount_centavos: number | null;
+    refund_method: "CASH" | "QR" | null;
+    refund_amount_centavos: number | null;
+  }>;
+
   const writeoffRows = db
     .prepare(
       `SELECT inventory_value_delta_centavos FROM stock_events
@@ -448,6 +492,33 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       estimatedGrossProfit: money(estimatedGrossProfit),
     },
     reversalCount,
+    transactionChanges: transactionChangeRows.map((change) => ({
+      transactionId: change.transaction_id,
+      changedAt: change.changed_at,
+      changedByEmail: change.actor_email,
+      changedByRole: change.actor_role,
+      kind: change.kind,
+      reason: change.reason,
+      payment:
+        change.from_method &&
+        change.to_method &&
+        change.cash_amount_centavos !== null &&
+        change.qr_amount_centavos !== null
+          ? {
+              fromMethod: change.from_method,
+              toMethod: change.to_method,
+              cashAmount: money(BigInt(change.cash_amount_centavos)),
+              qrAmount: money(BigInt(change.qr_amount_centavos)),
+            }
+          : null,
+      refund:
+        change.refund_method && change.refund_amount_centavos !== null
+          ? {
+              method: change.refund_method,
+              amount: money(BigInt(change.refund_amount_centavos)),
+            }
+          : null,
+    })),
     bundlePromotions: bundlePromotionRows.map((bundle) => ({
       code: bundle.code_snapshot,
       name: bundle.name_snapshot,
@@ -593,6 +664,18 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
       "Bundle offer",
       `${bundle.code} ${bundle.name} v${bundle.version} x${bundle.quantity}`,
       `regular ${bundle.regularTotal} / advertised ${bundle.promotionalPricePerBundle} each / offered discount ${bundle.promotionalDiscountOffered} / applied discount ${bundle.promotionalDiscountApplied}`,
+    ]);
+  }
+  for (const change of report.transactionChanges) {
+    const detail = change.payment
+      ? `cash ${change.payment.cashAmount} / QR ${change.payment.qrAmount}`
+      : change.refund
+        ? `${change.refund.method} refund ${change.refund.amount}`
+        : "";
+    rows.push([
+      "Transaction change",
+      `${change.transactionId} ${change.kind}`,
+      `${change.changedAt} / ${change.changedByEmail} (${change.changedByRole}) / ${change.reason}${detail ? ` / ${detail}` : ""}`,
     ]);
   }
   for (const lot of report.inventory.trackedLots) {

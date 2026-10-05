@@ -172,7 +172,12 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
       name: "Senior citizen and PWD customers",
     }),
   ).toBeVisible();
-  const benefitTable = ownerPage.locator(".report-low-stock table").first();
+  const beneficiarySection = ownerPage.locator(".report-low-stock").filter({
+    has: ownerPage.getByRole("heading", {
+      name: "Senior citizen and PWD customers",
+    }),
+  });
+  const benefitTable = beneficiarySection.getByRole("table");
   await expect(benefitTable.getByText("Synthetic E2E Senior")).toBeVisible();
   await expect(benefitTable.getByText("Synthetic E2E PWD")).toBeVisible();
   await expect(benefitTable.getByText("SYN-SC-FEEDBACK-001")).toBeVisible();
@@ -180,6 +185,35 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
   await expect(
     benefitTable.getByText(/Synthetic Feedback Medicine/).first(),
   ).toBeVisible();
+  const correctionSection = ownerPage.locator(".report-low-stock").filter({
+    has: ownerPage.getByRole("heading", {
+      name: "Transaction corrections",
+    }),
+  });
+  await expect(
+    correctionSection.getByRole("cell", { name: "Cash to QR", exact: true }),
+  ).toBeVisible();
+  await expect(
+    correctionSection.getByRole("cell", { name: "Cancelled", exact: true }),
+  ).toBeVisible();
+  await expect(
+    correctionSection.getByText(`${cashier.email} (cashier)`),
+  ).toHaveCount(2);
+  await expect(
+    correctionSection.getByText("Synthetic customer changed payment method"),
+  ).toBeVisible();
+  await expect(
+    correctionSection.getByText(
+      "Synthetic customer cancelled after payment correction",
+    ),
+  ).toBeVisible();
+  const correctionRows = correctionSection
+    .getByRole("row")
+    .filter({ hasText: correctionSale.transactionId });
+  await expect(correctionRows).toHaveCount(2);
+  await expect(
+    correctionRows.first().getByRole("cell").first(),
+  ).not.toBeEmpty();
 
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Manila",

@@ -323,6 +323,23 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       qrSales: "112.13",
       cashRoundingAdjustments: "0.00",
     });
+    expect(report.body.report.transactionChanges).toEqual([
+      expect.objectContaining({
+        transactionId: sale.transactionId,
+        changedAt: switched.body.paymentSwitch.createdAt,
+        changedByEmail: "cashier.reversals@example.test",
+        changedByRole: "cashier",
+        kind: "PAYMENT_SWITCH",
+        reason: "Customer paid by QR after the cash sale was saved",
+        payment: {
+          fromMethod: "CASH",
+          toMethod: "QR",
+          cashAmount: "112.25",
+          qrAmount: "112.13",
+        },
+        refund: null,
+      }),
+    ]);
 
     const shifts = await owner.get("/api/shifts/history");
     const savedShift = shifts.body.shifts.find(
@@ -484,6 +501,20 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       status: "REVERSED",
       reversalTransactionId: cancelled.body.reversal.transactionId,
     });
+    const report = await owner.get(
+      `/api/reports/daily?date=${saved.body.sale.businessDate}`,
+    );
+    expect(report.body.report.transactionChanges).toEqual([
+      expect.objectContaining({
+        transactionId: sale.transactionId,
+        changedAt: cancelled.body.reversal.createdAt,
+        changedByEmail: "cashier.reversals@example.test",
+        changedByRole: "cashier",
+        kind: "CANCELLATION",
+        reason: "Customer changed their mind before leaving",
+        refund: { method: "CASH", amount: "112.25" },
+      }),
+    ]);
   });
 
   it("requires QR refund confirmation before cancellation and records write-offs in history", async () => {

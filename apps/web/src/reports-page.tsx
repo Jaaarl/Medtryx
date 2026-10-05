@@ -10,6 +10,21 @@ type SalesReport = {
   generatedAt: string;
   metrics: Record<string, string>;
   reversalCount: number;
+  transactionChanges: Array<{
+    transactionId: string;
+    changedAt: string;
+    changedByEmail: string;
+    changedByRole: "owner" | "cashier";
+    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+    reason: string;
+    payment: {
+      fromMethod: "CASH";
+      toMethod: "QR";
+      cashAmount: string;
+      qrAmount: string;
+    } | null;
+    refund: { method: "CASH" | "QR"; amount: string } | null;
+  }>;
   bundlePromotions: Array<{
     code: string;
     name: string;
@@ -348,6 +363,75 @@ export function ReportsPage() {
               </section>
             ))}
           </div>
+
+          <section className="settings-main-card report-low-stock">
+            <div className="card-heading">
+              <div>
+                <h2>Transaction corrections</h2>
+                <p>
+                  Cancellations, reversals, and cash-to-QR switches made during
+                  the selected Manila date range.
+                </p>
+              </div>
+              <span className="count-chip">
+                {report.transactionChanges.length} changes
+              </span>
+            </div>
+            {report.transactionChanges.length ? (
+              <div className="inventory-table-wrap">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Transaction</th>
+                      <th>Action</th>
+                      <th>Changed by</th>
+                      <th>Reason</th>
+                      <th>Payment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.transactionChanges.map((change) => (
+                      <tr
+                        key={`${change.transactionId}-${change.changedAt}-${change.kind}`}
+                      >
+                        <td>
+                          {new Date(change.changedAt).toLocaleString("en-PH", {
+                            timeZone: "Asia/Manila",
+                            dateStyle: "medium",
+                            timeStyle: "medium",
+                          })}
+                        </td>
+                        <td>{change.transactionId}</td>
+                        <td>
+                          {change.kind === "PAYMENT_SWITCH"
+                            ? "Cash to QR"
+                            : change.kind === "CANCELLATION"
+                              ? "Cancelled"
+                              : "Reversed"}
+                        </td>
+                        <td>
+                          {change.changedByEmail} ({change.changedByRole})
+                        </td>
+                        <td>{change.reason}</td>
+                        <td>
+                          {change.payment
+                            ? `Cash ₱${change.payment.cashAmount} → QR ₱${change.payment.qrAmount}`
+                            : change.refund
+                              ? `${change.refund.method} refund ₱${change.refund.amount}`
+                              : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="report-empty">
+                No transaction corrections appear in this date range.
+              </p>
+            )}
+          </section>
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">
