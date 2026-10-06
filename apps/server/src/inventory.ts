@@ -1922,6 +1922,67 @@ export function registerInventoryRoutes(
   );
 
   router.patch(
+    "/stock/lots/:id/expiry",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const lotId = z.uuid().safeParse(req.params.id);
+      const parsed = z
+        .object({ expiryDate: expiryDateSchema, reason: reasonSchema })
+        .strict()
+        .safeParse(req.body);
+      if (!lotId.success || !parsed.success || !req.user)
+        return bodyValidation(res);
+      const lot = db
+        .prepare(
+          "SELECT id, product_id, lot_code, expiry_date FROM inventory_lots WHERE id = ?",
+        )
+        .get(lotId.data) as
+        | {
+            id: string;
+            product_id: string;
+            lot_code: string;
+            expiry_date: string;
+          }
+        | undefined;
+      if (!lot) return res.status(404).json({ error: "lot_not_found" });
+      if (lot.expiry_date === parsed.data.expiryDate) {
+        return res.json({ lotId: lot.id, expiryDate: lot.expiry_date });
+      }
+      const conflictingLot = db
+        .prepare(
+          `SELECT 1 FROM inventory_lots
+           WHERE product_id = ? AND lot_code = ? AND expiry_date = ? AND id <> ?`,
+        )
+        .get(lot.product_id, lot.lot_code, parsed.data.expiryDate, lot.id);
+      if (conflictingLot)
+        return res.status(409).json({ error: "lot_expiry_conflict" });
+      const updatedAt = new Date().toISOString();
+      db.transaction(() => {
+        db.prepare(
+          "UPDATE inventory_lots SET expiry_date = ? WHERE id = ?",
+        ).run(parsed.data.expiryDate, lot.id);
+        writeAuditEvent(db, {
+          actorUserId: req.user!.id,
+          action: "stock.lot_expiry_updated",
+          entityType: "inventory_lot",
+          entityId: lot.id,
+          details: {
+            productId: lot.product_id,
+            lotCode: lot.lot_code,
+            oldExpiryDate: lot.expiry_date,
+            expiryDate: parsed.data.expiryDate,
+            reason: parsed.data.reason,
+            at: updatedAt,
+          },
+        });
+      })();
+      res.json({ lotId: lot.id, expiryDate: parsed.data.expiryDate });
+    },
+  );
+
+  router.patch(
     "/stock/lots/:id/quarantine",
     requireAuth,
     requireOwner,

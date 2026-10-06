@@ -15,7 +15,7 @@ const appendOnlyTriggers = [
   `CREATE TRIGGER lot_reconciliations_no_delete BEFORE DELETE ON lot_reconciliations
    BEGIN SELECT RAISE(ABORT, 'lot_reconciliations_are_append_only'); END`,
   `CREATE TRIGGER inventory_lots_identity_immutable
-   BEFORE UPDATE OF product_id, lot_code, expiry_date, created_at, created_by_user_id ON inventory_lots
+   BEFORE UPDATE OF product_id, lot_code, created_at, created_by_user_id ON inventory_lots
    BEGIN SELECT RAISE(ABORT, 'inventory_lot_identity_is_immutable'); END`,
   `CREATE TRIGGER inventory_lots_no_delete BEFORE DELETE ON inventory_lots
    BEGIN SELECT RAISE(ABORT, 'inventory_lots_are_immutable'); END`,

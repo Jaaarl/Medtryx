@@ -1844,6 +1844,30 @@ a {
   font-size: 12px;
   min-height: 34px;
 }
+.stock-lots-card .inventory-table td:nth-child(6) {
+  min-width: 320px;
+  text-align: left;
+  vertical-align: top;
+}
+.stock-lot-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-start;
+}
+.stock-lot-expiry-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  min-width: 250px;
+}
+.stock-lot-expiry-editor .inventory-field > span {
+  font-size: 10px;
+}
+.stock-lot-expiry-editor .button {
+  justify-self: start;
+}
 .stock-lots-card > .inventory-two-fields {
   background: #fbfcfb;
   border-top: 1px solid #edf1ef;

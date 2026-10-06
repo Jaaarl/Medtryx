@@ -518,6 +518,65 @@ describe("owner catalog and stock operations", () => {
     ).toThrow(/lot_stock_balance_cannot_be_negative/u);
   });
 
+  it("lets owners correct a lot expiry with a reason and audits the old and new dates", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const initialExpiry = manilaDayAfter(30);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-EXPIRY-EDIT",
+      tracksLots: true,
+      openingLotCode: "SYN-EXPIRY-EDIT-BATCH",
+      openingExpiryDate: initialExpiry,
+    });
+    expect(created.status).toBe(201);
+    activeProductId = created.body.product.id as string;
+    const lot = (await owner.get("/api/stock/lots")).body.lots[0] as {
+      id: string;
+      expiryDate: string;
+    };
+    const cashier = await signIn(
+      "cashier.inventory@example.test",
+      cashierPassword,
+    );
+    const cashierToken = await csrfFor(cashier);
+    expect(
+      (
+        await cashier
+          .patch(`/api/stock/lots/${lot.id}/expiry`)
+          .set("x-csrf-token", cashierToken)
+          .send({
+            expiryDate: manilaDayAfter(45),
+            reason: "Synthetic unauthorized edit",
+          })
+      ).status,
+    ).toBe(403);
+
+    const updatedExpiry = manilaDayAfter(45);
+    const ownerToken = await csrfFor(owner);
+    const updated = await owner
+      .patch(`/api/stock/lots/${lot.id}/expiry`)
+      .set("x-csrf-token", ownerToken)
+      .send({
+        expiryDate: updatedExpiry,
+        reason: "Corrected transcription from package label",
+      });
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body).toEqual({ lotId: lot.id, expiryDate: updatedExpiry });
+    expect((await owner.get("/api/stock/lots")).body.lots[0]).toMatchObject({
+      id: lot.id,
+      expiryDate: updatedExpiry,
+    });
+    const audit = await owner.get("/api/audit?limit=20");
+    expect(audit.body.events[0]).toMatchObject({
+      action: "stock.lot_expiry_updated",
+      entityId: lot.id,
+      details: {
+        oldExpiryDate: initialExpiry,
+        expiryDate: updatedExpiry,
+        reason: "Corrected transcription from package label",
+      },
+    });
+  });
+
   it("creates opening inventory with a unique SKU and records exact centavo value", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const created = await createOpeningProduct(owner);

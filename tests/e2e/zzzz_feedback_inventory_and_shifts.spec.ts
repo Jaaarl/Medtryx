@@ -480,3 +480,40 @@ test("checkout prices render green and discounts render red", async ({
   expect(closeResponse.status()).toBe(200);
   await cashierPage.close();
 });
+
+test("stock lots let an owner edit expiry dates with a correction reason", async ({
+  page,
+}) => {
+  await signIn(page, owner);
+  const lotCode = `SYN-EDIT-EXPIRY-${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(page, "/api/products", {
+    sku: `SYN-EXPIRY-${randomUUID().slice(0, 8)}`,
+    name: `Synthetic Expiry Edit Product ${randomUUID().slice(0, 8)}`,
+    unit: "box",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    tracksLots: true,
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 4,
+    openingUnitCost: "1.00",
+    openingLotCode: lotCode,
+    openingExpiryDate: manilaDayAfter(30),
+  });
+  expect(productResponse.status()).toBe(201);
+
+  await page.goto("/stock");
+  const lotRow = page.getByRole("row").filter({ hasText: lotCode });
+  await lotRow.getByRole("button", { name: "Edit expiry" }).click();
+  await lotRow.getByLabel("New expiry date").fill(manilaDayAfter(45));
+  await lotRow
+    .getByLabel("Reason for correction")
+    .fill("Synthetic package date transcription correction");
+  await lotRow.getByRole("button", { name: "Save expiry date" }).click();
+
+  await expect(
+    page.getByRole("status").filter({ hasText: "Expiry date updated." }),
+  ).toBeVisible();
+  await expect(lotRow.getByRole("cell").nth(1)).toHaveText(manilaDayAfter(45));
+});

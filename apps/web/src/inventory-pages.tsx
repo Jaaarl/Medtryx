@@ -166,6 +166,8 @@ function errorMessage(error: unknown): string {
       "This product is not configured for lot tracking.",
     insufficient_unallocated_stock:
       "The reconciliation quantity exceeds unallocated legacy stock.",
+    lot_expiry_conflict:
+      "Another lot for this product already uses that batch and expiry date.",
     returned_lot_not_saleable:
       "A sold lot is expired or quarantined. Use the write-off treatment.",
     lot_return_verification_required:
@@ -1331,6 +1333,11 @@ export function StockPage() {
   const [reconcileReason, setReconcileReason] = useState("");
   const [physicalCountConfirmed, setPhysicalCountConfirmed] = useState(false);
   const [lotStatusReason, setLotStatusReason] = useState("");
+  const [editingExpiryLotId, setEditingExpiryLotId] = useState<string | null>(
+    null,
+  );
+  const [expiryDateInput, setExpiryDateInput] = useState("");
+  const [expiryEditReason, setExpiryEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
   const filteredProducts = lowOnly
     ? products.filter(
@@ -1576,6 +1583,30 @@ export function StockPage() {
       setLotStatusReason("");
     } catch (caught) {
       setError(errorMessage(caught));
+    }
+  }
+
+  async function saveLotExpiry(
+    event: FormEvent<HTMLFormElement>,
+    lot: InventoryLot,
+  ) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.patch(`/stock/lots/${lot.id}/expiry`, {
+        expiryDate: expiryDateInput,
+        reason: expiryEditReason.trim(),
+      });
+      await refreshLots();
+      setEditingExpiryLotId(null);
+      setExpiryEditReason("");
+      setNotice("Expiry date updated.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -2092,14 +2123,80 @@ export function StockPage() {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="button button-quiet stock-quarantine-action"
-                        type="button"
-                        disabled={!lotStatusReason.trim()}
-                        onClick={() => void toggleQuarantine(lot)}
-                      >
-                        {lot.quarantined ? "Release" : "Quarantine"}
-                      </button>
+                      <div className="stock-lot-actions">
+                        <button
+                          className="button button-quiet stock-quarantine-action"
+                          type="button"
+                          disabled={!lotStatusReason.trim() || saving}
+                          onClick={() => void toggleQuarantine(lot)}
+                        >
+                          {lot.quarantined ? "Release" : "Quarantine"}
+                        </button>
+                        <button
+                          className="button button-secondary stock-quarantine-action"
+                          type="button"
+                          disabled={saving}
+                          onClick={() => {
+                            if (editingExpiryLotId === lot.id) {
+                              setEditingExpiryLotId(null);
+                              setExpiryEditReason("");
+                              return;
+                            }
+                            setEditingExpiryLotId(lot.id);
+                            setExpiryDateInput(lot.expiryDate);
+                            setExpiryEditReason("");
+                          }}
+                        >
+                          {editingExpiryLotId === lot.id
+                            ? "Cancel edit"
+                            : "Edit expiry"}
+                        </button>
+                      </div>
+                      {editingExpiryLotId === lot.id && (
+                        <form
+                          className="stock-lot-expiry-editor"
+                          onSubmit={(event) => void saveLotExpiry(event, lot)}
+                        >
+                          <Field
+                            id={`lot-expiry-date-${lot.id}`}
+                            label="New expiry date"
+                          >
+                            <input
+                              id={`lot-expiry-date-${lot.id}`}
+                              className="text-input"
+                              type="date"
+                              value={expiryDateInput}
+                              onChange={(event) =>
+                                setExpiryDateInput(event.target.value)
+                              }
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-expiry-reason-${lot.id}`}
+                            label="Reason for correction"
+                          >
+                            <input
+                              id={`lot-expiry-reason-${lot.id}`}
+                              className="text-input"
+                              value={expiryEditReason}
+                              onChange={(event) =>
+                                setExpiryEditReason(event.target.value)
+                              }
+                              minLength={3}
+                              maxLength={500}
+                              required
+                            />
+                          </Field>
+                          <button
+                            className="button button-primary"
+                            type="submit"
+                            disabled={saving}
+                          >
+                            {saving ? "Saving…" : "Save expiry date"}
+                          </button>
+                        </form>
+                      )}
                     </td>
                   </tr>
                 ))
