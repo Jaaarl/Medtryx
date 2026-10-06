@@ -3394,6 +3394,7 @@ export function CheckoutPage() {
                         max={availableProductQuantity(line.product.id)}
                         step={1}
                         value={quantityDrafts[line.product.id] ?? line.quantity}
+                        onFocus={(event) => event.currentTarget.select()}
                         onChange={(event) =>
                           editQuantity(line.product.id, event.target.value)
                         }

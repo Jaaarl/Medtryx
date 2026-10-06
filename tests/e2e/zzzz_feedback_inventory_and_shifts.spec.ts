@@ -318,7 +318,8 @@ test("cart quantity can be edited within available stock and above zero", async 
     "title",
     "Type a quantity from 1 to 5",
   );
-  await quantity.fill("4");
+  await quantity.click();
+  await quantity.pressSequentially("4");
   await expect(quantity).toHaveValue("4");
   await quantity.fill("99");
   await expect(quantity).toHaveValue("5");
