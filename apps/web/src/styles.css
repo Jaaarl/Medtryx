@@ -2216,6 +2216,11 @@ a {
   color: #37735e;
   font-size: 10px;
 }
+.checkout-shift-elapsed {
+  color: #275e4c;
+  font-size: 10px;
+  font-weight: 700;
+}
 .checkout-shift-open details {
   margin-top: 4px;
 }

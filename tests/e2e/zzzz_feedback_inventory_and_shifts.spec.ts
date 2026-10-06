@@ -403,6 +403,7 @@ test("checkout gates a missing shift with a modal and closes shifts inside check
   page,
 }) => {
   await signIn(page, cashier);
+  await page.clock.install({ time: new Date() });
   const openDialog = page.getByRole("dialog", {
     name: "Open a cashier shift",
   });
@@ -411,6 +412,9 @@ test("checkout gates a missing shift with a modal and closes shifts inside check
   await openDialog.getByRole("button", { name: "Open shift" }).click();
   await expect(openDialog).toBeHidden();
   await expect(page.getByRole("button", { name: "Close shift" })).toBeVisible();
+  await expect(page.getByText(/Open for 0h \d+m/)).toBeVisible();
+  await page.clock.fastForward(61 * 60 * 1000);
+  await expect(page.getByText(/Open for 1h \d+m/)).toBeVisible();
 
   await page.getByRole("button", { name: "Close shift" }).click();
   const closeDialog = page.getByRole("dialog", {

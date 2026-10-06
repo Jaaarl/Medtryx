@@ -2557,6 +2557,25 @@ type CurrentShift = {
 };
 type RegisterShift = CurrentShift & { openedByEmail: string };
 
+function ShiftElapsed({ openedAt }: { openedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, [openedAt]);
+  const elapsedMinutes = Math.max(
+    0,
+    Math.floor((now - new Date(openedAt).getTime()) / 60_000),
+  );
+  const hours = Math.floor(elapsedMinutes / 60);
+  const minutes = elapsedMinutes % 60;
+  return (
+    <span className="checkout-shift-elapsed">
+      Open for {hours}h {minutes}m
+    </span>
+  );
+}
+
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>(
@@ -3560,6 +3579,7 @@ export function CheckoutPage() {
               <div className="checkout-shift-status">
                 <div>
                   <strong>Shift open</strong>
+                  <ShiftElapsed openedAt={shift.openedAt} />
                   <span>Expected physical cash: ₱{shift.expectedCash}</span>
                   <span>Expected QR sales: ₱{shift.expectedQrSales}</span>
                 </div>
