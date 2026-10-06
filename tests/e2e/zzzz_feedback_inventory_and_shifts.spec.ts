@@ -265,3 +265,67 @@ test("adding a searched product clears the checkout search", async ({
   ).toBeVisible();
   await cashierPage.close();
 });
+
+test("cart quantity can be edited within available stock and above zero", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+  const productName = `Synthetic Quantity Product ${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-QUANTITY-${randomUUID().slice(0, 8)}`,
+    name: productName,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 5,
+    openingUnitCost: "1.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  await ownerContext.close();
+
+  const cashierPage = await browser.newPage();
+  await signIn(cashierPage, cashier);
+  const currentShiftResponse = await cashierPage.request.get(
+    "/api/shifts/current",
+  );
+  const currentShift = (await currentShiftResponse.json()) as {
+    shift: null | { id: string };
+  };
+  const shift = currentShift.shift
+    ? currentShift.shift
+    : await (async () => {
+        const response = await postApi(cashierPage, "/api/shifts", {
+          openingCash: "0.00",
+        });
+        expect(response.status()).toBe(201);
+        return (
+          await response.json()
+        ).shift as { id: string };
+      })();
+
+  await cashierPage.getByLabel("Search catalog").fill(productName);
+  await cashierPage.getByRole("button", { name: "Add to cart" }).click();
+  const quantity = cashierPage.getByRole("spinbutton", {
+    name: `Quantity for ${productName}`,
+  });
+  await quantity.fill("4");
+  await expect(quantity).toHaveValue("4");
+  await quantity.fill("99");
+  await expect(quantity).toHaveValue("5");
+  await quantity.fill("0");
+  await quantity.blur();
+  await expect(quantity).toHaveValue("5");
+
+  const closeResponse = await postApi(
+    cashierPage,
+    `/api/shifts/${shift.id}/close`,
+    { actualCashCount: "0.00" },
+  );
+  expect(closeResponse.status()).toBe(200);
+  await cashierPage.close();
+});

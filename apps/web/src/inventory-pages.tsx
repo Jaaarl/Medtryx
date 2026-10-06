@@ -2462,6 +2462,9 @@ type RegisterShift = CurrentShift & { openedByEmail: string };
 
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>(
+    {},
+  );
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [bundleOffers, setBundleOffers] = useState<BundleOffer[]>([]);
@@ -2648,6 +2651,11 @@ export function CheckoutPage() {
   }
   function setQuantity(productId: string, quantity: number) {
     invalidatePreview();
+    setQuantityDrafts((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
     setCart((current) =>
       current.flatMap((line) =>
         line.product.id !== productId
@@ -2665,6 +2673,30 @@ export function CheckoutPage() {
               ],
       ),
     );
+  }
+
+  function editQuantity(productId: string, value: string) {
+    invalidatePreview();
+    setQuantityDrafts((current) => ({ ...current, [productId]: value }));
+    if (!/^\d+$/.test(value)) return;
+    const entered = Number(value);
+    if (!Number.isSafeInteger(entered) || entered < 1) return;
+    const capped = Math.min(entered, availableProductQuantity(productId));
+    if (capped < 1) return;
+    setCart((current) =>
+      current.map((line) =>
+        line.product.id === productId ? { ...line, quantity: capped } : line,
+      ),
+    );
+    setQuantityDrafts((current) => ({ ...current, [productId]: String(capped) }));
+  }
+
+  function finishQuantityEdit(productId: string) {
+    setQuantityDrafts((current) => {
+      const next = { ...current };
+      delete next[productId];
+      return next;
+    });
   }
 
   function setBenefitForLine(
@@ -3174,7 +3206,19 @@ export function CheckoutPage() {
                       >
                         −
                       </button>
-                      <span>{line.quantity}</span>
+                      <input
+                        className="text-input cart-quantity-input"
+                        aria-label={`Quantity for ${line.product.name}`}
+                        type="number"
+                        min={1}
+                        max={availableProductQuantity(line.product.id)}
+                        step={1}
+                        value={quantityDrafts[line.product.id] ?? line.quantity}
+                        onChange={(event) =>
+                          editQuantity(line.product.id, event.target.value)
+                        }
+                        onBlur={() => finishQuantityEdit(line.product.id)}
+                      />
                       <button
                         className="icon-button"
                         aria-label={`Add one ${line.product.name}`}
