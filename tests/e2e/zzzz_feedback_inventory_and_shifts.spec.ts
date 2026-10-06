@@ -303,9 +303,7 @@ test("cart quantity can be edited within available stock and above zero", async 
           openingCash: "0.00",
         });
         expect(response.status()).toBe(201);
-        return (
-          await response.json()
-        ).shift as { id: string };
+        return (await response.json()).shift as { id: string };
       })();
 
   await cashierPage.getByLabel("Search catalog").fill(productName);
@@ -328,4 +326,73 @@ test("cart quantity can be edited within available stock and above zero", async 
   );
   expect(closeResponse.status()).toBe(200);
   await cashierPage.close();
+});
+
+test("daily sales shows the shift totals and products sold to a cashier", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+  const productName = `Synthetic Daily Sales Product ${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-DAILY-${randomUUID().slice(0, 8)}`,
+    name: productName,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 5,
+    openingUnitCost: "1.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  const { product } = (await productResponse.json()) as {
+    product: { id: string };
+  };
+
+  const cashierPage = await browser.newPage();
+  await signIn(cashierPage, cashier);
+  const shiftResponse = await postApi(cashierPage, "/api/shifts", {
+    openingCash: "0.00",
+  });
+  expect(shiftResponse.status()).toBe(201);
+  const saleResponse = await postApi(cashierPage, "/api/sales", {
+    benefitType: "REGULAR",
+    paymentMethod: "CASH",
+    requestKey: randomUUID(),
+    items: [{ productId: product.id, quantity: 2, benefitApplied: false }],
+  });
+  expect(saleResponse.status()).toBe(201);
+
+  await cashierPage.goto("/daily-sales");
+  await expect(
+    cashierPage.getByRole("heading", { name: "Daily sales" }),
+  ).toBeVisible();
+  await expect(
+    cashierPage
+      .locator(".daily-sales-totals")
+      .getByText(/₱\d+\.\d{2}/)
+      .first(),
+  ).toBeVisible();
+  const productRow = cashierPage
+    .getByRole("row")
+    .filter({ hasText: productName });
+  await expect(productRow.getByRole("cell").nth(2)).toHaveText("2");
+  await expect(productRow.getByRole("cell").nth(3)).toHaveText("₱30.00");
+  await expect(
+    cashierPage.getByText("Your shifts with sales on this date."),
+  ).toBeVisible();
+
+  const currentShift = await cashierPage.request.get("/api/shifts/current");
+  const { shift } = (await currentShift.json()) as { shift: { id: string } };
+  const closeResponse = await postApi(
+    cashierPage,
+    `/api/shifts/${shift.id}/close`,
+    { actualCashCount: "30.00" },
+  );
+  expect(closeResponse.status()).toBe(200);
+  await cashierPage.close();
+  await ownerContext.close();
 });

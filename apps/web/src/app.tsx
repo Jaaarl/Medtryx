@@ -41,9 +41,16 @@ import { TaxPolicySettings } from "./tax-policy-settings";
 import { BnpcPolicySettings } from "./bnpc-policy-settings";
 import { BundlesPage } from "./bundles-page";
 import { ProductMovementPage } from "./product-movement-page";
+import { DailySalesSummaryPage } from "./daily-sales-summary";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
+  {
+    to: "/daily-sales",
+    label: "Daily sales",
+    icon: Activity,
+    ownerOnly: false,
+  },
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
@@ -737,6 +744,7 @@ export function App() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/checkout" replace />} />
           <Route path="checkout" element={<CheckoutPage />} />
+          <Route path="daily-sales" element={<DailySalesSummaryPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route element={<Guard ownerOnly />}>
             <Route path="products" element={<ProductsPage />} />
@@ -744,10 +752,7 @@ export function App() {
             <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
             <Route path="reports" element={<ReportsPage />} />
-            <Route
-              path="product-movement"
-              element={<ProductMovementPage />}
-            />
+            <Route path="product-movement" element={<ProductMovementPage />} />
             <Route path="shifts" element={<ShiftHistoryPage />} />
             <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />

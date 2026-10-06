@@ -1855,6 +1855,106 @@ export function registerSalesRoutes(
     });
   });
 
+  router.get("/shifts/daily-sales-summary", requireAuth, (req, res) => {
+    const parsedDate = z.iso
+      .date()
+      .safeParse(req.query.date ?? manilaBusinessDate(new Date()));
+    if (!parsedDate.success)
+      return res.status(400).json({ error: "invalid_report_date" });
+    const date = parsedDate.data;
+    const cashierOnly =
+      req.user!.role === "owner" ? "" : "AND s.cashier_user_id = ?";
+    const parameters =
+      req.user!.role === "owner" ? [date] : [date, req.user!.id];
+    const totals = db
+      .prepare(
+        `SELECT COUNT(*) AS transaction_count,
+                COALESCE(SUM(amount_due_centavos), 0) AS sales_centavos,
+                COALESCE(SUM(CASE WHEN payment_method = 'CASH' THEN amount_due_centavos ELSE 0 END), 0)
+                  AS cash_sales_centavos,
+                COALESCE(SUM(CASE WHEN payment_method = 'QR' THEN amount_due_centavos ELSE 0 END), 0)
+                  AS qr_sales_centavos
+         FROM sales s WHERE s.business_date = ? ${cashierOnly}`,
+      )
+      .get(...parameters) as {
+      transaction_count: number;
+      sales_centavos: number;
+      cash_sales_centavos: number;
+      qr_sales_centavos: number;
+    };
+    const shifts = db
+      .prepare(
+        `SELECT sh.id, sh.opened_at, sh.closed_at, u.email AS cashier_email,
+                COUNT(s.id) AS transaction_count,
+                COALESCE(SUM(s.amount_due_centavos), 0) AS sales_centavos,
+                COALESCE(SUM(CASE WHEN s.payment_method = 'CASH' THEN s.amount_due_centavos ELSE 0 END), 0)
+                  AS cash_sales_centavos,
+                COALESCE(SUM(CASE WHEN s.payment_method = 'QR' THEN s.amount_due_centavos ELSE 0 END), 0)
+                  AS qr_sales_centavos
+         FROM sales s
+         JOIN shifts sh ON sh.id = s.shift_id
+         JOIN users u ON u.id = sh.cashier_user_id
+         WHERE s.business_date = ? ${cashierOnly}
+         GROUP BY sh.id
+         ORDER BY sh.opened_at, sh.id`,
+      )
+      .all(...parameters) as Array<{
+      id: string;
+      opened_at: string;
+      closed_at: string | null;
+      cashier_email: string;
+      transaction_count: number;
+      sales_centavos: number;
+      cash_sales_centavos: number;
+      qr_sales_centavos: number;
+    }>;
+    const products = db
+      .prepare(
+        `SELECT sl.sku_snapshot AS sku,
+                sl.product_name_snapshot AS name,
+                SUM(sl.quantity) AS quantity,
+                SUM(sl.amount_due_centavos) AS sales_centavos
+         FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+         WHERE s.business_date = ? ${cashierOnly}
+         GROUP BY sl.product_id, sl.sku_snapshot, sl.product_name_snapshot
+         ORDER BY sales_centavos DESC, name COLLATE NOCASE`,
+      )
+      .all(...parameters) as Array<{
+      sku: string;
+      name: string;
+      quantity: number;
+      sales_centavos: number;
+    }>;
+    res.json({
+      summary: {
+        businessDate: date,
+        scope: req.user!.role === "owner" ? "STORE" : "CASHIER",
+        totals: {
+          transactionCount: totals.transaction_count,
+          sales: money(totals.sales_centavos),
+          cashSales: money(totals.cash_sales_centavos),
+          qrSales: money(totals.qr_sales_centavos),
+        },
+        shifts: shifts.map((shift) => ({
+          id: shift.id,
+          cashierEmail: shift.cashier_email,
+          openedAt: shift.opened_at,
+          closedAt: shift.closed_at,
+          transactionCount: shift.transaction_count,
+          sales: money(shift.sales_centavos),
+          cashSales: money(shift.cash_sales_centavos),
+          qrSales: money(shift.qr_sales_centavos),
+        })),
+        products: products.map((product) => ({
+          sku: product.sku,
+          name: product.name,
+          quantity: product.quantity,
+          sales: money(product.sales_centavos),
+        })),
+      },
+    });
+  });
+
   router.get("/shifts/history", requireAuth, requireOwner, (req, res) => {
     const limit = z.coerce
       .number()
@@ -2225,8 +2325,7 @@ export function registerSalesRoutes(
             ? null
             : encryptCustomerField(parsed.data.customerName!, `${saleId}/name`);
         const customerBirthdayCiphertext =
-          parsed.data.benefitType === "REGULAR" ||
-          !parsed.data.customerBirthday
+          parsed.data.benefitType === "REGULAR" || !parsed.data.customerBirthday
             ? null
             : encryptCustomerField(
                 parsed.data.customerBirthday,

@@ -1008,6 +1008,75 @@ describe("checkout, sales, and cashier shifts", () => {
     });
   });
 
+  it("summarizes daily sales by shift and product for owners and cashiers", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, { sku: "SYN-DAILY-SUMMARY" });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const opened = await openShift(cashier, "50.00");
+    expect(opened.status).toBe(201);
+    expect(
+      (
+        await postSale(cashier, {
+          productId: product.id,
+          quantity: 2,
+          paymentMethod: "CASH",
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await postSale(cashier, {
+          productId: product.id,
+          quantity: 1,
+          paymentMethod: "QR",
+        })
+      ).status,
+    ).toBe(201);
+
+    const date = manilaDayAfter(0);
+    const ownerSummary = await owner.get(
+      `/api/shifts/daily-sales-summary?date=${date}`,
+    );
+    expect(ownerSummary.status).toBe(200);
+    expect(ownerSummary.body.summary).toMatchObject({
+      scope: "STORE",
+      businessDate: date,
+      totals: {
+        transactionCount: 2,
+        sales: "336.00",
+        cashSales: "224.00",
+        qrSales: "112.00",
+      },
+      shifts: [
+        {
+          id: opened.body.shift.id,
+          cashierEmail: "cashier.sales@example.test",
+          transactionCount: 2,
+          sales: "336.00",
+          cashSales: "224.00",
+          qrSales: "112.00",
+        },
+      ],
+      products: [
+        {
+          sku: "SYN-DAILY-SUMMARY",
+          name: "Synthetic Sale Product",
+          quantity: 3,
+          sales: "336.00",
+        },
+      ],
+    });
+    const cashierSummary = await cashier.get(
+      `/api/shifts/daily-sales-summary?date=${date}`,
+    );
+    expect(cashierSummary.body.summary).toMatchObject({ scope: "CASHIER" });
+    expect(
+      (await cashier.get("/api/shifts/daily-sales-summary?date=bad-date"))
+        .status,
+    ).toBe(400);
+  });
+
   it("paginates the complete owner shift history and validates cursors", async () => {
     const now = Date.now();
     const insertShift = db.prepare(
