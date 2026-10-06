@@ -313,6 +313,11 @@ test("cart quantity can be edited within available stock and above zero", async 
   const quantity = cashierPage.getByRole("spinbutton", {
     name: `Quantity for ${productName}`,
   });
+  await expect(quantity).toHaveCSS("border-top-color", "rgb(189, 207, 199)");
+  await expect(quantity).toHaveAttribute(
+    "title",
+    "Type a quantity from 1 to 5",
+  );
   await quantity.fill("4");
   await expect(quantity).toHaveValue("4");
   await quantity.fill("99");

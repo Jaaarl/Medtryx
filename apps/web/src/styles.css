@@ -2016,6 +2016,19 @@ a {
   min-width: 14px;
   text-align: center;
 }
+.cart-card .cart-quantity-input {
+  background: #fbfdfc;
+  border: 1px solid #bdcfc7;
+  border-radius: 5px;
+  flex: 0 0 38px;
+  height: 27px;
+  padding: 0 2px;
+  text-align: center;
+  width: 38px;
+}
+.cart-card .cart-quantity-input:hover {
+  border-color: #8ba99c;
+}
 .cart-line-actions .icon-button {
   height: 26px;
   min-width: 26px;

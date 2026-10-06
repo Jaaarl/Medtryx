@@ -3388,6 +3388,7 @@ export function CheckoutPage() {
                       <input
                         className="text-input cart-quantity-input"
                         aria-label={`Quantity for ${line.product.name}`}
+                        title={`Type a quantity from 1 to ${availableProductQuantity(line.product.id)}`}
                         type="number"
                         min={1}
                         max={availableProductQuantity(line.product.id)}
