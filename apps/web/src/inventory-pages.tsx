@@ -259,6 +259,26 @@ function formatCents(cents: bigint): string {
   return `${sign}₱${(absolute / 100n).toLocaleString("en-PH")}.${String(absolute % 100n).padStart(2, "0")}`;
 }
 
+function createBrowserUuid(): string {
+  if (typeof window.crypto.randomUUID === "function")
+    return window.crypto.randomUUID();
+
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(
+    bytes,
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
 function eventAcquisitionSpread(
   event: StockEvent,
   products: Product[],
@@ -2727,7 +2747,7 @@ export function CheckoutPage() {
         ...current,
         {
           offer,
-          offerKey: window.crypto.randomUUID(),
+          offerKey: createBrowserUuid(),
           quantity: 1,
           componentBenefits: Object.fromEntries(
             offer.components.map((component) => [
@@ -2893,7 +2913,7 @@ export function CheckoutPage() {
       });
       setPreview(result);
       setLotPickConfirmed(false);
-      setRequestKey(window.crypto.randomUUID());
+      setRequestKey(createBrowserUuid());
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
