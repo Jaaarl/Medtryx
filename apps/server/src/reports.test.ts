@@ -631,6 +631,180 @@ describe("daily owner reports and CSV export", () => {
   });
 });
 
+describe("owner product movement report", () => {
+  it("ranks net sales by selling unit, includes Manila date boundaries, and denies cashiers", async () => {
+    const owner = await signIn("owner.reports@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.reports@example.test",
+      cashierPassword,
+    );
+    expect(
+      (
+        await request(app).get(
+          "/api/reports/product-movement?startDate=2026-04-30&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await cashier.get(
+          "/api/reports/product-movement?startDate=2026-04-30&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(403);
+
+    const configured = await postWithCsrf(owner, "/settings/tax-policy", {
+      confirmApproved: true,
+      version: "SYNTHETIC-MOVEMENT-TAX",
+      vatRateBasisPoints: 1_200,
+      seniorDiscountBasisPoints: 2_000,
+      pwdDiscountBasisPoints: 2_000,
+      vatInclusivePrices: true,
+      allowZeroRated: false,
+      roundingMode: "HALF_UP",
+      approvalReference: "Synthetic product movement report test",
+      costBasisDescription: "Synthetic weighted-average acquisition cost",
+    });
+    expect(configured.status).toBe(200);
+
+    async function createProduct(sku: string, name: string) {
+      const response = await postWithCsrf(owner, "/products", {
+        sku,
+        name,
+        unit: "piece",
+        sellingPrice: "10.00",
+        taxClass: "VATABLE",
+        productType: "GENERIC",
+        isScEligible: false,
+        isPwdEligible: false,
+        openingQuantity: 10,
+        openingUnitCost: "2.00",
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      return response.body.product.id as string;
+    }
+
+    const fastProductId = await createProduct(
+      "SYN-MOVE-FAST",
+      "Synthetic fast movement product",
+    );
+    const returnedProductId = await createProduct(
+      "SYN-MOVE-RETURNED",
+      "Synthetic returned movement product",
+    );
+    const noMovementProductId = await createProduct(
+      "SYN-MOVE-NONE",
+      "Synthetic no movement product",
+    );
+    expect(
+      (await postWithCsrf(cashier, "/shifts", { openingCash: "100.00" }))
+        .status,
+    ).toBe(201);
+
+    async function createSale(productId: string, quantity: number) {
+      const response = await postWithCsrf(cashier, "/sales", {
+        benefitType: "REGULAR",
+        items: [{ productId, quantity }],
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+      });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      return response.body.sale as { transactionId: string };
+    }
+
+    const fastSale = await createSale(fastProductId, 4);
+    const returnedSale = await createSale(returnedProductId, 2);
+    const beforeRangeSale = await createSale(noMovementProductId, 1);
+    const atEndBoundarySale = await createSale(noMovementProductId, 1);
+    const setSaleTime = db.prepare(
+      "UPDATE sales SET created_at = ? WHERE transaction_id = ?",
+    );
+    setSaleTime.run("2026-04-29T16:00:00.000Z", fastSale.transactionId);
+    setSaleTime.run("2026-05-01T15:59:59.999Z", returnedSale.transactionId);
+    setSaleTime.run("2026-04-29T15:59:59.999Z", beforeRangeSale.transactionId);
+    setSaleTime.run(
+      "2026-05-01T16:00:00.000Z",
+      atEndBoundarySale.transactionId,
+    );
+
+    const returnedSaleDetails = await owner.get(
+      `/api/sales/${returnedSale.transactionId}`,
+    );
+    const reversal = await postWithCsrf(
+      owner,
+      `/sales/${returnedSale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "Synthetic product movement report reversal",
+        refundMethod: "QR",
+        lines: [
+          {
+            saleLineId: returnedSaleDetails.body.sale.lines[0].saleLineId,
+            restock: true,
+          },
+        ],
+      },
+    );
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    db.prepare("UPDATE sale_reversals SET created_at = ? WHERE id = ?").run(
+      "2026-05-01T15:00:00.000Z",
+      reversal.body.reversal.id,
+    );
+
+    const range = await owner.get(
+      "/api/reports/product-movement?startDate=2026-04-30&endDate=2026-05-01",
+    );
+    expect(range.status, JSON.stringify(range.body)).toBe(200);
+    expect(range.body).toMatchObject({
+      startDate: "2026-04-30",
+      endDate: "2026-05-01",
+      periodDays: 2,
+      activeProductCount: 3,
+      fastMovingCount: 1,
+      slowMovingCount: 2,
+      productsWithSalesCount: 1,
+    });
+    expect(range.body.products).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: fastProductId,
+          unitsSold: 4,
+          unitsReturned: 0,
+          netUnitsMoved: 4,
+          averageUnitsMovedPerDay: 2,
+          transactionCount: 1,
+          quantityOnHand: 6,
+          lastSoldAt: "2026-04-29T16:00:00.000Z",
+          movement: "FAST",
+        }),
+        expect.objectContaining({
+          id: returnedProductId,
+          unitsSold: 2,
+          unitsReturned: 2,
+          netUnitsMoved: 0,
+          transactionCount: 1,
+          movement: "SLOW",
+        }),
+        expect.objectContaining({
+          id: noMovementProductId,
+          unitsSold: 0,
+          unitsReturned: 0,
+          netUnitsMoved: 0,
+          transactionCount: 0,
+          movement: "SLOW",
+        }),
+      ]),
+    );
+    expect(
+      (
+        await owner.get(
+          "/api/reports/product-movement?startDate=2026-05-02&endDate=2026-05-01",
+        )
+      ).status,
+    ).toBe(400);
+  });
+});
+
 describe("beneficiary transaction range report", () => {
   it("lists SC and PWD customers and products only inside the owner-selected date range", async () => {
     const owner = await signIn("owner.reports@example.test", ownerPassword);

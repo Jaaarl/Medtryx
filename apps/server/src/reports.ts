@@ -63,6 +63,18 @@ function utcWindowForManilaRange(
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+type ProductMovementDbRow = {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  quantity_on_hand: number;
+  units_sold: number;
+  units_returned: number;
+  transaction_count: number;
+  last_sold_at: string | null;
+};
+
 function money(cents: bigint): string {
   return new Decimal(cents.toString()).div(100).toFixed(2);
 }
@@ -723,6 +735,131 @@ export function registerReportRoutes(
     if (!start.success || !end.success || start.data > end.data) return null;
     return { start: start.data, end: end.data };
   };
+
+  router.get(
+    "/reports/product-movement",
+    requireAuth,
+    requireOwner,
+    (req, res) => {
+      const range = readRange(req.query.startDate, req.query.endDate);
+      if (!range) {
+        res.status(400).json({ error: "invalid_report_range" });
+        return;
+      }
+
+      const window = utcWindowForManilaRange(range.start, range.end);
+      const periodDays =
+        Math.floor(
+          (Date.parse(`${range.end}T00:00:00.000Z`) -
+            Date.parse(`${range.start}T00:00:00.000Z`)) /
+            (24 * 60 * 60 * 1000),
+        ) + 1;
+      const rows = db
+        .prepare(
+          `SELECT p.id, p.sku, p.name, p.unit, p.quantity_on_hand,
+                  COALESCE(s.units_sold, 0) AS units_sold,
+                  COALESCE(r.units_returned, 0) AS units_returned,
+                  COALESCE(s.transaction_count, 0) AS transaction_count,
+                  s.last_sold_at
+           FROM products p
+           LEFT JOIN (
+             SELECT sl.product_id,
+                    SUM(CASE WHEN s.created_at >= ? AND s.created_at < ?
+                             THEN sl.quantity ELSE 0 END) AS units_sold,
+                    COUNT(DISTINCT CASE WHEN s.created_at >= ? AND s.created_at < ?
+                                        THEN s.id END) AS transaction_count,
+                    MAX(s.created_at) AS last_sold_at
+             FROM sale_lines sl
+             JOIN sales s ON s.id = sl.sale_id
+             GROUP BY sl.product_id
+           ) s ON s.product_id = p.id
+           LEFT JOIN (
+             SELECT rl.product_id,
+                    SUM(CASE WHEN r.created_at >= ? AND r.created_at < ?
+                             THEN rl.quantity ELSE 0 END) AS units_returned
+             FROM sale_reversal_lines rl
+             JOIN sale_reversals r ON r.id = rl.reversal_id
+             GROUP BY rl.product_id
+           ) r ON r.product_id = p.id
+           WHERE p.is_active = 1
+           ORDER BY p.name COLLATE NOCASE, p.sku COLLATE NOCASE`,
+        )
+        .all(
+          window.start,
+          window.end,
+          window.start,
+          window.end,
+          window.start,
+          window.end,
+        ) as ProductMovementDbRow[];
+
+      const products = rows.map((row) => {
+        const netUnitsMoved = row.units_sold - row.units_returned;
+        return {
+          id: row.id,
+          sku: row.sku,
+          name: row.name,
+          unit: row.unit,
+          quantityOnHand: row.quantity_on_hand,
+          unitsSold: row.units_sold,
+          unitsReturned: row.units_returned,
+          netUnitsMoved,
+          averageUnitsMovedPerDay: netUnitsMoved / periodDays,
+          transactionCount: row.transaction_count,
+          lastSoldAt: row.last_sold_at,
+        };
+      });
+      const unitMovementTotals = new Map<
+        string,
+        { unitsPerDay: number; productCount: number }
+      >();
+      for (const product of products) {
+        const totals = unitMovementTotals.get(product.unit) ?? {
+          unitsPerDay: 0,
+          productCount: 0,
+        };
+        totals.unitsPerDay += product.averageUnitsMovedPerDay;
+        totals.productCount += 1;
+        unitMovementTotals.set(product.unit, totals);
+      }
+      const classifiedProducts = products.map((product) => {
+        const unitTotals = unitMovementTotals.get(product.unit);
+        const unitAverage = unitTotals
+          ? unitTotals.unitsPerDay / unitTotals.productCount
+          : 0;
+        return {
+          ...product,
+          movement:
+            product.netUnitsMoved > 0 &&
+            product.averageUnitsMovedPerDay >= unitAverage
+              ? "FAST"
+              : "SLOW",
+        };
+      });
+
+      res.json({
+        startDate: range.start,
+        endDate: range.end,
+        periodDays,
+        activeProductCount: products.length,
+        fastMovingCount: classifiedProducts.filter(
+          (product) => product.movement === "FAST",
+        ).length,
+        slowMovingCount: classifiedProducts.filter(
+          (product) => product.movement === "SLOW",
+        ).length,
+        productsWithSalesCount: products.filter(
+          (product) => product.netUnitsMoved > 0,
+        ).length,
+        products: classifiedProducts.sort(
+          (left, right) =>
+            right.averageUnitsMovedPerDay - left.averageUnitsMovedPerDay ||
+            left.name.localeCompare(right.name) ||
+            left.sku.localeCompare(right.sku),
+        ),
+      });
+    },
+  );
 
   router.get("/reports/range", requireAuth, requireOwner, (req, res) => {
     const range = readRange(req.query.startDate, req.query.endDate);

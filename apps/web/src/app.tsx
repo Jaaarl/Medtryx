@@ -24,6 +24,7 @@ import {
   PackageSearch,
   ShieldCheck,
   Tag,
+  TrendingUp,
   Users,
   WalletCards,
   X,
@@ -39,6 +40,7 @@ import { BackupsPage } from "./backups-page";
 import { TaxPolicySettings } from "./tax-policy-settings";
 import { BnpcPolicySettings } from "./bnpc-policy-settings";
 import { BundlesPage } from "./bundles-page";
+import { ProductMovementPage } from "./product-movement-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -53,6 +55,12 @@ const navigation = [
     ownerOnly: true,
   },
   { to: "/reports", label: "Reports", icon: LayoutDashboard, ownerOnly: true },
+  {
+    to: "/product-movement",
+    label: "Product movement",
+    icon: TrendingUp,
+    ownerOnly: true,
+  },
   { to: "/shifts", label: "Shift history", icon: Clock, ownerOnly: true },
   {
     to: "/backups",
@@ -736,6 +744,10 @@ export function App() {
             <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
             <Route path="reports" element={<ReportsPage />} />
+            <Route
+              path="product-movement"
+              element={<ProductMovementPage />}
+            />
             <Route path="shifts" element={<ShiftHistoryPage />} />
             <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />

@@ -2639,6 +2639,96 @@ a {
 .report-date-field .text-input {
   min-width: 165px;
 }
+.product-movement-page {
+  display: grid;
+  gap: 18px;
+}
+.movement-heading {
+  align-items: flex-start;
+  gap: 20px;
+}
+.movement-period-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.movement-period-actions .report-date-field .text-input {
+  min-width: 145px;
+}
+.movement-period-button,
+.movement-refresh {
+  white-space: nowrap;
+}
+.movement-summary-strip {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+}
+.movement-summary-strip > div {
+  display: grid;
+  gap: 8px;
+  padding: 17px 19px;
+}
+.movement-summary-strip > div + div {
+  border-left: 1px solid var(--line);
+}
+.movement-summary-strip span {
+  color: #87948f;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.8px;
+}
+.movement-summary-strip strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+.movement-list-card {
+  overflow: hidden;
+}
+.movement-list-heading {
+  gap: 16px;
+}
+.movement-filter-field {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+.movement-filter-field .text-input {
+  height: 34px;
+}
+.movement-table {
+  min-width: 1050px;
+  width: 100%;
+}
+.movement-status {
+  border-radius: 20px;
+  display: inline-flex;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+.movement-status-fast {
+  background: #eaf5ef;
+  color: #34745d;
+}
+.movement-status-slow {
+  background: #f4f2ec;
+  color: #817451;
+}
+.movement-method-note {
+  background: #eef4f1;
+  border-radius: 9px;
+  color: #687a74;
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 12px 15px;
+}
 .report-summary-strip {
   background: #fff;
   border: 1px solid var(--line);
@@ -3045,5 +3135,49 @@ a {
   }
   .variance-decision-actions > button {
     flex: 1;
+  }
+}
+
+@media (max-width: 820px) {
+  .movement-heading {
+    flex-direction: column;
+  }
+  .movement-period-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  .movement-period-actions {
+    align-items: stretch;
+  }
+  .movement-period-actions .report-date-field {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 125px;
+  }
+  .movement-period-actions .report-date-field .text-input {
+    min-width: 0;
+  }
+  .movement-period-button,
+  .movement-refresh {
+    flex: 1 1 calc(50% - 8px);
+  }
+  .movement-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .movement-summary-strip > div:nth-child(3) {
+    border-left: 0;
+  }
+  .movement-summary-strip > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+  .movement-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px 14px;
+  }
+  .movement-filter-field {
+    width: 100%;
   }
 }
