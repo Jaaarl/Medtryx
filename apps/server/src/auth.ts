@@ -5,7 +5,7 @@ import type { UserRole } from "@medtryx/shared";
 
 export const SESSION_COOKIE = "medtryx_session";
 export const CSRF_COOKIE = "medtryx_csrf";
-export const SESSION_IDLE_MS = 30 * 60 * 1000;
+export const SESSION_IDLE_MS = 10 * 60 * 60 * 1000;
 export const SESSION_MAX_MS = 12 * 60 * 60 * 1000;
 
 export type AuthenticatedUser = {
