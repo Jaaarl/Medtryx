@@ -2628,6 +2628,7 @@ export function CheckoutPage() {
     const available = availableProductQuantity(product.id);
     if (available <= 0) return;
     invalidatePreview();
+    setQuery("");
     setCart((current) => {
       const line = current.find((entry) => entry.product.id === product.id);
       if (line)
@@ -2724,6 +2725,7 @@ export function CheckoutPage() {
 
   function addBundle(offer: BundleOffer) {
     invalidatePreview();
+    setQuery("");
     setBundleCart((current) => {
       const existing = current.find(
         (line) =>

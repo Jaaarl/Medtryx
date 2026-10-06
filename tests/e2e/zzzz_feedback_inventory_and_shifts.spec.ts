@@ -225,3 +225,43 @@ test("checkout shows QR totals and an owner can emergency-close a cashier shift"
   await cashierContext.close();
   await ownerContext.close();
 });
+
+test("adding a searched product clears the checkout search", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+  const productName = `Synthetic Search Product ${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-SEARCH-${randomUUID().slice(0, 8)}`,
+    name: productName,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 3,
+    openingUnitCost: "1.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  await ownerContext.close();
+
+  const cashierPage = await browser.newPage();
+  await signIn(cashierPage, cashier);
+  const shiftResponse = await postApi(cashierPage, "/api/shifts", {
+    openingCash: "0.00",
+  });
+  expect(shiftResponse.status()).toBe(201);
+
+  const search = cashierPage.getByLabel("Search catalog");
+  await search.fill(productName);
+  await cashierPage.getByRole("button", { name: "Add to cart" }).click();
+
+  await expect(search).toHaveValue("");
+  await expect(
+    cashierPage.locator(".cart-lines").getByText(productName, { exact: true }),
+  ).toBeVisible();
+  await cashierPage.close();
+});
