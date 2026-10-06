@@ -2474,6 +2474,7 @@ export function CheckoutPage() {
   >("REGULAR");
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "QR">("CASH");
   const [customerName, setCustomerName] = useState("");
+  const [customerBirthday, setCustomerBirthday] = useState("");
   const [customerIdType, setCustomerIdType] = useState("");
   const [customerIdNumber, setCustomerIdNumber] = useState("");
   const [customerIdChecked, setCustomerIdChecked] = useState(false);
@@ -3017,6 +3018,7 @@ export function CheckoutPage() {
           ...(hasSelectedBenefit
             ? {
                 customerName,
+                customerBirthday,
                 customerIdType,
                 customerIdNumber,
                 customerIdChecked,
@@ -3739,6 +3741,19 @@ export function CheckoutPage() {
                       required
                       minLength={2}
                       maxLength={160}
+                    />
+                  </Field>
+                  <Field id="benefit-customer-birthday" label="Birthday">
+                    <input
+                      id="benefit-customer-birthday"
+                      className="text-input"
+                      type="date"
+                      value={customerBirthday}
+                      onChange={(event) => {
+                        setCustomerBirthday(event.target.value);
+                        setRequestKey("");
+                      }}
+                      required
                     />
                   </Field>
                   <Field id="benefit-id-type" label="ID type">

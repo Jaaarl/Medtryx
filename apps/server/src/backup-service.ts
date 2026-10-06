@@ -493,16 +493,18 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
   const rows = db
     .prepare(
       `SELECT id, customer_name_ciphertext, customer_id_type_ciphertext,
-              customer_id_number_ciphertext
+              customer_id_number_ciphertext, customer_birthday_ciphertext
        FROM sales WHERE customer_name_ciphertext IS NOT NULL
           OR customer_id_type_ciphertext IS NOT NULL
-          OR customer_id_number_ciphertext IS NOT NULL`,
+          OR customer_id_number_ciphertext IS NOT NULL
+          OR customer_birthday_ciphertext IS NOT NULL`,
     )
     .all() as {
     id: string;
     customer_name_ciphertext: string | null;
     customer_id_type_ciphertext: string | null;
     customer_id_number_ciphertext: string | null;
+    customer_birthday_ciphertext: string | null;
   }[];
   try {
     for (const row of rows) {
@@ -528,6 +530,13 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
         `${row.id}/id-number`,
         key,
       );
+      if (row.customer_birthday_ciphertext) {
+        decryptCustomerFieldWithKey(
+          row.customer_birthday_ciphertext,
+          `${row.id}/birthday`,
+          key,
+        );
+      }
     }
   } catch {
     throw new BackupError("backup_customer_records_cannot_be_decrypted");

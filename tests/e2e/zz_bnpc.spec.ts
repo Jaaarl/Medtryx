@@ -99,7 +99,12 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
   await cashierPage
     .getByLabel("Synthetic BNPC E2E product · BNPC 5% eligible")
     .check();
+  await expect(cashierPage.getByLabel("Birthday")).toHaveAttribute(
+    "required",
+    "",
+  );
   await cashierPage.getByLabel("Customer name").fill("Synthetic Holder");
+  await cashierPage.getByLabel("Birthday").fill("1965-02-03");
   await cashierPage.getByLabel("ID type").fill("Synthetic PWD ID");
   await cashierPage.getByLabel("ID number").fill("SYNTHETIC-ID-DO-NOT-USE");
   await cashierPage.getByLabel("I checked the physical ID").check();

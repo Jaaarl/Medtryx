@@ -1247,6 +1247,7 @@ describe("checkout, sales, and cashier shifts", () => {
       benefitType: "SENIOR_CITIZEN",
       benefitApplied: true,
       customerName: "Synthetic Senior Person",
+      customerBirthday: "1945-03-14",
       customerIdType: "Synthetic Senior Card",
       customerIdNumber: "SYN-SC-9981",
       customerIdChecked: true,
@@ -1274,30 +1275,40 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(ownerCustomerDetails.body.customer).toEqual({
       benefitType: "SENIOR_CITIZEN",
       name: "Synthetic Senior Person",
+      birthday: "1945-03-14",
       idType: "Synthetic Senior Card",
       idNumber: "SYN-SC-9981",
       idChecked: true,
     });
     const encrypted = db
       .prepare(
-        `SELECT id, customer_name_ciphertext, customer_id_type_ciphertext,
+        `SELECT id, customer_name_ciphertext, customer_birthday_ciphertext,
+                customer_id_type_ciphertext,
                 customer_id_number_ciphertext FROM sales`,
       )
       .get() as {
       id: string;
       customer_name_ciphertext: string;
+      customer_birthday_ciphertext: string;
       customer_id_type_ciphertext: string;
       customer_id_number_ciphertext: string;
     };
     expect(encrypted.customer_name_ciphertext).not.toContain(
       "Synthetic Senior Person",
     );
+    expect(encrypted.customer_birthday_ciphertext).not.toContain("1945-03-14");
     expect(
       decryptCustomerField(
         encrypted.customer_name_ciphertext,
         `${encrypted.id}/name`,
       ),
     ).toBe("Synthetic Senior Person");
+    expect(
+      decryptCustomerField(
+        encrypted.customer_birthday_ciphertext,
+        `${encrypted.id}/birthday`,
+      ),
+    ).toBe("1945-03-14");
     expect(
       decryptCustomerField(
         encrypted.customer_id_type_ciphertext,

@@ -160,6 +160,7 @@ const saleRequestSchema = z
     paymentMethod: paymentSchema,
     requestKey: z.uuid(),
     customerName: z.string().trim().min(2).max(160).optional(),
+    customerBirthday: z.iso.date().optional(),
     customerIdType: z.string().trim().min(2).max(60).optional(),
     customerIdNumber: z.string().trim().min(2).max(80).optional(),
     customerIdChecked: z.boolean().default(false),
@@ -187,6 +188,7 @@ const saleRequestSchema = z
     const hasBnpc = requestedTreatments.includes("BNPC");
     const customerValues = [
       value.customerName,
+      value.customerBirthday,
       value.customerIdType,
       value.customerIdNumber,
     ];
@@ -2222,6 +2224,14 @@ export function registerSalesRoutes(
           parsed.data.benefitType === "REGULAR"
             ? null
             : encryptCustomerField(parsed.data.customerName!, `${saleId}/name`);
+        const customerBirthdayCiphertext =
+          parsed.data.benefitType === "REGULAR" ||
+          !parsed.data.customerBirthday
+            ? null
+            : encryptCustomerField(
+                parsed.data.customerBirthday,
+                `${saleId}/birthday`,
+              );
         const customerIdTypeCiphertext =
           parsed.data.benefitType === "REGULAR"
             ? null
@@ -2241,13 +2251,14 @@ export function registerSalesRoutes(
           `INSERT INTO sales
             (id, transaction_id, business_date, request_key, request_hash,
              cashier_user_id, shift_id, benefit_type, customer_name_ciphertext,
+             customer_birthday_ciphertext,
              customer_id_type_ciphertext, customer_id_number_ciphertext,
              customer_id_checked, payment_method, subtotal_centavos, vat_centavos,
              vat_removed_centavos,
              senior_discount_centavos, pwd_discount_centavos, amount_due_centavos,
              tax_policy_version, created_at, cash_rounding_mode,
              cash_rounding_adjustment_centavos, bnpc_discount_centavos)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           saleId,
           transactionId,
@@ -2258,6 +2269,7 @@ export function registerSalesRoutes(
           currentShift.id,
           parsed.data.benefitType,
           customerNameCiphertext,
+          customerBirthdayCiphertext,
           customerIdTypeCiphertext,
           customerIdNumberCiphertext,
           parsed.data.benefitType === "REGULAR" ? 0 : 1,
@@ -2632,6 +2644,7 @@ export function registerSalesRoutes(
       const row = db
         .prepare(
           `SELECT id, benefit_type, customer_name_ciphertext,
+                  customer_birthday_ciphertext,
                   customer_id_type_ciphertext, customer_id_number_ciphertext,
                   customer_id_checked
            FROM sales WHERE transaction_id = ?`,
@@ -2641,6 +2654,7 @@ export function registerSalesRoutes(
             id: string;
             benefit_type: SaleBenefit;
             customer_name_ciphertext: string | null;
+            customer_birthday_ciphertext: string | null;
             customer_id_type_ciphertext: string | null;
             customer_id_number_ciphertext: string | null;
             customer_id_checked: number;
@@ -2659,6 +2673,12 @@ export function registerSalesRoutes(
             row.customer_name_ciphertext!,
             `${row.id}/name`,
           ),
+          birthday: row.customer_birthday_ciphertext
+            ? decryptCustomerField(
+                row.customer_birthday_ciphertext,
+                `${row.id}/birthday`,
+              )
+            : null,
           idType: decryptCustomerField(
             row.customer_id_type_ciphertext!,
             `${row.id}/id-type`,
