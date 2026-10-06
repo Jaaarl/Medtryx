@@ -521,3 +521,87 @@ test("stock lots let an owner edit expiry dates with a correction reason", async
   ).toBeVisible();
   await expect(lotRow.getByRole("cell").nth(1)).toHaveText(manilaDayAfter(45));
 });
+
+test("name and birthday fill ID type and number from a saved PWD customer", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+  const productName = `Synthetic Beneficiary Product ${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-BENEFIT-LOOKUP-${randomUUID().slice(0, 8)}`,
+    name: productName,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: true,
+    openingQuantity: 5,
+    openingUnitCost: "1.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  const { product } = (await productResponse.json()) as {
+    product: { id: string };
+  };
+  await ownerContext.close();
+
+  const cashierPage = await browser.newPage();
+  await signIn(cashierPage, cashier);
+  const shiftResponse = await postApi(cashierPage, "/api/shifts", {
+    openingCash: "0.00",
+  });
+  expect(shiftResponse.status()).toBe(201);
+  const previousSale = await postApi(cashierPage, "/api/sales", {
+    benefitType: "PWD",
+    paymentMethod: "QR",
+    requestKey: randomUUID(),
+    customerName: "Synthetic Saved PWD Customer",
+    customerBirthday: "1980-04-12",
+    customerIdType: "Synthetic PWD ID",
+    customerIdNumber: "SYN-PWD-AUTOFILL-91",
+    customerIdChecked: true,
+    items: [{ productId: product.id, quantity: 1, benefitApplied: true }],
+  });
+  expect(previousSale.status()).toBe(201);
+
+  await cashierPage.reload();
+  await cashierPage.getByLabel("Search catalog").fill(productName);
+  await cashierPage.getByRole("button", { name: "Add to cart" }).click();
+  await cashierPage.getByLabel("Sale benefit").selectOption("PWD");
+  await cashierPage
+    .getByRole("checkbox", {
+      name: `${productName} · 20% + VAT exemption · eligible`,
+    })
+    .check();
+  await cashierPage
+    .getByLabel("Customer name")
+    .fill("Synthetic Saved PWD Customer");
+  await cashierPage.getByLabel("Birthday").fill("1980-04-12");
+  await expect(
+    cashierPage.getByRole("status").filter({
+      hasText: "ID type and number filled from a previous sale.",
+    }),
+  ).toBeVisible();
+  await expect(cashierPage.getByLabel("ID type")).toHaveValue(
+    "Synthetic PWD ID",
+  );
+  await expect(cashierPage.getByLabel("ID number")).toHaveValue(
+    "SYN-PWD-AUTOFILL-91",
+  );
+
+  const currentShiftResponse = await cashierPage.request.get(
+    "/api/shifts/current",
+  );
+  const { shift } = (await currentShiftResponse.json()) as {
+    shift: { id: string };
+  };
+  const closeResponse = await postApi(
+    cashierPage,
+    `/api/shifts/${shift.id}/close`,
+    { actualCashCount: "0.00" },
+  );
+  expect(closeResponse.status()).toBe(200);
+  await cashierPage.close();
+});

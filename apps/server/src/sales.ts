@@ -13,6 +13,7 @@ import {
 } from "./bnpc.js";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import {
+  customerLookupDigest,
   decryptCustomerField,
   encryptCustomerField,
   CustomerDataError,
@@ -2331,6 +2332,13 @@ export function registerSalesRoutes(
                 parsed.data.customerBirthday,
                 `${saleId}/birthday`,
               );
+        const customerLookupDigestValue =
+          parsed.data.benefitType === "REGULAR" || !parsed.data.customerBirthday
+            ? null
+            : customerLookupDigest(
+                parsed.data.customerName!,
+                parsed.data.customerBirthday,
+              );
         const customerIdTypeCiphertext =
           parsed.data.benefitType === "REGULAR"
             ? null
@@ -2350,14 +2358,14 @@ export function registerSalesRoutes(
           `INSERT INTO sales
             (id, transaction_id, business_date, request_key, request_hash,
              cashier_user_id, shift_id, benefit_type, customer_name_ciphertext,
-             customer_birthday_ciphertext,
+             customer_birthday_ciphertext, customer_lookup_digest,
              customer_id_type_ciphertext, customer_id_number_ciphertext,
              customer_id_checked, payment_method, subtotal_centavos, vat_centavos,
              vat_removed_centavos,
              senior_discount_centavos, pwd_discount_centavos, amount_due_centavos,
              tax_policy_version, created_at, cash_rounding_mode,
              cash_rounding_adjustment_centavos, bnpc_discount_centavos)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           saleId,
           transactionId,
@@ -2369,6 +2377,7 @@ export function registerSalesRoutes(
           parsed.data.benefitType,
           customerNameCiphertext,
           customerBirthdayCiphertext,
+          customerLookupDigestValue,
           customerIdTypeCiphertext,
           customerIdNumberCiphertext,
           parsed.data.benefitType === "REGULAR" ? 0 : 1,
@@ -2705,6 +2714,67 @@ export function registerSalesRoutes(
         sale,
         replayed: outcome.replayed,
       });
+    } catch (error) {
+      if (!handleSalesError(error, res)) throw error;
+    }
+  });
+
+  router.get("/sales/customer-lookup", requireAuth, (req, res) => {
+    const parsed = z
+      .object({
+        benefitType: z.enum(["SENIOR_CITIZEN", "PWD"]),
+        name: z.string().trim().min(2).max(160),
+        birthday: z.iso.date(),
+      })
+      .strict()
+      .safeParse({
+        benefitType: req.query.benefitType,
+        name: req.query.name,
+        birthday: req.query.birthday,
+      });
+    if (!parsed.success || !req.user)
+      return res.status(400).json({ error: "invalid_customer_lookup" });
+    try {
+      const digest = customerLookupDigest(
+        parsed.data.name,
+        parsed.data.birthday,
+      );
+      const row = db
+        .prepare(
+          `SELECT id, transaction_id, benefit_type,
+                  customer_id_type_ciphertext, customer_id_number_ciphertext
+           FROM sales WHERE customer_lookup_digest = ? AND benefit_type = ?
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(digest, parsed.data.benefitType) as
+        | {
+            id: string;
+            transaction_id: string;
+            benefit_type: "SENIOR_CITIZEN" | "PWD";
+            customer_id_type_ciphertext: string | null;
+            customer_id_number_ciphertext: string | null;
+          }
+        | undefined;
+      if (!row) return res.json({ customer: null });
+      const customer = {
+        benefitType: row.benefit_type,
+        idType: decryptCustomerField(
+          row.customer_id_type_ciphertext!,
+          `${row.id}/id-type`,
+        ),
+        idNumber: decryptCustomerField(
+          row.customer_id_number_ciphertext!,
+          `${row.id}/id-number`,
+        ),
+      };
+      writeAuditEvent(db, {
+        actorUserId: req.user.id,
+        action: "sale.customer_details_prefilled",
+        entityType: "sale",
+        entityId: row.id,
+        details: { transactionId: row.transaction_id },
+      });
+      res.json({ customer });
     } catch (error) {
       if (!handleSalesError(error, res)) throw error;
     }

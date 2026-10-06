@@ -1349,6 +1349,27 @@ describe("checkout, sales, and cashier shifts", () => {
       idNumber: "SYN-SC-9981",
       idChecked: true,
     });
+    const savedCustomerLookup = await cashier
+      .get("/api/sales/customer-lookup")
+      .query({
+        benefitType: "SENIOR_CITIZEN",
+        name: "Synthetic Senior Person",
+        birthday: "1945-03-14",
+      });
+    expect(savedCustomerLookup.status).toBe(200);
+    expect(savedCustomerLookup.body.customer).toEqual({
+      benefitType: "SENIOR_CITIZEN",
+      idType: "Synthetic Senior Card",
+      idNumber: "SYN-SC-9981",
+    });
+    const noMatchingCustomer = await cashier
+      .get("/api/sales/customer-lookup")
+      .query({
+        benefitType: "SENIOR_CITIZEN",
+        name: "Synthetic Senior Person",
+        birthday: "1945-03-15",
+      });
+    expect(noMatchingCustomer.body).toEqual({ customer: null });
     const encrypted = db
       .prepare(
         `SELECT id, customer_name_ciphertext, customer_birthday_ciphertext,

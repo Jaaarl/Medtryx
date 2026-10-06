@@ -16,6 +16,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import {
   customerEncryptionKeyHex,
+  customerLookupDigestWithKey,
   decryptCustomerFieldWithKey,
 } from "./customer-data.js";
 import {
@@ -493,7 +494,8 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
   const rows = db
     .prepare(
       `SELECT id, customer_name_ciphertext, customer_id_type_ciphertext,
-              customer_id_number_ciphertext, customer_birthday_ciphertext
+              customer_id_number_ciphertext, customer_birthday_ciphertext,
+              customer_lookup_digest
        FROM sales WHERE customer_name_ciphertext IS NOT NULL
           OR customer_id_type_ciphertext IS NOT NULL
           OR customer_id_number_ciphertext IS NOT NULL
@@ -505,6 +507,7 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
     customer_id_type_ciphertext: string | null;
     customer_id_number_ciphertext: string | null;
     customer_birthday_ciphertext: string | null;
+    customer_lookup_digest: string | null;
   }[];
   try {
     for (const row of rows) {
@@ -515,7 +518,7 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
       ) {
         throw new Error("missing_encrypted_customer_field");
       }
-      decryptCustomerFieldWithKey(
+      const name = decryptCustomerFieldWithKey(
         row.customer_name_ciphertext,
         `${row.id}/name`,
         key,
@@ -531,11 +534,20 @@ function validateCustomerCiphertexts(db: Database.Database, key: string): void {
         key,
       );
       if (row.customer_birthday_ciphertext) {
-        decryptCustomerFieldWithKey(
+        const birthday = decryptCustomerFieldWithKey(
           row.customer_birthday_ciphertext,
           `${row.id}/birthday`,
           key,
         );
+        if (
+          row.customer_lookup_digest &&
+          row.customer_lookup_digest !==
+            customerLookupDigestWithKey(name, birthday, key)
+        ) {
+          throw new Error("customer_lookup_digest_mismatch");
+        }
+      } else if (row.customer_lookup_digest) {
+        throw new Error("customer_lookup_missing_birthday");
       }
     }
   } catch {

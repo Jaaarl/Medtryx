@@ -2594,6 +2594,7 @@ export function CheckoutPage() {
   const [customerIdType, setCustomerIdType] = useState("");
   const [customerIdNumber, setCustomerIdNumber] = useState("");
   const [customerIdChecked, setCustomerIdChecked] = useState(false);
+  const [customerLookupStatus, setCustomerLookupStatus] = useState("");
   const [bnpcPolicy, setBnpcPolicy] = useState<BnpcPolicySummary | null>(null);
   const [bnpcBookletChecked, setBnpcBookletChecked] = useState(false);
   const [bnpcPriorPurchaseConfirmed, setBnpcPriorPurchaseConfirmed] =
@@ -2633,6 +2634,59 @@ export function CheckoutPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const name = customerName.trim();
+    if (benefitType === "REGULAR" || name.length < 2 || !customerBirthday) {
+      setCustomerLookupStatus("");
+      return () => {
+        active = false;
+      };
+    }
+    const timer = window.setTimeout(() => {
+      const query = new URLSearchParams({
+        benefitType,
+        name,
+        birthday: customerBirthday,
+      });
+      setCustomerLookupStatus("Checking saved customer details…");
+      void api
+        .get<{
+          customer: null | {
+            benefitType: "SENIOR_CITIZEN" | "PWD";
+            idType: string;
+            idNumber: string;
+          };
+        }>(`/sales/customer-lookup?${query}`)
+        .then(({ customer }) => {
+          if (!active) return;
+          if (customer) {
+            setCustomerIdType(customer.idType);
+            setCustomerIdNumber(customer.idNumber);
+            setCustomerLookupStatus(
+              "ID type and number filled from a previous sale.",
+            );
+            setPreview(null);
+            setRequestKey("");
+          } else {
+            setCustomerLookupStatus(
+              "No saved match. Enter the ID number manually.",
+            );
+          }
+        })
+        .catch(() => {
+          if (active)
+            setCustomerLookupStatus(
+              "Could not find saved details. Enter the ID number manually.",
+            );
+        });
+    }, 300);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [benefitType, customerBirthday, customerName]);
 
   useEffect(() => {
     let active = true;
@@ -3681,6 +3735,15 @@ export function CheckoutPage() {
                   onChange={(event) => {
                     const next = event.target.value as typeof benefitType;
                     setBenefitType(next);
+                    setCustomerIdType(
+                      next === "SENIOR_CITIZEN"
+                        ? "Senior Citizen ID"
+                        : next === "PWD"
+                          ? "PWD ID"
+                          : "",
+                    );
+                    setCustomerIdNumber("");
+                    setCustomerLookupStatus("");
                     setCart((current) =>
                       current.map((line) => ({
                         ...line,
@@ -3926,6 +3989,13 @@ export function CheckoutPage() {
                       value={customerName}
                       onChange={(event) => {
                         setCustomerName(event.target.value);
+                        setCustomerIdType(
+                          benefitType === "SENIOR_CITIZEN"
+                            ? "Senior Citizen ID"
+                            : "PWD ID",
+                        );
+                        setCustomerIdNumber("");
+                        setCustomerLookupStatus("");
                         setRequestKey("");
                       }}
                       required
@@ -3941,11 +4011,23 @@ export function CheckoutPage() {
                       value={customerBirthday}
                       onChange={(event) => {
                         setCustomerBirthday(event.target.value);
+                        setCustomerIdType(
+                          benefitType === "SENIOR_CITIZEN"
+                            ? "Senior Citizen ID"
+                            : "PWD ID",
+                        );
+                        setCustomerIdNumber("");
+                        setCustomerLookupStatus("");
                         setRequestKey("");
                       }}
                       required
                     />
                   </Field>
+                  {customerLookupStatus && (
+                    <small className="field-hint" role="status">
+                      {customerLookupStatus}
+                    </small>
+                  )}
                   <Field id="benefit-id-type" label="ID type">
                     <input
                       id="benefit-id-type"

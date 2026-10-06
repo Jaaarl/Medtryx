@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -28,6 +33,28 @@ export function customerEncryptionKeyHex(): string {
 
 function encryptionKey(): Buffer {
   return Buffer.from(customerEncryptionKeyHex(), "hex");
+}
+
+function normalizedLookupName(name: string): string {
+  return name.normalize("NFKC").trim().toLowerCase();
+}
+
+export function customerLookupDigest(name: string, birthday: string): string {
+  return customerLookupDigestWithKey(name, birthday, encryptionKey());
+}
+
+export function customerLookupDigestWithKey(
+  name: string,
+  birthday: string,
+  key: Buffer | string,
+): string {
+  const keyBytes = typeof key === "string" ? Buffer.from(key, "hex") : key;
+  return createHmac("sha256", keyBytes)
+    .update(
+      `medtryx/customer-lookup/v1\0${normalizedLookupName(name)}\0${birthday}`,
+      "utf8",
+    )
+    .digest("hex");
 }
 
 function additionalData(context: string): Buffer {
