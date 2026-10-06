@@ -422,3 +422,61 @@ test("checkout gates a missing shift with a modal and closes shifts inside check
   await expect(closeDialog).toBeHidden();
   await expect(openDialog).toBeVisible();
 });
+
+test("checkout prices render green and discounts render red", async ({
+  browser,
+}) => {
+  const ownerContext = await browser.newContext();
+  const ownerPage = await ownerContext.newPage();
+  await signIn(ownerPage, owner);
+  const productName = `Synthetic Price Color Product ${randomUUID().slice(0, 8)}`;
+  const productResponse = await postApi(ownerPage, "/api/products", {
+    sku: `SYN-COLOR-${randomUUID().slice(0, 8)}`,
+    name: productName,
+    unit: "piece",
+    sellingPrice: "15.00",
+    taxClass: "VATABLE",
+    productType: "BRANDED",
+    isScEligible: false,
+    isPwdEligible: false,
+    openingQuantity: 3,
+    openingUnitCost: "1.00",
+  });
+  expect(productResponse.status()).toBe(201);
+  await ownerContext.close();
+
+  const cashierPage = await browser.newPage();
+  await signIn(cashierPage, cashier);
+  const shiftResponse = await postApi(cashierPage, "/api/shifts", {
+    openingCash: "0.00",
+  });
+  expect(shiftResponse.status()).toBe(201);
+  await cashierPage.reload();
+  await cashierPage.getByLabel("Search catalog").fill(productName);
+  await cashierPage.getByRole("button", { name: "Add to cart" }).click();
+  await cashierPage
+    .getByRole("button", { name: "Calculate line taxes and discounts" })
+    .click();
+
+  await expect(cashierPage.locator(".checkout-line-price").last()).toHaveCSS(
+    "color",
+    "rgb(23, 107, 91)",
+  );
+  await expect(
+    cashierPage.locator(".checkout-line-discount").first(),
+  ).toHaveCSS("color", "rgb(180, 35, 24)");
+
+  const currentShiftResponse = await cashierPage.request.get(
+    "/api/shifts/current",
+  );
+  const { shift } = (await currentShiftResponse.json()) as {
+    shift: { id: string };
+  };
+  const closeResponse = await postApi(
+    cashierPage,
+    `/api/shifts/${shift.id}/close`,
+    { actualCashCount: "0.00" },
+  );
+  expect(closeResponse.status()).toBe(200);
+  await cashierPage.close();
+});

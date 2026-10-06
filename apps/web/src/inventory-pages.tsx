@@ -3201,7 +3201,7 @@ export function CheckoutPage() {
                   <div className="cart-line" key={line.product.id}>
                     <div>
                       <strong>{line.product.name}</strong>
-                      <small>
+                      <small className="checkout-cart-price">
                         ₱{line.product.sellingPrice} × {line.quantity}
                       </small>
                     </div>
@@ -3260,7 +3260,7 @@ export function CheckoutPage() {
                       <strong>
                         {line.offer.name} · {line.offer.code}
                       </strong>
-                      <small>
+                      <small className="checkout-cart-price">
                         ₱{line.offer.regularTotal} regular · ₱
                         {line.offer.promotionalPrice} offer × {line.quantity}
                       </small>
@@ -4084,11 +4084,20 @@ export function CheckoutPage() {
                     {bundle.name} · {bundle.code} · v{bundle.version}
                   </strong>
                   <span>
-                    Regular components ₱{bundle.regularTotal} · advertised ₱
-                    {bundle.promotionalPricePerBundle} × {bundle.quantity} ·
-                    promotion actually applied ₱
-                    {bundle.promotionalDiscountApplied}
+                    Regular components{" "}
+                    <b className="checkout-line-price">
+                      ₱{bundle.regularTotal}
+                    </b>
+                    {" · advertised "}
+                    <b className="checkout-line-price">
+                      ₱{bundle.promotionalPricePerBundle}
+                    </b>
+                    {` × ${bundle.quantity}`}
                   </span>
+                  <small className="checkout-line-discount">
+                    Promotion discount applied −₱
+                    {bundle.promotionalDiscountApplied}
+                  </small>
                   <small>
                     When a component receives a better SC/PWD treatment, that
                     statutory result replaces its allocated bundle reduction.
@@ -4120,11 +4129,15 @@ export function CheckoutPage() {
                       Tax basis ₱{line.taxBasis} · VAT ₱{line.vat}
                       {centsFromMoney(line.vatRemoved) > 0n
                         ? ` · VAT removed ₱${line.vatRemoved}`
-                        : ""}{" "}
-                      · discount ₱{line.discount}
+                        : ""}
+                    </small>
+                    <small className="checkout-line-discount">
+                      Discount −₱{line.discount}
                     </small>
                     {centsFromMoney(line.bnpcDiscount) > 0n && (
-                      <small>BNPC discount ₱{line.bnpcDiscount}</small>
+                      <small className="checkout-line-discount">
+                        BNPC discount −₱{line.bnpcDiscount}
+                      </small>
                     )}
                     {line.assignedLots.length > 0 && (
                       <small>
@@ -4137,7 +4150,9 @@ export function CheckoutPage() {
                           .join("; ")}
                       </small>
                     )}
-                    <span>Line due ₱{line.amountDue}</span>
+                    <span className="checkout-line-price">
+                      Line due ₱{line.amountDue}
+                    </span>
                   </div>
                 ))}
               </div>

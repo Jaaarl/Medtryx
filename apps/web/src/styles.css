@@ -1938,6 +1938,17 @@ a {
   color: #8a9a92;
   font-size: 9px;
 }
+.checkout-page .catalog-product-copy span,
+.checkout-page .cart-line .checkout-cart-price,
+.checkout-preview-lines .checkout-line-price,
+.bundle-preview-summary .checkout-line-price {
+  color: #176b5b;
+  font-weight: 650;
+}
+.checkout-line-discount {
+  color: #b42318 !important;
+  font-weight: 650;
+}
 .catalog-result .button {
   flex: 0 0 auto;
   min-height: 34px;
