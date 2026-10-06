@@ -266,9 +266,8 @@ function createBrowserUuid(): string {
   const bytes = window.crypto.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(
-    bytes,
-    (byte) => byte.toString(16).padStart(2, "0"),
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
   ).join("");
   return [
     hex.slice(0, 8),
@@ -692,8 +691,7 @@ export function ProductsPage() {
       name: form.name,
       unit: form.unit,
       sellingPrice: form.sellingPrice,
-      reorderLevel:
-        form.reorderLevel === "" ? null : Number(form.reorderLevel),
+      reorderLevel: form.reorderLevel === "" ? null : Number(form.reorderLevel),
       taxClass: form.taxClass,
       isScEligible: form.isScEligible,
       isPwdEligible: form.isPwdEligible,
@@ -864,7 +862,9 @@ export function ProductsPage() {
                         <small>
                           {product.sku}
                           {` · ${productTypeLabel(product.productType)}`}
-                          {product.barcode ? ` · ${product.barcode}` : ""} ·{" "}
+                          {product.barcode
+                            ? ` · ${product.barcode}`
+                            : ""} ·{" "}
                           {product.isBnpcEligible
                             ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
                             : "BNPC ineligible"}
@@ -2496,10 +2496,13 @@ export function CheckoutPage() {
   const [bnpcFourKindsChecked, setBnpcFourKindsChecked] = useState(false);
   const [policy, setPolicy] = useState<TaxPolicySummary | null>(null);
   const [shift, setShift] = useState<CurrentShift | null>(null);
-  const [registerShift, setRegisterShift] = useState<RegisterShift | null>(null);
+  const [registerShift, setRegisterShift] = useState<RegisterShift | null>(
+    null,
+  );
   const [registerOpen, setRegisterOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("0.00");
   const [closingCash, setClosingCash] = useState("0.00");
+  const [showShiftCloseModal, setShowShiftCloseModal] = useState(false);
   const [emergencyClosingCash, setEmergencyClosingCash] = useState("");
   const [varianceReason, setVarianceReason] = useState<
     "" | "Cashier Fault" | "Customer Fault" | "No Fault"
@@ -2689,7 +2692,10 @@ export function CheckoutPage() {
         line.product.id === productId ? { ...line, quantity: capped } : line,
       ),
     );
-    setQuantityDrafts((current) => ({ ...current, [productId]: String(capped) }));
+    setQuantityDrafts((current) => ({
+      ...current,
+      [productId]: String(capped),
+    }));
   }
 
   function finishQuantityEdit(productId: string) {
@@ -2884,6 +2890,7 @@ export function CheckoutPage() {
       setShift(null);
       setRegisterShift(null);
       setRegisterOpen(false);
+      setShowShiftCloseModal(false);
       setVarianceReason("");
       setPreview(null);
       setRequestKey("");
@@ -3327,113 +3334,168 @@ export function CheckoutPage() {
                 ? `Approved tax profile: ${policy.version}`
                 : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
-          {!operationsLoading && !shift ? (
-            <>
-              <form
-                className="checkout-shift-form"
-                onSubmit={(event) => void openCurrentShift(event)}
+          {!operationsLoading && !shift && (
+            <div className="shift-modal-backdrop">
+              <section
+                className="checkout-shift-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="open-shift-modal-title"
               >
-                <h3>Open a cashier shift</h3>
-                {registerOpen && (
-                  <p className="register-in-use-note" role="status">
-                    {registerShift
-                      ? `The register is still open under ${registerShift.openedByEmail}. Record a physical count and use emergency close below to release it.`
-                      : "The single cash register is already open. Close the active shift before opening another."}
-                  </p>
-                )}
-                <p>
-                  Enter the physical cash placed in the drawer. QR declarations
-                  are not counted as cash.
-                </p>
-                <Field id="shift-opening-cash" label="Opening cash (₱)">
-                  <input
-                    id="shift-opening-cash"
-                    className="text-input"
-                    inputMode="decimal"
-                    value={openingCash}
-                    onChange={(event) => setOpeningCash(event.target.value)}
-                    disabled={registerOpen}
-                    required
-                    pattern="[0-9]+(\.[0-9]{1,2})?"
-                  />
-                </Field>
-                <button
-                  className="button button-primary"
-                  type="submit"
-                  disabled={saving || registerOpen}
-                >
-                  {saving ? "Opening…" : "Open shift"}
-                </button>
-              </form>
-              {registerShift && (
-                <div className="checkout-shift-open emergency-shift-close">
-                  <strong>
-                    Emergency close: shift opened by {registerShift.openedByEmail}
-                  </strong>
-                  <span>
-                    Expected physical cash: ₱{registerShift.expectedCash}
-                  </span>
-                  <span>Expected QR sales: ₱{registerShift.expectedQrSales}</span>
-                  <form
-                    className="form-stack inventory-form"
-                    onSubmit={(event) => void emergencyCloseShift(event)}
-                  >
-                    <Field
-                      id="emergency-shift-cash-count"
-                      label="Actual physical cash count (₱)"
-                    >
-                      <input
-                        id="emergency-shift-cash-count"
-                        className="text-input"
-                        inputMode="decimal"
-                        value={emergencyClosingCash}
-                        onChange={(event) =>
-                          setEmergencyClosingCash(event.target.value)
-                        }
-                        required
-                        pattern="[0-9]+(\.[0-9]{1,2})?"
-                      />
-                    </Field>
-                    <Field
-                      id="emergency-shift-variance-reason"
-                      label="Variance reason if count differs"
-                    >
-                      <select
-                        id="emergency-shift-variance-reason"
-                        className="text-input select-input"
-                        value={varianceReason}
-                        onChange={(event) =>
-                          setVarianceReason(
-                            event.target.value as typeof varianceReason,
-                          )
-                        }
-                      >
-                        <option value="">Choose a reason</option>
-                        <option value="Cashier Fault">Cashier Fault</option>
-                        <option value="Customer Fault">Customer Fault</option>
-                        <option value="No Fault">No Fault</option>
-                      </select>
-                    </Field>
-                    <button
-                      className="button button-quiet"
-                      type="submit"
-                      disabled={saving}
-                    >
-                      Emergency close shift
-                    </button>
-                  </form>
+                <div className="checkout-shift-modal-heading">
+                  <span className="eyebrow">REGISTER REQUIRED</span>
+                  <h2 id="open-shift-modal-title">Open a cashier shift</h2>
+                  <p>Open the register before checkout can be completed.</p>
                 </div>
-              )}
-            </>
-          ) : shift ? (
-            <div className="checkout-shift-open">
-              <strong>Shift open</strong>
-              <span>Expected physical cash: ₱{shift.expectedCash}</span>
-              <span>Expected QR sales: ₱{shift.expectedQrSales}</span>
-              <details>
-                <summary>Close shift and count cash</summary>
+                {error && (
+                  <div className="banner banner-error" role="alert">
+                    {error}
+                  </div>
+                )}
                 <form
-                  className="form-stack inventory-form"
+                  className="checkout-shift-form checkout-shift-modal-form"
+                  onSubmit={(event) => void openCurrentShift(event)}
+                >
+                  {registerOpen && (
+                    <p className="register-in-use-note" role="status">
+                      {registerShift
+                        ? `The register is still open under ${registerShift.openedByEmail}. Record a physical count and use emergency close below to release it.`
+                        : "The single cash register is already open. Close the active shift before opening another."}
+                    </p>
+                  )}
+                  <p>
+                    Enter the physical cash placed in the drawer. QR
+                    declarations are not counted as cash.
+                  </p>
+                  <Field id="shift-opening-cash" label="Opening cash (₱)">
+                    <input
+                      id="shift-opening-cash"
+                      className="text-input"
+                      inputMode="decimal"
+                      autoFocus
+                      value={openingCash}
+                      onChange={(event) => setOpeningCash(event.target.value)}
+                      disabled={registerOpen}
+                      required
+                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                    />
+                  </Field>
+                  <button
+                    className="button button-primary"
+                    type="submit"
+                    disabled={saving || registerOpen}
+                  >
+                    {saving ? "Opening…" : "Open shift"}
+                  </button>
+                </form>
+                {registerShift && (
+                  <div className="checkout-emergency-close">
+                    <strong>
+                      Emergency close: shift opened by{" "}
+                      {registerShift.openedByEmail}
+                    </strong>
+                    <span>
+                      Expected physical cash: ₱{registerShift.expectedCash}
+                    </span>
+                    <span>
+                      Expected QR sales: ₱{registerShift.expectedQrSales}
+                    </span>
+                    {error && (
+                      <div className="banner banner-error" role="alert">
+                        {error}
+                      </div>
+                    )}
+                    <form
+                      className="form-stack inventory-form"
+                      onSubmit={(event) => void emergencyCloseShift(event)}
+                    >
+                      <Field
+                        id="emergency-shift-cash-count"
+                        label="Actual physical cash count (₱)"
+                      >
+                        <input
+                          id="emergency-shift-cash-count"
+                          className="text-input"
+                          inputMode="decimal"
+                          value={emergencyClosingCash}
+                          onChange={(event) =>
+                            setEmergencyClosingCash(event.target.value)
+                          }
+                          required
+                          pattern="[0-9]+(\.[0-9]{1,2})?"
+                        />
+                      </Field>
+                      <Field
+                        id="emergency-shift-variance-reason"
+                        label="Variance reason if count differs"
+                      >
+                        <select
+                          id="emergency-shift-variance-reason"
+                          className="text-input select-input"
+                          value={varianceReason}
+                          onChange={(event) =>
+                            setVarianceReason(
+                              event.target.value as typeof varianceReason,
+                            )
+                          }
+                        >
+                          <option value="">Choose a reason</option>
+                          <option value="Cashier Fault">Cashier Fault</option>
+                          <option value="Customer Fault">Customer Fault</option>
+                          <option value="No Fault">No Fault</option>
+                        </select>
+                      </Field>
+                      <button
+                        className="button button-quiet"
+                        type="submit"
+                        disabled={saving}
+                      >
+                        Emergency close shift
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+          {shift && (
+            <div className="checkout-shift-open">
+              <div className="checkout-shift-status">
+                <div>
+                  <strong>Shift open</strong>
+                  <span>Expected physical cash: ₱{shift.expectedCash}</span>
+                  <span>Expected QR sales: ₱{shift.expectedQrSales}</span>
+                </div>
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() => setShowShiftCloseModal(true)}
+                >
+                  Close shift
+                </button>
+              </div>
+            </div>
+          )}
+          {showShiftCloseModal && shift && (
+            <div className="shift-modal-backdrop">
+              <section
+                className="checkout-shift-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="close-shift-modal-title"
+              >
+                <div className="checkout-shift-modal-heading">
+                  <span className="eyebrow">CASH DRAWER COUNT</span>
+                  <h2 id="close-shift-modal-title">Close cashier shift</h2>
+                  <p>Expected physical cash: ₱{shift.expectedCash}</p>
+                </div>
+                {error && (
+                  <div className="banner banner-error" role="alert">
+                    {error}
+                  </div>
+                )}
+                <form
+                  className="form-stack inventory-form checkout-shift-close-form"
                   onSubmit={(event) => void closeCurrentShift(event)}
                 >
                   <Field id="shift-closing-cash" label="Actual cash count (₱)">
@@ -3441,6 +3503,7 @@ export function CheckoutPage() {
                       id="shift-closing-cash"
                       className="text-input"
                       inputMode="decimal"
+                      autoFocus
                       value={closingCash}
                       onChange={(event) => setClosingCash(event.target.value)}
                       required
@@ -3467,17 +3530,27 @@ export function CheckoutPage() {
                       <option value="No Fault">No Fault</option>
                     </select>
                   </Field>
-                  <button
-                    className="button button-quiet"
-                    type="submit"
-                    disabled={saving}
-                  >
-                    Close shift
-                  </button>
+                  <div className="checkout-shift-modal-actions">
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={() => setShowShiftCloseModal(false)}
+                      disabled={saving}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="button button-primary"
+                      type="submit"
+                      disabled={saving}
+                    >
+                      {saving ? "Closing…" : "Close shift"}
+                    </button>
+                  </div>
                 </form>
-              </details>
+              </section>
             </div>
-          ) : null}
+          )}
           {(cart.length > 0 || bundleCart.length > 0) && (
             <form
               className="checkout-options"

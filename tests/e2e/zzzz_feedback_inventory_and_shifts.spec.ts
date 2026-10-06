@@ -254,6 +254,7 @@ test("adding a searched product clears the checkout search", async ({
     openingCash: "0.00",
   });
   expect(shiftResponse.status()).toBe(201);
+  await cashierPage.reload();
 
   const search = cashierPage.getByLabel("Search catalog");
   await search.fill(productName);
@@ -305,6 +306,7 @@ test("cart quantity can be edited within available stock and above zero", async 
         expect(response.status()).toBe(201);
         return (await response.json()).shift as { id: string };
       })();
+  await cashierPage.reload();
 
   await cashierPage.getByLabel("Search catalog").fill(productName);
   await cashierPage.getByRole("button", { name: "Add to cart" }).click();
@@ -395,4 +397,28 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   expect(closeResponse.status()).toBe(200);
   await cashierPage.close();
   await ownerContext.close();
+});
+
+test("checkout gates a missing shift with a modal and closes shifts inside checkout", async ({
+  page,
+}) => {
+  await signIn(page, cashier);
+  const openDialog = page.getByRole("dialog", {
+    name: "Open a cashier shift",
+  });
+  await expect(openDialog).toBeVisible();
+  await page.getByLabel(/Opening cash/).fill("25.00");
+  await openDialog.getByRole("button", { name: "Open shift" }).click();
+  await expect(openDialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Close shift" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Close shift" }).click();
+  const closeDialog = page.getByRole("dialog", {
+    name: "Close cashier shift",
+  });
+  await expect(closeDialog).toBeVisible();
+  await page.getByLabel("Actual cash count (₱)").fill("25.00");
+  await closeDialog.getByRole("button", { name: "Close shift" }).click();
+  await expect(closeDialog).toBeHidden();
+  await expect(openDialog).toBeVisible();
 });
