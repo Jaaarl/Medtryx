@@ -195,6 +195,7 @@ async function postSale(
     benefitType?: "REGULAR" | "SENIOR_CITIZEN" | "PWD";
     benefitApplied?: boolean;
     customerName?: string;
+    customerBirthday?: string;
     customerIdType?: string;
     customerIdNumber?: string;
     customerIdChecked?: boolean;
@@ -373,6 +374,7 @@ describe("BNPC checkout", () => {
         ...saleBody,
         requestKey: randomUUID(),
         customerName: "Synthetic BNPC Holder",
+        customerBirthday: "1980-01-01",
         customerIdType: "Synthetic holder ID",
         customerIdChecked: true,
       });
@@ -521,6 +523,7 @@ describe("BNPC checkout", () => {
         bnpcChecks: fullChecks,
         requestKey: randomUUID(),
         customerName: "Synthetic cap holder",
+        customerBirthday: "1945-03-14",
         customerIdType: "Synthetic holder ID",
         customerIdChecked: true,
         paymentMethod: "CASH",
