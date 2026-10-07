@@ -2650,6 +2650,8 @@ function ShiftElapsed({ openedAt }: { openedAt: string }) {
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
   const [productToAdd, setProductToAdd] = useState<CatalogProduct | null>(null);
+  const [bundleOfferToAdd, setBundleOfferToAdd] =
+    useState<BundleOffer | null>(null);
   const [quantityToAdd, setQuantityToAdd] = useState("");
   const [quantityDialogError, setQuantityDialogError] = useState("");
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>(
@@ -2902,7 +2904,16 @@ export function CheckoutPage() {
 
   function promptForProductQuantity(product: CatalogProduct) {
     if (remainingProductQuantity(product.id) <= 0) return;
+    setBundleOfferToAdd(null);
     setProductToAdd(product);
+    setQuantityToAdd("");
+    setQuantityDialogError("");
+  }
+
+  function promptForBundleQuantity(offer: BundleOffer) {
+    if (remainingBundleQuantity(offer) <= 0) return;
+    setProductToAdd(null);
+    setBundleOfferToAdd(offer);
     setQuantityToAdd("");
     setQuantityDialogError("");
   }
@@ -2937,11 +2948,14 @@ export function CheckoutPage() {
     });
   }
 
-  function confirmProductQuantity(event: FormEvent<HTMLFormElement>) {
+  function confirmQuantityPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!productToAdd) return;
     const quantity = Number(quantityToAdd);
-    const available = remainingProductQuantity(productToAdd.id);
+    const available = productToAdd
+      ? remainingProductQuantity(productToAdd.id)
+      : bundleOfferToAdd
+        ? remainingBundleQuantity(bundleOfferToAdd)
+        : 0;
     if (
       !Number.isSafeInteger(quantity) ||
       quantity < 1 ||
@@ -2950,8 +2964,10 @@ export function CheckoutPage() {
       setQuantityDialogError(`Enter a whole number from 1 to ${available}.`);
       return;
     }
-    addProduct(productToAdd, quantity);
+    if (productToAdd) addProduct(productToAdd, quantity);
+    else if (bundleOfferToAdd) addBundle(bundleOfferToAdd, quantity);
     setProductToAdd(null);
+    setBundleOfferToAdd(null);
     setQuantityDialogError("");
   }
   function setQuantity(productId: string, quantity: number) {
@@ -3049,6 +3065,21 @@ export function CheckoutPage() {
     return Math.max(0, available);
   }
 
+  function remainingBundleQuantity(offer: BundleOffer) {
+    const existing = bundleCart.find(
+      (line) =>
+        line.offer.id === offer.id && line.offer.versionId === offer.versionId,
+    );
+    return Math.max(
+      0,
+      Math.min(
+        availableBundleQuantity(offer),
+        (offer.maxQuantityPerSale ?? Number.MAX_SAFE_INTEGER) -
+          (existing?.quantity ?? 0),
+      ),
+    );
+  }
+
   function availableProductQuantity(productId: string) {
     const product =
       products.find((entry) => entry.id === productId) ??
@@ -3063,7 +3094,7 @@ export function CheckoutPage() {
     return Math.max(0, product.quantityAvailable - bundleUsage);
   }
 
-  function addBundle(offer: BundleOffer) {
+  function addBundle(offer: BundleOffer, quantity: number) {
     invalidatePreview();
     setQuery("");
     setBundleCart((current) => {
@@ -3076,7 +3107,7 @@ export function CheckoutPage() {
       const nextQuantity = Math.min(
         available,
         offer.maxQuantityPerSale ?? Number.MAX_SAFE_INTEGER,
-        (existing?.quantity ?? 0) + 1,
+        (existing?.quantity ?? 0) + quantity,
       );
       if (nextQuantity < 1) return current;
       if (existing)
@@ -3090,7 +3121,7 @@ export function CheckoutPage() {
         {
           offer,
           offerKey: createBrowserUuid(),
-          quantity: 1,
+          quantity: nextQuantity,
           componentBenefits: Object.fromEntries(
             offer.components.map((component) => [
               component.productId,
@@ -3456,6 +3487,31 @@ export function CheckoutPage() {
     };
   }
 
+  const quantityDialogOpen = productToAdd !== null || bundleOfferToAdd !== null;
+  const quantityDialogAvailable = productToAdd
+    ? remainingProductQuantity(productToAdd.id)
+    : bundleOfferToAdd
+      ? remainingBundleQuantity(bundleOfferToAdd)
+      : 0;
+  const quantityDialogName = productToAdd?.name ?? bundleOfferToAdd?.name ?? "";
+  const quantityDialogPrice = productToAdd
+    ? `₱${productToAdd.sellingPrice} per ${productToAdd.unit}`
+    : bundleOfferToAdd
+      ? `₱${bundleOfferToAdd.promotionalPrice} per bundle`
+      : "";
+  const quantityAlreadyInCart = productToAdd
+    ? (cart.find((line) => line.product.id === productToAdd.id)?.quantity ?? 0)
+    : bundleOfferToAdd
+      ? (bundleCart.find(
+          (line) =>
+            line.offer.id === bundleOfferToAdd.id &&
+            line.offer.versionId === bundleOfferToAdd.versionId,
+        )?.quantity ?? 0)
+      : 0;
+  const quantityInputId = bundleOfferToAdd
+    ? "checkout-bundle-quantity"
+    : "checkout-product-quantity";
+
   return (
     <section className="page-section inventory-page checkout-page">
       <PageHeading
@@ -3565,10 +3621,10 @@ export function CheckoutPage() {
                   <button
                     className="button button-primary"
                     type="button"
-                    disabled={availableBundleQuantity(offer) <= 0}
-                    onClick={() => addBundle(offer)}
+                    disabled={remainingBundleQuantity(offer) <= 0}
+                    onClick={() => promptForBundleQuantity(offer)}
                   >
-                    {availableBundleQuantity(offer) > 0
+                    {remainingBundleQuantity(offer) > 0
                       ? "Add bundle"
                       : "Unavailable"}
                   </button>
@@ -4769,7 +4825,7 @@ export function CheckoutPage() {
             </section>
           </div>
         )}
-      {productToAdd && (
+      {quantityDialogOpen && (
         <div className="shift-modal-backdrop checkout-quantity-backdrop">
           <section
             className="checkout-shift-modal checkout-quantity-modal"
@@ -4779,21 +4835,16 @@ export function CheckoutPage() {
           >
             <div className="checkout-shift-modal-heading">
               <span className="eyebrow">CHECKOUT</span>
-              <h2 id="checkout-quantity-title">Add item to cart</h2>
+              <h2 id="checkout-quantity-title">
+                Add {bundleOfferToAdd ? "bundle" : "item"} to cart
+              </h2>
               <p>How many would you like to add?</p>
             </div>
             <div className="checkout-quantity-summary">
-              <strong>{productToAdd.name}</strong>
-              <span>
-                ₱{productToAdd.sellingPrice} per {productToAdd.unit}
-              </span>
-              {(cart.find((line) => line.product.id === productToAdd.id)
-                ?.quantity ?? 0) > 0 && (
-                <small>
-                  Already in cart:{" "}
-                  {cart.find((line) => line.product.id === productToAdd.id)
-                    ?.quantity ?? 0}
-                </small>
+              <strong>{quantityDialogName}</strong>
+              <span>{quantityDialogPrice}</span>
+              {quantityAlreadyInCart > 0 && (
+                <small>Already in cart: {quantityAlreadyInCart}</small>
               )}
             </div>
             {quantityDialogError && (
@@ -4803,17 +4854,20 @@ export function CheckoutPage() {
             )}
             <form
               className="checkout-shift-modal-form checkout-quantity-form"
-              onSubmit={confirmProductQuantity}
+              onSubmit={confirmQuantityPrompt}
             >
-              <Field id="checkout-product-quantity" label="Quantity to add">
+              <Field
+                id={quantityInputId}
+                label={bundleOfferToAdd ? "Bundles to add" : "Quantity to add"}
+              >
                 <input
-                  id="checkout-product-quantity"
+                  id={quantityInputId}
                   className="text-input"
                   type="number"
                   inputMode="numeric"
                   autoFocus
                   min={1}
-                  max={remainingProductQuantity(productToAdd.id)}
+                  max={quantityDialogAvailable}
                   step={1}
                   required
                   value={quantityToAdd}
@@ -4824,14 +4878,17 @@ export function CheckoutPage() {
                 />
               </Field>
               <small className="field-hint">
-                {remainingProductQuantity(productToAdd.id)} available to add.
+                {quantityDialogAvailable} available to add.
                 You can adjust the quantity in the cart.
               </small>
               <div className="checkout-quantity-actions">
                 <button
                   className="button button-secondary"
                   type="button"
-                  onClick={() => setProductToAdd(null)}
+                  onClick={() => {
+                    setProductToAdd(null);
+                    setBundleOfferToAdd(null);
+                  }}
                 >
                   Cancel
                 </button>
