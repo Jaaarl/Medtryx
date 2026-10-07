@@ -2578,6 +2578,9 @@ function ShiftElapsed({ openedAt }: { openedAt: string }) {
 
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
+  const [productToAdd, setProductToAdd] = useState<CatalogProduct | null>(null);
+  const [quantityToAdd, setQuantityToAdd] = useState("");
+  const [quantityDialogError, setQuantityDialogError] = useState("");
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>(
     {},
   );
@@ -2801,9 +2804,25 @@ export function CheckoutPage() {
     setNotice("");
   }
 
-  function addProduct(product: CatalogProduct) {
-    const available = availableProductQuantity(product.id);
-    if (available <= 0) return;
+  function remainingProductQuantity(productId: string) {
+    const quantityAlreadyInCart =
+      cart.find((line) => line.product.id === productId)?.quantity ?? 0;
+    return Math.max(
+      0,
+      availableProductQuantity(productId) - quantityAlreadyInCart,
+    );
+  }
+
+  function promptForProductQuantity(product: CatalogProduct) {
+    if (remainingProductQuantity(product.id) <= 0) return;
+    setProductToAdd(product);
+    setQuantityToAdd("");
+    setQuantityDialogError("");
+  }
+
+  function addProduct(product: CatalogProduct, quantity: number) {
+    const maxQuantityInCart = availableProductQuantity(product.id);
+    if (maxQuantityInCart <= 0 || quantity <= 0) return;
     invalidatePreview();
     setQuery("");
     setCart((current) => {
@@ -2813,15 +2832,40 @@ export function CheckoutPage() {
           entry.product.id === product.id
             ? {
                 ...entry,
-                quantity: Math.min(available, entry.quantity + 1),
+                quantity: Math.min(
+                  maxQuantityInCart,
+                  entry.quantity + quantity,
+                ),
               }
             : entry,
         );
       return [
         ...current,
-        { product, quantity: 1, benefitTreatment: "REGULAR" },
+        {
+          product,
+          quantity: Math.min(maxQuantityInCart, quantity),
+          benefitTreatment: "REGULAR",
+        },
       ];
     });
+  }
+
+  function confirmProductQuantity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!productToAdd) return;
+    const quantity = Number(quantityToAdd);
+    const available = remainingProductQuantity(productToAdd.id);
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity < 1 ||
+      quantity > available
+    ) {
+      setQuantityDialogError(`Enter a whole number from 1 to ${available}.`);
+      return;
+    }
+    addProduct(productToAdd, quantity);
+    setProductToAdd(null);
+    setQuantityDialogError("");
   }
   function setQuantity(productId: string, quantity: number) {
     invalidatePreview();
@@ -3299,12 +3343,14 @@ export function CheckoutPage() {
                   <button
                     className="button button-primary"
                     type="button"
-                    disabled={availableProductQuantity(product.id) <= 0}
-                    onClick={() => addProduct(product)}
+                    disabled={remainingProductQuantity(product.id) <= 0}
+                    onClick={() => promptForProductQuantity(product)}
                   >
-                    {availableProductQuantity(product.id)
+                    {remainingProductQuantity(product.id) > 0
                       ? "Add to cart"
-                      : "Out of stock"}
+                      : availableProductQuantity(product.id) <= 0
+                        ? "Out of stock"
+                        : "Maximum in cart"}
                   </button>
                 </div>
               ))
@@ -4444,6 +4490,80 @@ export function CheckoutPage() {
           )}
         </aside>
       </div>
+      {productToAdd && (
+        <div className="shift-modal-backdrop checkout-quantity-backdrop">
+          <section
+            className="checkout-shift-modal checkout-quantity-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="checkout-quantity-title"
+          >
+            <div className="checkout-shift-modal-heading">
+              <span className="eyebrow">CHECKOUT</span>
+              <h2 id="checkout-quantity-title">Add item to cart</h2>
+              <p>How many would you like to add?</p>
+            </div>
+            <div className="checkout-quantity-summary">
+              <strong>{productToAdd.name}</strong>
+              <span>
+                ₱{productToAdd.sellingPrice} per {productToAdd.unit}
+              </span>
+              {(cart.find((line) => line.product.id === productToAdd.id)
+                ?.quantity ?? 0) > 0 && (
+                <small>
+                  Already in cart:{" "}
+                  {cart.find((line) => line.product.id === productToAdd.id)
+                    ?.quantity ?? 0}
+                </small>
+              )}
+            </div>
+            {quantityDialogError && (
+              <div className="banner banner-error" role="alert">
+                {quantityDialogError}
+              </div>
+            )}
+            <form
+              className="checkout-shift-modal-form checkout-quantity-form"
+              onSubmit={confirmProductQuantity}
+            >
+              <Field id="checkout-product-quantity" label="Quantity to add">
+                <input
+                  id="checkout-product-quantity"
+                  className="text-input"
+                  type="number"
+                  inputMode="numeric"
+                  autoFocus
+                  min={1}
+                  max={remainingProductQuantity(productToAdd.id)}
+                  step={1}
+                  required
+                  value={quantityToAdd}
+                  onChange={(event) => {
+                    setQuantityToAdd(event.target.value);
+                    setQuantityDialogError("");
+                  }}
+                />
+              </Field>
+              <small className="field-hint">
+                {remainingProductQuantity(productToAdd.id)} available to add.
+                You can adjust the quantity in the cart.
+              </small>
+              <div className="checkout-quantity-actions">
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() => setProductToAdd(null)}
+                >
+                  Cancel
+                </button>
+                <button className="button button-primary" type="submit">
+                  Add to cart
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
       <RecentTransactions
         refundShift={shift ?? registerShift}
         refreshKey={recentSalesRefresh}
