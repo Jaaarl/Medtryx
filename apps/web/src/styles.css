@@ -1864,7 +1864,11 @@ a {
   flex-direction: column;
 }
 .stock-list-card .inventory-table {
-  min-width: 560px;
+  min-width: 700px;
+}
+.stock-product-actions {
+  display: grid;
+  gap: 2px;
 }
 .stock-list-card .inventory-table tbody tr {
   cursor: pointer;

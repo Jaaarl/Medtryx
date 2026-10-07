@@ -854,6 +854,7 @@ const restoreTables = [
   "sale_sequences",
   "reversal_sequences",
   "stock_events",
+  "stock_cost_corrections",
   "inventory_lots",
   "lot_reconciliations",
   "shifts",
@@ -900,7 +901,8 @@ function applyRestoredDatabase(
            'sale_bundle_component_snapshots_no_delete',
            'bnpc_policy_versions_no_update', 'bnpc_policy_versions_no_delete',
            'sale_bnpc_snapshots_no_update', 'sale_bnpc_snapshots_no_delete',
-           'bnpc_usage_events_no_update', 'bnpc_usage_events_no_delete'
+           'bnpc_usage_events_no_update', 'bnpc_usage_events_no_delete',
+           'stock_cost_corrections_no_update', 'stock_cost_corrections_no_delete'
          ) ORDER BY name`,
       )
       .all() as Array<{ sql: string }>;
@@ -929,6 +931,8 @@ function applyRestoredDatabase(
         "sale_bnpc_snapshots_no_delete",
         "bnpc_usage_events_no_update",
         "bnpc_usage_events_no_delete",
+        "stock_cost_corrections_no_update",
+        "stock_cost_corrections_no_delete",
       ]) {
         db.exec(`DROP TRIGGER IF EXISTS main.${triggerName}`);
       }

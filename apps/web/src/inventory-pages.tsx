@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
+import { Link, useSearchParams } from "react-router";
 import {
   Activity,
   AlertTriangle,
@@ -264,6 +265,12 @@ function errorMessage(error: unknown): string {
       "The requested change exceeds available stock. Refresh and review the cart.",
     invalid_inventory_adjustment:
       "That quantity would make the stock value invalid. Refresh and check the current stock.",
+    no_stock_to_revalue:
+      "There is no stock on hand to revalue. Enter the actual cost when you receive the next delivery.",
+    cost_correction_no_change:
+      "That cost matches the current inventory value, so no correction was recorded.",
+    inventory_ledger_mismatch:
+      "The stock value does not match its inventory history. Review stock history before correcting cost.",
     selling_price_must_be_positive: "Enter a selling price greater than zero.",
     customer_encryption_unavailable:
       "Customer ID encryption is not configured for this environment.",
@@ -705,6 +712,7 @@ function StockCsvImportPanel({
 
 export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
+  const [searchParams, setSearchParams] = useSearchParams();
   const productTableRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [productPage, setProductPage] = useState(1);
@@ -858,6 +866,35 @@ export function ProductsPage() {
       tracksLots: product.tracksLots,
     });
   }
+
+  useEffect(() => {
+    const productId = searchParams.get("edit");
+    if (loading || !productId) return;
+
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+
+    setEditing(product);
+    setForm({
+      ...EMPTY_FORM,
+      name: product.name,
+      unit: product.unit,
+      sellingPrice: product.sellingPrice,
+      reorderLevel:
+        product.reorderLevel === null ? "" : String(product.reorderLevel),
+      taxClass: product.taxClass,
+      isScEligible: product.isScEligible,
+      isPwdEligible: product.isPwdEligible,
+      isBnpcEligible: product.isBnpcEligible,
+      bnpcCategory: product.bnpcCategory ?? "",
+      productType: product.productType ?? "",
+      tracksLots: product.tracksLots,
+    });
+
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete("edit");
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [loading, products, searchParams, setSearchParams]);
 
   function cancelEdit() {
     setEditing(null);
@@ -1589,6 +1626,8 @@ export function StockPage() {
   const [adjustLotId, setAdjustLotId] = useState("");
   const [adjustLotCode, setAdjustLotCode] = useState("");
   const [adjustExpiryDate, setAdjustExpiryDate] = useState("");
+  const [costCorrectionInput, setCostCorrectionInput] = useState("");
+  const [costCorrectionReason, setCostCorrectionReason] = useState("");
   const [reconcileLotCode, setReconcileLotCode] = useState("");
   const [reconcileExpiryDate, setReconcileExpiryDate] = useState("");
   const [reconcileQuantity, setReconcileQuantity] = useState("");
@@ -1603,6 +1642,15 @@ export function StockPage() {
   const [expiryDateInput, setExpiryDateInput] = useState("");
   const [lotEditReason, setLotEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
+  const costCorrectionUnitCostCents = /^\d{1,7}(?:\.\d{1,2})?$/.test(
+    costCorrectionInput,
+  )
+    ? centsFromMoney(costCorrectionInput)
+    : null;
+  const correctedInventoryValueCents =
+    selected && costCorrectionUnitCostCents !== null
+      ? costCorrectionUnitCostCents * BigInt(selected.quantityOnHand)
+      : null;
   const filteredProducts = lowOnly
     ? products.filter(
         (product) =>
@@ -1674,6 +1722,12 @@ export function StockPage() {
     visibleLots.length,
   );
 
+  useEffect(() => {
+    if (!selected) return;
+    setCostCorrectionInput(selected.weightedAverageUnitCost);
+    setCostCorrectionReason("");
+  }, [selectedId, selected?.weightedAverageUnitCost]);
+
   function selectStockSort(key: string) {
     setStockPage(1);
     setStockSort((current) => ({
@@ -1681,6 +1735,13 @@ export function StockPage() {
       direction:
         current.key === key && current.direction === "asc" ? "desc" : "asc",
     }));
+  }
+
+  function focusCostCorrection(productId: string) {
+    setSelectedId(productId);
+    document
+      .getElementById("stock-cost-correction")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function refreshProducts() {
@@ -1851,6 +1912,33 @@ export function StockPage() {
     }
   }
 
+  async function correctAcquisitionCost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post("/stock/cost-corrections", {
+        productId: selected.id,
+        unitCost: costCorrectionInput,
+        reason: costCorrectionReason.trim(),
+      });
+      await Promise.all([
+        refreshProducts(),
+        refreshEvents(selected.id),
+      ]);
+      setNotice(
+        `Average acquisition cost corrected for ${selected.name}. Past sales and receipt records were left unchanged.`,
+      );
+      setCostCorrectionReason("");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveExpiryWarning(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -1994,7 +2082,9 @@ export function StockPage() {
           <div className="card-heading inventory-card-heading">
             <div>
               <h2>Current stock</h2>
-              <p>Value follows moving weighted-average acquisition cost.</p>
+              <p>
+                Correct acquisition cost or edit product details from any row.
+              </p>
             </div>
             <label className="inventory-checkbox compact-checkbox">
               <input
@@ -2036,12 +2126,13 @@ export function StockPage() {
                     direction={stockSort.direction}
                     onClick={() => selectStockSort("stockValue")}
                   />
+                  <th>ACTION</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={4} className="table-loading">
+                    <td colSpan={5} className="table-loading">
                       Loading stock…
                     </td>
                   </tr>
@@ -2073,11 +2164,34 @@ export function StockPage() {
                       </td>
                       <td>₱{product.weightedAverageUnitCost}</td>
                       <td>₱{product.inventoryValue}</td>
+                      <td>
+                        <div className="stock-product-actions">
+                          <button
+                            className="text-action"
+                            type="button"
+                            aria-label={`Correct acquisition cost for ${product.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              focusCostCorrection(product.id);
+                            }}
+                          >
+                            Correct cost
+                          </button>
+                          <Link
+                            className="text-action"
+                            to={`/products?edit=${encodeURIComponent(product.id)}`}
+                            aria-label={`Edit ${product.name} product details`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Product details
+                          </Link>
+                        </div>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={4} className="table-loading">
+                    <td colSpan={5} className="table-loading">
                       {lowOnly
                         ? "No products are below their reorder level."
                         : "Create a product before receiving stock."}
@@ -2247,6 +2361,86 @@ export function StockPage() {
           </div>
         </aside>
         <aside className="stock-adjustment-column">
+          <div
+            className="create-card inventory-form-card"
+            id="stock-cost-correction"
+          >
+            <h2>Correct acquisition cost</h2>
+            <p>
+              Revalues remaining stock at the corrected average unit cost.
+              Receipts and past sales stay unchanged.
+            </p>
+            {selected && selected.quantityOnHand > 0 ? (
+              <form
+                className="form-stack inventory-form"
+                onSubmit={(event) => void correctAcquisitionCost(event)}
+              >
+                <div className="selected-product-strip">
+                  <strong>{selected.name}</strong>
+                  <span>
+                    {selected.sku} · {selected.quantityOnHand} {selected.unit} on
+                    hand · current average ₱{selected.weightedAverageUnitCost}
+                  </span>
+                </div>
+                <Field
+                  id="cost-correction-unit-cost"
+                  label="Correct average acquisition cost per unit (₱)"
+                >
+                  <input
+                    id="cost-correction-unit-cost"
+                    className="text-input"
+                    inputMode="decimal"
+                    value={costCorrectionInput}
+                    onChange={(event) =>
+                      setCostCorrectionInput(event.target.value)
+                    }
+                    required
+                    pattern="[0-9]+(\.[0-9]{1,2})?"
+                  />
+                </Field>
+                {correctedInventoryValueCents !== null && (
+                  <small className="field-hint">
+                    Inventory value will become{" "}
+                    {formatCents(correctedInventoryValueCents)}; change{" "}
+                    {formatCents(
+                      correctedInventoryValueCents -
+                        centsFromMoney(selected.inventoryValue),
+                    )}.
+                  </small>
+                )}
+                <Field
+                  id="cost-correction-reason"
+                  label="Reason for cost correction"
+                >
+                  <input
+                    id="cost-correction-reason"
+                    className="text-input"
+                    value={costCorrectionReason}
+                    onChange={(event) =>
+                      setCostCorrectionReason(event.target.value)
+                    }
+                    required
+                    minLength={3}
+                    maxLength={500}
+                  />
+                </Field>
+                <button
+                  className="button button-primary create-submit"
+                  type="submit"
+                  disabled={saving}
+                >
+                  {saving ? "Saving…" : "Apply cost correction"}
+                  <CirclePlus size={15} />
+                </button>
+              </form>
+            ) : (
+              <p className="table-loading">
+                {selected
+                  ? "No stock is on hand. Enter the actual acquisition cost when recording the next receipt."
+                  : "Select a product from the stock list."}
+              </p>
+            )}
+          </div>
           <div className="create-card inventory-form-card">
             <h2>Adjustment or write-off</h2>
             <p>
@@ -2822,7 +3016,11 @@ export function StockPage() {
                         {event.sku} · {event.productName}
                       </small>
                     </td>
-                    <td>{event.type}</td>
+                    <td>
+                      {event.type === "COST_CORRECTION"
+                        ? "Acquisition cost correction"
+                        : event.type}
+                    </td>
                     <td>
                       {event.quantityDelta > 0 ? "+" : ""}
                       {event.quantityDelta}

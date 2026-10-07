@@ -439,6 +439,14 @@ const lotEditSchema = z
     }
   });
 
+const stockCostCorrectionSchema = z
+  .object({
+    productId: z.uuid(),
+    unitCost: moneySchema,
+    reason: reasonSchema,
+  })
+  .strict();
+
 type TaxClass = z.infer<typeof taxClassSchema>;
 type ProductRow = {
   id: string;
@@ -795,16 +803,31 @@ function getStockEvents(
   productId?: string,
   limit = 100,
 ): StockEventRow[] {
-  const filter = productId ? "WHERE e.product_id = ?" : "";
-  const args = productId ? [productId, limit] : [limit];
+  const stockEventFilter = productId ? "WHERE e.product_id = ?" : "";
+  const costCorrectionFilter = productId ? "WHERE c.product_id = ?" : "";
+  const args = productId ? [productId, productId, limit] : [limit];
   return db
     .prepare(
-      `SELECT e.id, e.event_type, e.quantity_delta, e.unit_cost_centavos,
-              e.inventory_value_delta_centavos, e.reference, e.supplier, e.reason, e.created_at,
-              p.id AS product_id, p.sku, p.name AS product_name, u.email AS actor_email
-       FROM stock_events e JOIN products p ON p.id = e.product_id
-       LEFT JOIN users u ON u.id = e.actor_user_id
-       ${filter} ORDER BY e.sequence DESC LIMIT ?`,
+      `SELECT * FROM (
+         SELECT e.id, e.event_type, e.quantity_delta, e.unit_cost_centavos,
+                e.inventory_value_delta_centavos, e.reference, e.supplier, e.reason, e.created_at,
+                p.id AS product_id, p.sku, p.name AS product_name, u.email AS actor_email
+         FROM stock_events e JOIN products p ON p.id = e.product_id
+         LEFT JOIN users u ON u.id = e.actor_user_id
+         ${stockEventFilter}
+         UNION ALL
+         SELECT c.id, 'COST_CORRECTION' AS event_type, 0 AS quantity_delta,
+                c.new_unit_cost_centavos AS unit_cost_centavos,
+                c.inventory_value_delta_centavos, NULL AS reference, NULL AS supplier,
+                'Average acquisition cost corrected: ' ||
+                  printf('%.2f', c.old_unit_cost_centavos / 100.0) || ' to ' ||
+                  printf('%.2f', c.new_unit_cost_centavos / 100.0) || '. ' || c.reason AS reason,
+                c.created_at, p.id AS product_id, p.sku, p.name AS product_name,
+                u.email AS actor_email
+         FROM stock_cost_corrections c JOIN products p ON p.id = c.product_id
+         LEFT JOIN users u ON u.id = c.actor_user_id
+         ${costCorrectionFilter}
+       ) ORDER BY created_at DESC, id DESC LIMIT ?`,
     )
     .all(...args) as StockEventRow[];
 }
@@ -2648,6 +2671,148 @@ export function registerInventoryRoutes(
         res
           .status(201)
           .json({ product: product ? presentProduct(db, product) : null });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
+
+  router.post(
+    "/stock/cost-corrections",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const parsed = stockCostCorrectionSchema.safeParse(req.body);
+      if (!parsed.success) return bodyValidation(res);
+      if (!req.user)
+        return res.status(401).json({ error: "authentication_required" });
+      try {
+        const productId = db.transaction(() => {
+          const product = db
+            .prepare(
+              `SELECT id, sku, quantity_on_hand, inventory_value_centavos
+               FROM products WHERE id = ?`,
+            )
+            .get(parsed.data.productId) as
+            | {
+                id: string;
+                sku: string;
+                quantity_on_hand: number;
+                inventory_value_centavos: number;
+              }
+            | undefined;
+          if (!product) throw new InventoryError(404, "product_not_found");
+          if (product.quantity_on_hand === 0)
+            throw new InventoryError(409, "no_stock_to_revalue");
+
+          const movements = db
+            .prepare(
+              `SELECT lot_id, coalesce(sum(quantity_delta), 0) AS quantity,
+                      coalesce(sum(inventory_value_delta_centavos), 0) AS value_centavos
+               FROM lot_stock_movements WHERE product_id = ? GROUP BY lot_id`,
+            )
+            .all(product.id) as Array<{
+            lot_id: string | null;
+            quantity: number;
+            value_centavos: number;
+          }>;
+          if (
+            movements.reduce((sum, movement) => sum + movement.quantity, 0) !==
+              product.quantity_on_hand ||
+            movements.reduce(
+              (sum, movement) => sum + movement.value_centavos,
+              0,
+            ) !== product.inventory_value_centavos
+          ) {
+            throw new InventoryError(409, "inventory_ledger_mismatch");
+          }
+
+          const newUnitCost = parseMoney(parsed.data.unitCost);
+          const newInventoryValue = roundedInteger(
+            new Decimal(newUnitCost).mul(product.quantity_on_hand),
+          );
+          if (!Number.isSafeInteger(newInventoryValue))
+            throw new InventoryError(400, "inventory_value_overflow");
+          const valueDelta =
+            newInventoryValue - product.inventory_value_centavos;
+          if (valueDelta === 0)
+            throw new InventoryError(409, "cost_correction_no_change");
+
+          const oldUnitCost = roundedInteger(
+            new Decimal(product.inventory_value_centavos).div(
+              product.quantity_on_hand,
+            ),
+          );
+          const correctionId = randomUUID();
+          const now = new Date().toISOString();
+          db.prepare(
+            `INSERT INTO stock_cost_corrections
+              (id, product_id, quantity_basis, old_unit_cost_centavos,
+               new_unit_cost_centavos, old_inventory_value_centavos,
+               new_inventory_value_centavos, inventory_value_delta_centavos,
+               reason, actor_user_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            correctionId,
+            product.id,
+            product.quantity_on_hand,
+            oldUnitCost,
+            newUnitCost,
+            product.inventory_value_centavos,
+            newInventoryValue,
+            valueDelta,
+            parsed.data.reason,
+            req.user!.id,
+            now,
+          );
+
+          const correctionReason = `ACQUISITION_COST_CORRECTION: ${parsed.data.reason}`;
+          for (const movement of movements) {
+            const newBucketValue = roundedInteger(
+              new Decimal(newUnitCost).mul(movement.quantity),
+            );
+            const bucketDelta = newBucketValue - movement.value_centavos;
+            if (bucketDelta === 0) continue;
+            writeLotMovement(db, {
+              productId: product.id,
+              lotId: movement.lot_id,
+              type: "ADJUSTMENT",
+              quantityDelta: 0,
+              inventoryValueDeltaCentavos: bucketDelta,
+              unitCostCentavos: newUnitCost,
+              costCorrectionId: correctionId,
+              reason: correctionReason,
+              actorUserId: req.user!.id,
+              createdAt: now,
+            });
+          }
+
+          db.prepare(
+            "UPDATE products SET inventory_value_centavos = ?, updated_at = ? WHERE id = ?",
+          ).run(newInventoryValue, now, product.id);
+          writeAuditEvent(db, {
+            actorUserId: req.user!.id,
+            action: "stock.acquisition_cost_corrected",
+            entityType: "product",
+            entityId: product.id,
+            details: {
+              sku: product.sku,
+              quantity: product.quantity_on_hand,
+              oldUnitCostCentavos: oldUnitCost,
+              newUnitCostCentavos: newUnitCost,
+              oldInventoryValueCentavos: product.inventory_value_centavos,
+              newInventoryValueCentavos: newInventoryValue,
+              inventoryValueDeltaCentavos: valueDelta,
+              reason: parsed.data.reason,
+            },
+          });
+          return product.id;
+        })();
+        const product = findProduct(db, productId);
+        res.status(201).json({
+          product: product ? presentProduct(db, product) : null,
+        });
       } catch (error) {
         if (!handleInventoryError(error, res)) throw error;
       }

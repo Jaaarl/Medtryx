@@ -123,6 +123,7 @@ export function writeLotMovement(
     quantityDelta: number;
     inventoryValueDeltaCentavos: number;
     unitCostCentavos?: number | null;
+    costCorrectionId?: string | null;
     reason?: string | null;
     actorUserId?: string | null;
     createdAt: string;
@@ -133,8 +134,8 @@ export function writeLotMovement(
       (id, product_id, lot_id, movement_type, stock_event_id, sale_line_id,
        reversal_line_id, reconciliation_id, quantity_delta,
        inventory_value_delta_centavos, unit_cost_centavos, reason,
-       actor_user_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       actor_user_id, created_at, cost_correction_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     randomUUID(),
     movement.productId,
@@ -150,6 +151,7 @@ export function writeLotMovement(
     movement.reason ?? null,
     movement.actorUserId ?? null,
     movement.createdAt,
+    movement.costCorrectionId ?? null,
   );
 }
 
@@ -160,7 +162,8 @@ export function lotLedgerIssues(db: Database.Database): string[] {
               coalesce((SELECT sum(m.quantity_delta) FROM lot_stock_movements m WHERE m.product_id = p.id), 0) AS lot_quantity,
               coalesce((SELECT sum(m.inventory_value_delta_centavos) FROM lot_stock_movements m WHERE m.product_id = p.id), 0) AS lot_value,
               coalesce((SELECT sum(e.quantity_delta) FROM stock_events e WHERE e.product_id = p.id), 0) AS event_quantity,
-              coalesce((SELECT sum(e.inventory_value_delta_centavos) FROM stock_events e WHERE e.product_id = p.id), 0) AS event_value
+              coalesce((SELECT sum(e.inventory_value_delta_centavos) FROM stock_events e WHERE e.product_id = p.id), 0) +
+                coalesce((SELECT sum(c.inventory_value_delta_centavos) FROM stock_cost_corrections c WHERE c.product_id = p.id), 0) AS event_value
        FROM products p`,
     )
     .all() as Array<{
@@ -197,5 +200,16 @@ export function lotLedgerIssues(db: Database.Database): string[] {
     )
     .all() as Array<{ product_id: string }>;
   for (const row of negativeBalances) issues.add(row.product_id);
+  const costCorrectionIssues = db
+    .prepare(
+      `SELECT c.product_id FROM stock_cost_corrections c
+       LEFT JOIN lot_stock_movements m ON m.cost_correction_id = c.id
+       GROUP BY c.id
+       HAVING coalesce(sum(m.quantity_delta), 0) <> 0
+          OR coalesce(sum(m.inventory_value_delta_centavos), 0) <> c.inventory_value_delta_centavos
+          OR count(m.id) = 0`,
+    )
+    .all() as Array<{ product_id: string }>;
+  for (const row of costCorrectionIssues) issues.add(row.product_id);
   return [...issues];
 }
