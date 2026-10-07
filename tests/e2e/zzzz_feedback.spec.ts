@@ -142,6 +142,9 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     .filter({ hasText: correctionSale.transactionId });
   await expect(recentTransaction).toBeVisible();
   await recentTransaction
+    .getByRole("button", { name: "Switch payment" })
+    .click();
+  await recentTransaction
     .getByLabel("Reason for payment correction")
     .selectOption("Cashier Fault");
   await recentTransaction
@@ -151,6 +154,9 @@ test("benefit report, ten-minute payment switch and cancellation, and transactio
     cashierPage.getByRole("status").filter({ hasText: "Payment switched" }),
   ).toBeVisible();
 
+  await recentTransaction
+    .getByRole("button", { name: "Cancel sale", exact: true })
+    .click();
   await recentTransaction
     .getByLabel("Cancellation reason")
     .selectOption("Custom");

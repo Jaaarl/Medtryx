@@ -25,6 +25,7 @@ type RecentTransaction = {
 };
 
 type RefundShift = { id: string; expectedCash: string };
+type TransactionAction = "payment" | "cancel";
 
 const ACTION_WINDOW_MS = 10 * 60 * 1000;
 type ReasonChoice = "" | "Cashier Fault" | "Customer Fault" | "Custom";
@@ -101,6 +102,9 @@ export function RecentTransactions({
   >({});
   const [qrRefundConfirmed, setQrRefundConfirmed] = useState<
     Record<string, boolean>
+  >({});
+  const [openActions, setOpenActions] = useState<
+    Record<string, TransactionAction | null>
   >({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
@@ -235,14 +239,21 @@ export function RecentTransactions({
     }
   }
 
+  function toggleAction(transactionId: string, action: TransactionAction) {
+    setOpenActions((current) => ({
+      ...current,
+      [transactionId]: current[transactionId] === action ? null : action,
+    }));
+  }
+
   return (
     <section className="settings-main-card recent-transactions-card">
       <div className="card-heading">
         <div>
           <h2>Recent transactions</h2>
           <p>
-            Cancel your sales within 10 minutes if the customer changes their
-            mind.
+            Correct a payment or cancel a sale within 10 minutes. These are
+            separate actions.
           </p>
         </div>
         <span className="count-chip">{transactions.length} in window</span>
@@ -266,6 +277,7 @@ export function RecentTransactions({
               Date.parse(transaction.createdAt) + ACTION_WINDOW_MS - now;
             const canCancel =
               transaction.status === "FINALIZED" && remainingMs > 0;
+            const openAction = openActions[transaction.transactionId] ?? null;
             const secondsRemaining = Math.max(
               0,
               Math.ceil(remainingMs / 1_000),
@@ -303,61 +315,6 @@ export function RecentTransactions({
                             .join("; ")}
                         </small>
                       )}
-                      {canCancel && (
-                        <div className="recent-stock-choice">
-                          <label>
-                            <input
-                              type="radio"
-                              name={`stock-${line.saleLineId}`}
-                              required
-                              checked={restockChoices[line.saleLineId] === true}
-                              onChange={() =>
-                                setRestockChoices((current) => ({
-                                  ...current,
-                                  [line.saleLineId]: true,
-                                }))
-                              }
-                            />
-                            Returned and saleable; restock
-                          </label>
-                          <label>
-                            <input
-                              type="radio"
-                              name={`stock-${line.saleLineId}`}
-                              required
-                              checked={
-                                restockChoices[line.saleLineId] === false
-                              }
-                              onChange={() =>
-                                setRestockChoices((current) => ({
-                                  ...current,
-                                  [line.saleLineId]: false,
-                                }))
-                              }
-                            />
-                            Not saleable; write off
-                          </label>
-                          {restockChoices[line.saleLineId] === true &&
-                            line.lotAllocations.length > 0 && (
-                              <label>
-                                <input
-                                  type="checkbox"
-                                  required
-                                  checked={
-                                    lotVerified[line.saleLineId] === true
-                                  }
-                                  onChange={(event) =>
-                                    setLotVerified((current) => ({
-                                      ...current,
-                                      [line.saleLineId]: event.target.checked,
-                                    }))
-                                  }
-                                />
-                                I physically checked the original lots
-                              </label>
-                            )}
-                        </div>
-                      )}
                     </li>
                   ))}
                 </ul>
@@ -367,169 +324,319 @@ export function RecentTransactions({
                   </small>
                 ) : canCancel ? (
                   <>
-                    {transaction.paymentMethod === "CASH" && (
-                      <form
-                        className="recent-cancel-form recent-payment-switch-form"
-                        onSubmit={(event) =>
-                          void switchToQr(event, transaction)
-                        }
-                      >
-                        <strong>Correct a cash sale to QR</strong>
-                        <small className="field-hint">
-                          Cash will decrease by ₱{transaction.amountDue}; QR
-                          will increase by ₱{transaction.qrAmountIfSwitched}.
-                          The QR total does not include cash rounding.
-                        </small>
-                        <label
-                          className="field-label"
-                          htmlFor={`switch-reason-${transaction.transactionId}`}
-                        >
-                          Reason for payment correction
-                        </label>
-                        <select
-                          id={`switch-reason-${transaction.transactionId}`}
-                          className="text-input select-input"
-                          required
-                          value={switchReasons[transaction.transactionId] ?? ""}
-                          onChange={(event) =>
-                            setSwitchReasons((current) => ({
-                              ...current,
-                              [transaction.transactionId]: event.target
-                                .value as ReasonChoice,
-                            }))
+                    <div
+                      className={`recent-action-picker ${transaction.paymentMethod === "QR" ? "recent-action-picker-single" : ""}`}
+                      role="group"
+                      aria-label={`Actions for ${transaction.transactionId}`}
+                    >
+                      {transaction.paymentMethod === "CASH" && (
+                        <button
+                          className={`recent-action-button ${openAction === "payment" ? "recent-action-button-active" : ""}`}
+                          type="button"
+                          aria-expanded={openAction === "payment"}
+                          onClick={() =>
+                            toggleAction(transaction.transactionId, "payment")
                           }
                         >
-                          <option value="" disabled>
-                            Select a reason
-                          </option>
-                          <option value="Cashier Fault">Cashier Fault</option>
-                          <option value="Customer Fault">Customer Fault</option>
-                          <option value="Custom">Custom</option>
-                        </select>
-                        {switchReasons[transaction.transactionId] ===
-                          "Custom" && (
-                          <textarea
-                            aria-label="Custom payment correction reason"
-                            className="text-input reversal-reason-input"
-                            placeholder="Add a custom reason (optional)"
-                            maxLength={500}
+                          Switch payment
+                        </button>
+                      )}
+                      <button
+                        className={`recent-action-button recent-action-button-cancel ${openAction === "cancel" ? "recent-action-button-active" : ""}`}
+                        type="button"
+                        aria-expanded={openAction === "cancel"}
+                        onClick={() =>
+                          toggleAction(transaction.transactionId, "cancel")
+                        }
+                      >
+                        Cancel sale
+                      </button>
+                    </div>
+                    {transaction.paymentMethod === "CASH" &&
+                      openAction === "payment" && (
+                        <form
+                          id={`payment-action-${transaction.transactionId}`}
+                          className="recent-cancel-form recent-payment-switch-form"
+                          onSubmit={(event) =>
+                            void switchToQr(event, transaction)
+                          }
+                        >
+                          <div className="recent-action-heading">
+                            <span className="recent-action-kicker">
+                              Optional payment correction
+                            </span>
+                            <h3>Cash was recorded by mistake?</h3>
+                            <p>
+                              This changes the payment record to QR only. The
+                              sale stays active, and no refund is sent.
+                            </p>
+                          </div>
+                          <small className="field-hint">
+                            Cash will decrease by ₱{transaction.amountDue}; QR
+                            will increase by ₱{transaction.qrAmountIfSwitched}.
+                            The QR total does not include cash rounding.
+                          </small>
+                          <label
+                            className="field-label"
+                            htmlFor={`switch-reason-${transaction.transactionId}`}
+                          >
+                            Reason for payment correction
+                          </label>
+                          <select
+                            id={`switch-reason-${transaction.transactionId}`}
+                            className="text-input select-input"
+                            required
                             value={
-                              customSwitchReasons[transaction.transactionId] ??
-                              ""
+                              switchReasons[transaction.transactionId] ?? ""
                             }
                             onChange={(event) =>
-                              setCustomSwitchReasons((current) => ({
+                              setSwitchReasons((current) => ({
                                 ...current,
-                                [transaction.transactionId]: event.target.value,
+                                [transaction.transactionId]: event.target
+                                  .value as ReasonChoice,
                               }))
                             }
-                          />
-                        )}
+                          >
+                            <option value="" disabled>
+                              Select a reason
+                            </option>
+                            <option value="Cashier Fault">Cashier Fault</option>
+                            <option value="Customer Fault">
+                              Customer Fault
+                            </option>
+                            <option value="Custom">Custom</option>
+                          </select>
+                          {switchReasons[transaction.transactionId] ===
+                            "Custom" && (
+                            <textarea
+                              aria-label="Custom payment correction reason"
+                              className="text-input reversal-reason-input"
+                              placeholder="Add a custom reason (optional)"
+                              maxLength={500}
+                              value={
+                                customSwitchReasons[
+                                  transaction.transactionId
+                                ] ?? ""
+                              }
+                              onChange={(event) =>
+                                setCustomSwitchReasons((current) => ({
+                                  ...current,
+                                  [transaction.transactionId]:
+                                    event.target.value,
+                                }))
+                              }
+                            />
+                          )}
+                          <button
+                            className="button button-secondary"
+                            type="submit"
+                            disabled={savingId === transaction.transactionId}
+                          >
+                            {savingId === transaction.transactionId
+                              ? "Updating payment…"
+                              : "Switch cash to QR"}
+                          </button>
+                        </form>
+                      )}
+                    {openAction === "cancel" && (
+                      <form
+                        id={`cancel-action-${transaction.transactionId}`}
+                        className="recent-cancel-form recent-cancel-action"
+                        onSubmit={(event) =>
+                          void cancelTransaction(event, transaction)
+                        }
+                      >
+                        <div className="recent-action-heading">
+                          <span className="recent-action-kicker">
+                            Separate action
+                          </span>
+                          <h3>Cancel and refund this sale</h3>
+                          <p>
+                            {transaction.paymentMethod === "QR"
+                              ? "This reverses the sale. Send the QR refund first, then confirm it below."
+                              : "This reverses the sale and refunds cash from the open drawer."}
+                          </p>
+                        </div>
+                        <div className="recent-cancel-stock">
+                          <div className="recent-cancel-section-heading">
+                            <strong>
+                              1. Choose a stock outcome for each item
+                            </strong>
+                            <small>
+                              Check what was physically returned before
+                              choosing.
+                            </small>
+                          </div>
+                          {transaction.lines.map((line) => (
+                            <fieldset
+                              className="recent-cancel-line-stock"
+                              key={line.saleLineId}
+                            >
+                              <legend>
+                                <strong>{line.productName}</strong>
+                                <small>
+                                  {line.sku} / quantity {line.quantity}
+                                </small>
+                              </legend>
+                              <div className="recent-stock-choice">
+                                <label>
+                                  <input
+                                    type="radio"
+                                    name={`stock-${line.saleLineId}`}
+                                    required
+                                    checked={
+                                      restockChoices[line.saleLineId] === true
+                                    }
+                                    onChange={() =>
+                                      setRestockChoices((current) => ({
+                                        ...current,
+                                        [line.saleLineId]: true,
+                                      }))
+                                    }
+                                  />
+                                  Returned and saleable; restock
+                                </label>
+                                <label>
+                                  <input
+                                    type="radio"
+                                    name={`stock-${line.saleLineId}`}
+                                    required
+                                    checked={
+                                      restockChoices[line.saleLineId] === false
+                                    }
+                                    onChange={() =>
+                                      setRestockChoices((current) => ({
+                                        ...current,
+                                        [line.saleLineId]: false,
+                                      }))
+                                    }
+                                  />
+                                  Not saleable; write off
+                                </label>
+                                {restockChoices[line.saleLineId] === true &&
+                                  line.lotAllocations.length > 0 && (
+                                    <label>
+                                      <input
+                                        type="checkbox"
+                                        required
+                                        checked={
+                                          lotVerified[line.saleLineId] === true
+                                        }
+                                        onChange={(event) =>
+                                          setLotVerified((current) => ({
+                                            ...current,
+                                            [line.saleLineId]:
+                                              event.target.checked,
+                                          }))
+                                        }
+                                      />
+                                      I physically checked the original lots
+                                    </label>
+                                  )}
+                              </div>
+                            </fieldset>
+                          ))}
+                        </div>
+                        <div className="recent-cancel-details">
+                          <strong>2. Review and record the cancellation</strong>
+                          <label
+                            className="field-label"
+                            htmlFor={`reason-${transaction.transactionId}`}
+                          >
+                            Cancellation reason
+                          </label>
+                          <select
+                            id={`reason-${transaction.transactionId}`}
+                            className="text-input select-input"
+                            required
+                            value={reasons[transaction.transactionId] ?? ""}
+                            onChange={(event) =>
+                              setReasons((current) => ({
+                                ...current,
+                                [transaction.transactionId]: event.target
+                                  .value as ReasonChoice,
+                              }))
+                            }
+                          >
+                            <option value="" disabled>
+                              Select a reason
+                            </option>
+                            <option value="Cashier Fault">Cashier Fault</option>
+                            <option value="Customer Fault">
+                              Customer Fault
+                            </option>
+                            <option value="Custom">Custom</option>
+                          </select>
+                          {reasons[transaction.transactionId] === "Custom" && (
+                            <textarea
+                              aria-label="Custom cancellation reason"
+                              className="text-input reversal-reason-input"
+                              placeholder="Add a custom reason (optional)"
+                              maxLength={500}
+                              value={
+                                customReasons[transaction.transactionId] ?? ""
+                              }
+                              onChange={(event) =>
+                                setCustomReasons((current) => ({
+                                  ...current,
+                                  [transaction.transactionId]:
+                                    event.target.value,
+                                }))
+                              }
+                            />
+                          )}
+                          {transaction.paymentMethod === "QR" ? (
+                            <label className="inventory-checkbox">
+                              <input
+                                type="checkbox"
+                                required
+                                checked={
+                                  qrRefundConfirmed[
+                                    transaction.transactionId
+                                  ] === true
+                                }
+                                onChange={(event) =>
+                                  setQrRefundConfirmed((current) => ({
+                                    ...current,
+                                    [transaction.transactionId]:
+                                      event.target.checked,
+                                  }))
+                                }
+                              />
+                              <span>I sent the QR refund to the customer.</span>
+                            </label>
+                          ) : refundShift ? (
+                            <small className="field-hint">
+                              Cash refund will come from this drawer (expected ₱
+                              {refundShift.expectedCash}).
+                            </small>
+                          ) : (
+                            <small className="field-hint field-hint-error">
+                              Open a cash drawer before recording this cash
+                              refund.
+                            </small>
+                          )}
+                          <small className="field-hint">
+                            Cancellation window closes in{" "}
+                            {Math.floor(secondsRemaining / 60)}:
+                            {String(secondsRemaining % 60).padStart(2, "0")}.
+                          </small>
+                        </div>
                         <button
-                          className="button button-secondary"
+                          className="button button-danger"
                           type="submit"
-                          disabled={savingId === transaction.transactionId}
+                          disabled={
+                            savingId === transaction.transactionId ||
+                            (transaction.paymentMethod === "CASH" &&
+                              !refundShift)
+                          }
                         >
                           {savingId === transaction.transactionId
-                            ? "Updating payment…"
-                            : "Switch cash to QR"}
+                            ? "Recording cancellation…"
+                            : "Cancel and refund sale"}
                         </button>
                       </form>
                     )}
-                    <form
-                      className="recent-cancel-form"
-                      onSubmit={(event) =>
-                        void cancelTransaction(event, transaction)
-                      }
-                    >
-                      <label
-                        className="field-label"
-                        htmlFor={`reason-${transaction.transactionId}`}
-                      >
-                        Cancellation reason
-                      </label>
-                      <select
-                        id={`reason-${transaction.transactionId}`}
-                        className="text-input select-input"
-                        required
-                        value={reasons[transaction.transactionId] ?? ""}
-                        onChange={(event) =>
-                          setReasons((current) => ({
-                            ...current,
-                            [transaction.transactionId]: event.target
-                              .value as ReasonChoice,
-                          }))
-                        }
-                      >
-                        <option value="" disabled>
-                          Select a reason
-                        </option>
-                        <option value="Cashier Fault">Cashier Fault</option>
-                        <option value="Customer Fault">Customer Fault</option>
-                        <option value="Custom">Custom</option>
-                      </select>
-                      {reasons[transaction.transactionId] === "Custom" && (
-                        <textarea
-                          aria-label="Custom cancellation reason"
-                          className="text-input reversal-reason-input"
-                          placeholder="Add a custom reason (optional)"
-                          maxLength={500}
-                          value={customReasons[transaction.transactionId] ?? ""}
-                          onChange={(event) =>
-                            setCustomReasons((current) => ({
-                              ...current,
-                              [transaction.transactionId]: event.target.value,
-                            }))
-                          }
-                        />
-                      )}
-                      {transaction.paymentMethod === "QR" ? (
-                        <label className="inventory-checkbox">
-                          <input
-                            type="checkbox"
-                            required
-                            checked={
-                              qrRefundConfirmed[transaction.transactionId] ===
-                              true
-                            }
-                            onChange={(event) =>
-                              setQrRefundConfirmed((current) => ({
-                                ...current,
-                                [transaction.transactionId]:
-                                  event.target.checked,
-                              }))
-                            }
-                          />
-                          <span>I sent the QR refund to the customer.</span>
-                        </label>
-                      ) : refundShift ? (
-                        <small className="field-hint">
-                          Cash refund will come from this drawer (expected ₱
-                          {refundShift.expectedCash}).
-                        </small>
-                      ) : (
-                        <small className="field-hint field-hint-error">
-                          Open a cash drawer before recording this cash refund.
-                        </small>
-                      )}
-                      <small className="field-hint">
-                        Cancellation window closes in{" "}
-                        {Math.floor(secondsRemaining / 60)}:
-                        {String(secondsRemaining % 60).padStart(2, "0")}.
-                      </small>
-                      <button
-                        className="button button-primary"
-                        type="submit"
-                        disabled={
-                          savingId === transaction.transactionId ||
-                          (transaction.paymentMethod === "CASH" && !refundShift)
-                        }
-                      >
-                        {savingId === transaction.transactionId
-                          ? "Recording cancellation…"
-                          : "Cancel and refund sale"}
-                      </button>
-                    </form>
                   </>
                 ) : (
                   <small className="field-hint">

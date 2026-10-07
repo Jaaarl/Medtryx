@@ -2388,10 +2388,174 @@ a {
   display: grid;
   gap: 9px;
 }
+.recent-action-picker {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
+.recent-action-picker-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.recent-action-button {
+  background: #fff;
+  border: 1px solid #cddfd6;
+  border-radius: 8px;
+  color: #216150;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 48px;
+  padding: 10px 14px;
+}
+.recent-action-button:hover,
+.recent-action-button-active {
+  background: #edf6f1;
+  border-color: #91b9a9;
+}
+.recent-action-button:focus-visible {
+  outline: 3px solid rgb(61 140 116 / 24%);
+  outline-offset: 2px;
+}
+.recent-action-button-cancel {
+  border-color: #e5c8c2;
+  color: #963f35;
+}
+.recent-action-button-cancel:hover,
+.recent-action-button-cancel.recent-action-button-active {
+  background: #fff2ef;
+  border-color: #d89a8e;
+}
+.recent-action-heading {
+  display: grid;
+  gap: 6px;
+}
+.recent-action-kicker {
+  color: #74827d;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+.recent-action-heading h3 {
+  color: #2c4d43;
+  font-size: 14px;
+  margin: 0;
+}
+.recent-action-heading p {
+  color: #71817a;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+}
 .recent-payment-switch-form {
-  border-top: 1px solid var(--line);
-  margin-top: 12px;
-  padding-top: 12px;
+  background: #f4f8f6;
+  border: 1px solid #dce9e3;
+  border-radius: 10px;
+  margin-top: 14px;
+  padding: 15px;
+}
+.recent-payment-switch-form .field-hint {
+  color: #5d756b;
+  line-height: 1.5;
+}
+.recent-payment-switch-form .button {
+  justify-self: start;
+  min-width: 190px;
+}
+.recent-cancel-action {
+  background: #fffaf9;
+  border: 1px solid #eedbd7;
+  border-radius: 10px;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 15px;
+}
+.recent-cancel-action .recent-action-kicker {
+  color: #a15448;
+}
+.recent-cancel-action .recent-action-heading h3 {
+  color: #773c35;
+}
+.recent-cancel-stock,
+.recent-cancel-details {
+  border-top: 1px solid #f0e4e1;
+  display: grid;
+  gap: 10px;
+  padding-top: 13px;
+}
+.recent-cancel-section-heading {
+  display: grid;
+  gap: 4px;
+}
+.recent-cancel-section-heading strong,
+.recent-cancel-details > strong {
+  color: #4c5d56;
+  font-size: 12px;
+}
+.recent-cancel-section-heading small {
+  color: #79847f;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.recent-cancel-line-stock {
+  background: #fff;
+  border: 1px solid #e7e9e6;
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  min-width: 0;
+  padding: 8px 11px 10px;
+}
+.recent-cancel-line-stock legend {
+  color: #35564c;
+  font-size: 12px;
+  font-weight: 700;
+  max-width: 100%;
+  padding: 0 4px;
+}
+.recent-cancel-line-stock legend small {
+  color: #85918b;
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  margin-top: 3px;
+}
+.recent-cancel-line-stock .recent-stock-choice {
+  margin: 0;
+}
+.recent-cancel-line-stock .recent-stock-choice label {
+  align-items: flex-start;
+  line-height: 1.45;
+  min-height: 32px;
+}
+.recent-cancel-line-stock input[type="radio"],
+.recent-cancel-line-stock input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.recent-cancel-details > .field-label {
+  color: #51645b;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.recent-cancel-details .text-input {
+  min-height: 42px;
+}
+.recent-cancel-details .inventory-checkbox {
+  background: #fff;
+  border: 1px solid #eadfdb;
+  border-radius: 7px;
+  line-height: 1.45;
+  margin-top: 2px;
+  min-height: 42px;
+  padding: 9px 10px;
+}
+.recent-cancel-action > .button-danger {
+  min-height: 44px;
+  width: 100%;
 }
 .recent-cancel-form .field-hint {
   margin: 0;
@@ -3400,6 +3564,78 @@ a {
   .checkout-page .table-loading {
     font-size: 14px;
     padding: 34px 22px;
+  }
+  .checkout-page .recent-transactions-card .card-heading h2 {
+    font-size: 18px;
+  }
+  .checkout-page .recent-transactions-card .card-heading p {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .checkout-page .recent-transaction {
+    padding: 18px;
+  }
+  .checkout-page .recent-transaction-heading strong {
+    font-size: 15px;
+  }
+  .checkout-page .recent-transaction-heading small,
+  .checkout-page .recent-transaction-products small {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .checkout-page .recent-transaction-products li > strong {
+    font-size: 14px;
+  }
+  .checkout-page .recent-action-heading h3 {
+    font-size: 17px;
+  }
+  .checkout-page .recent-action-heading p,
+  .checkout-page .recent-payment-switch-form .field-hint {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .checkout-page .recent-action-kicker {
+    font-size: 10px;
+  }
+  .checkout-page .recent-cancel-section-heading strong,
+  .checkout-page .recent-cancel-details > strong {
+    font-size: 14px;
+  }
+  .checkout-page .recent-cancel-section-heading small,
+  .checkout-page .recent-cancel-line-stock legend small {
+    font-size: 12px;
+  }
+  .checkout-page .recent-cancel-line-stock legend strong {
+    font-size: 14px;
+  }
+  .checkout-page .recent-cancel-line-stock .recent-stock-choice label {
+    font-size: 13px;
+    min-height: 42px;
+  }
+  .checkout-page .recent-cancel-details > .field-label,
+  .checkout-page .recent-cancel-action .inventory-checkbox {
+    font-size: 13px;
+  }
+  .checkout-page .recent-payment-switch-form .text-input,
+  .checkout-page .recent-cancel-details .text-input {
+    font-size: 16px;
+    min-height: 48px;
+  }
+  .checkout-page .recent-payment-switch-form .button,
+  .checkout-page .recent-cancel-action > .button-danger {
+    font-size: 15px;
+    min-height: 50px;
+  }
+  .checkout-page .recent-action-picker {
+    gap: 14px;
+  }
+  .checkout-page .recent-action-button {
+    font-size: 15px;
+    min-height: 54px;
+  }
+  .checkout-page .recent-cancel-details .field-hint {
+    font-size: 12px;
+    line-height: 1.5;
   }
 }
 
