@@ -121,6 +121,7 @@ type StockEvent = {
 };
 
 type SortDirection = "asc" | "desc";
+const PRODUCTS_PER_PAGE = 10;
 
 function sortRows<T>(
   rows: T[],
@@ -697,6 +698,7 @@ export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
   const productTableRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
+  const [productPage, setProductPage] = useState(1);
   const [sort, setSort] = useState<{
     key: string;
     direction: SortDirection;
@@ -802,8 +804,24 @@ export function ProductsPage() {
     },
     sort.direction,
   );
+  const totalProductPages = Math.max(
+    1,
+    Math.ceil(sortedProducts.length / PRODUCTS_PER_PAGE),
+  );
+  const currentProductPage = Math.min(productPage, totalProductPages);
+  const firstProductIndex = (currentProductPage - 1) * PRODUCTS_PER_PAGE;
+  const pageProducts = sortedProducts.slice(
+    firstProductIndex,
+    firstProductIndex + PRODUCTS_PER_PAGE,
+  );
+  const firstVisibleProduct = sortedProducts.length ? firstProductIndex + 1 : 0;
+  const lastVisibleProduct = Math.min(
+    firstProductIndex + PRODUCTS_PER_PAGE,
+    sortedProducts.length,
+  );
 
   function selectSort(key: string) {
+    setProductPage(1);
     setSort((current) => ({
       key,
       direction:
@@ -897,6 +915,7 @@ export function ProductsPage() {
         );
       }
       await refresh();
+      setProductPage(1);
       setEditing(null);
       setForm(EMPTY_FORM);
     } catch (caught) {
@@ -939,7 +958,7 @@ export function ProductsPage() {
         </div>
       )}
       <ProductCsvImportPanel onImported={refresh} />
-      <div className="inventory-layout">
+      <div className="inventory-layout product-workspace">
         <section className="settings-main-card product-list-card">
           <div className="card-heading inventory-card-heading">
             <div>
@@ -955,7 +974,10 @@ export function ProductsPage() {
               aria-label="Search products"
               placeholder="Search name, SKU, or barcode"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setProductPage(1);
+              }}
             />
           </div>
           {productTableScroll.isScrollable && (
@@ -1055,8 +1077,8 @@ export function ProductsPage() {
                       Loading products…
                     </td>
                   </tr>
-                ) : sortedProducts.length ? (
-                  sortedProducts.map((product) => (
+                ) : pageProducts.length ? (
+                  pageProducts.map((product) => (
                     <tr key={product.id}>
                       <td>
                         <strong>{product.name}</strong>
@@ -1121,6 +1143,33 @@ export function ProductsPage() {
                 )}
               </tbody>
             </table>
+          </div>
+          <div className="inventory-pagination" aria-label="Product pagination">
+            <span aria-live="polite">
+              Showing {firstVisibleProduct} to {lastVisibleProduct} of{" "}
+              {sortedProducts.length} products
+            </span>
+            <div>
+              <button
+                type="button"
+                aria-label="Previous product page"
+                disabled={currentProductPage === 1}
+                onClick={() => setProductPage(currentProductPage - 1)}
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <span>
+                Page {currentProductPage} of {totalProductPages}
+              </span>
+              <button
+                type="button"
+                aria-label="Next product page"
+                disabled={currentProductPage === totalProductPages}
+                onClick={() => setProductPage(currentProductPage + 1)}
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
           </div>
         </section>
         <aside className="create-card inventory-form-card">

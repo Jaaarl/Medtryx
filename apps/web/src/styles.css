@@ -1114,6 +1114,13 @@ a {
   gap: 16px;
   grid-template-columns: minmax(0, 1.75fr) minmax(285px, 0.8fr);
 }
+.inventory-layout.product-workspace {
+  align-items: stretch;
+}
+.product-list-card {
+  display: flex;
+  flex-direction: column;
+}
 .csv-import-card {
   margin-bottom: 16px;
 }
@@ -1251,6 +1258,46 @@ a {
 .inventory-table-wrap {
   overflow-x: auto;
   width: 100%;
+}
+.inventory-pagination {
+  align-items: center;
+  border-top: 1px solid #edf1ef;
+  color: #71817b;
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  margin-top: auto;
+  min-height: 48px;
+  padding: 7px 12px;
+}
+.inventory-pagination > div {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+}
+.inventory-pagination button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dce6e1;
+  border-radius: 5px;
+  color: #42675a;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  width: 30px;
+}
+.inventory-pagination button:hover:not(:disabled) {
+  background: #e9f4f0;
+  border-color: #bfd7ce;
+}
+.inventory-pagination button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.inventory-pagination button:focus-visible {
+  outline: 2px solid #82b5a1;
+  outline-offset: 2px;
 }
 .inventory-table {
   border-collapse: collapse;

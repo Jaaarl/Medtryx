@@ -150,3 +150,72 @@ test("owners can search a batch and edit its quantity and product price", async 
     sellingPrice: "12.50",
   });
 });
+
+test("product catalog pagination stays bounded and resets after a new search", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  for (let index = 1; index <= 11; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const response = await page.request.post("/api/products", {
+      headers: { "x-csrf-token": csrf.token },
+      data: {
+        sku: `SYN-PAGE-${suffix}`,
+        name: `Synthetic Page ${suffix}`,
+        unit: "piece",
+        sellingPrice: "10.00",
+        taxClass: "VATABLE",
+        productType: "GENERIC",
+        isScEligible: false,
+        isPwdEligible: false,
+        openingQuantity: index,
+        openingUnitCost: "2.00",
+      },
+    });
+    expect(response.status()).toBe(201);
+  }
+
+  await page.goto("/products");
+  await page.getByLabel("Search products").fill("Synthetic Page");
+  const productRows = page.locator(
+    ".product-list-card .inventory-table tbody tr",
+  );
+  await expect(productRows).toHaveCount(10);
+  await expect(productRows.first()).toContainText("Synthetic Page 01");
+  await expect(
+    page.getByText("Showing 1 to 10 of 11 products", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next product page" }).click();
+  await expect(productRows).toHaveCount(1);
+  await expect(productRows.first()).toContainText("Synthetic Page 11");
+  await expect(
+    page.getByText("Showing 11 to 11 of 11 products", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Previous product page" }).click();
+  await expect(productRows).toHaveCount(10);
+
+  await page.getByLabel("Search products").fill("Synthetic Page 02");
+  await expect(productRows).toHaveCount(1);
+  await expect(productRows.first()).toContainText("Synthetic Page 02");
+  await expect(
+    page.getByText("Showing 1 to 1 of 1 products", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Next product page" }),
+  ).toBeDisabled();
+
+  const panelHeights = await page
+    .locator(".product-workspace")
+    .evaluate((root) => {
+      const list = root.querySelector(".product-list-card");
+      const form = root.querySelector(".inventory-form-card");
+      if (!list || !form) throw new Error("Product panels were not rendered.");
+      return {
+        list: list.getBoundingClientRect().height,
+        form: form.getBoundingClientRect().height,
+      };
+    });
+  expect(Math.abs(panelHeights.list - panelHeights.form)).toBeLessThan(2);
+});
