@@ -291,8 +291,8 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     actor_email: string;
     actor_role: "owner" | "cashier";
     kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
-    from_method: "CASH" | null;
-    to_method: "QR" | null;
+    from_method: "CASH" | "QR" | null;
+    to_method: "CASH" | "QR" | null;
     cash_amount_centavos: number | null;
     qr_amount_centavos: number | null;
     refund_method: "CASH" | "QR" | null;

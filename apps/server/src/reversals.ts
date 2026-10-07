@@ -10,6 +10,7 @@ import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { getSavedSale } from "./sales.js";
 import { manilaCalendarDate, writeLotMovement } from "./lot-stock.js";
+import { cashRoundingAdjustment, type CashRoundingMode } from "./tax-engine.js";
 
 const moneySchema = z
   .string()
@@ -252,10 +253,12 @@ export function registerReversalRoutes(
       .prepare(
         `SELECT s.id, s.transaction_id, s.payment_method,
                 s.amount_due_centavos, s.cash_rounding_adjustment_centavos,
+                s.cash_rounding_mode, p.id AS payment_switch_id,
                 s.created_at, r.reversal_transaction_id,
                 r.created_at AS reversal_created_at
          FROM sales s
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
+         LEFT JOIN sale_payment_switches p ON p.sale_id = s.id
          WHERE s.created_at >= ? AND (? = 1 OR s.cashier_user_id = ?)
          ORDER BY s.created_at DESC LIMIT 50`,
       )
@@ -265,6 +268,8 @@ export function registerReversalRoutes(
       payment_method: "CASH" | "QR";
       amount_due_centavos: number;
       cash_rounding_adjustment_centavos: number;
+      cash_rounding_mode: CashRoundingMode;
+      payment_switch_id: string | null;
       created_at: string;
       reversal_transaction_id: string | null;
       reversal_created_at: string | null;
@@ -285,8 +290,20 @@ export function registerReversalRoutes(
         paymentMethod: sale.payment_method,
         amountDue: money(sale.amount_due_centavos),
         qrAmountIfSwitched: money(
-          sale.amount_due_centavos - sale.cash_rounding_adjustment_centavos,
+          sale.payment_method === "CASH"
+            ? sale.amount_due_centavos - sale.cash_rounding_adjustment_centavos
+            : sale.amount_due_centavos,
         ),
+        cashAmountIfSwitched: money(
+          sale.payment_method === "QR"
+            ? sale.amount_due_centavos +
+                cashRoundingAdjustment(
+                  sale.amount_due_centavos,
+                  sale.cash_rounding_mode,
+                )
+            : sale.amount_due_centavos,
+        ),
+        paymentSwitchRecorded: sale.payment_switch_id !== null,
         createdAt: sale.created_at,
         status: sale.reversal_transaction_id ? "REVERSED" : "FINALIZED",
         reversalTransactionId: sale.reversal_transaction_id,
@@ -371,7 +388,7 @@ export function registerReversalRoutes(
             .prepare(
               `SELECT id, cashier_user_id, shift_id, payment_method,
                       amount_due_centavos, cash_rounding_adjustment_centavos,
-                      created_at
+                      cash_rounding_mode, created_at
                FROM sales WHERE id = ?`,
             )
             .get(sale.id) as
@@ -382,6 +399,7 @@ export function registerReversalRoutes(
                 payment_method: "CASH" | "QR";
                 amount_due_centavos: number;
                 cash_rounding_adjustment_centavos: number;
+                cash_rounding_mode: CashRoundingMode;
                 created_at: string;
               }
             | undefined;
@@ -394,9 +412,6 @@ export function registerReversalRoutes(
           }
           if (!isWithinQuickActionWindow(original.created_at)) {
             throw new ReversalError(409, "quick_action_window_expired");
-          }
-          if (original.payment_method !== "CASH") {
-            throw new ReversalError(409, "payment_switch_requires_cash_sale");
           }
           if (
             db
@@ -420,11 +435,26 @@ export function registerReversalRoutes(
               )
               .get(original.id) as { total: number }
           ).total;
+          const fromMethod = original.payment_method;
+          const toMethod = fromMethod === "CASH" ? "QR" : "CASH";
+          const cashAmount =
+            fromMethod === "CASH"
+              ? original.amount_due_centavos
+              : original.amount_due_centavos +
+                cashRoundingAdjustment(
+                  original.amount_due_centavos,
+                  original.cash_rounding_mode,
+                );
           const qrAmount =
-            original.amount_due_centavos -
-            original.cash_rounding_adjustment_centavos;
+            fromMethod === "CASH"
+              ? original.amount_due_centavos -
+                original.cash_rounding_adjustment_centavos
+              : original.amount_due_centavos;
+          const cashRoundingAdjustmentCentavos = cashAmount - qrAmount;
           if (
+            !Number.isSafeInteger(cashAmount) ||
             !Number.isSafeInteger(qrAmount) ||
+            cashAmount < 0 ||
             qrAmount < 0 ||
             lineTotal !== qrAmount
           ) {
@@ -449,11 +479,19 @@ export function registerReversalRoutes(
           if (!cashShift || cashShift.expected_cash_centavos === null) {
             throw new ReversalError(409, "cash_shift_unavailable");
           }
-          if (cashShift.expected_cash_centavos < original.amount_due_centavos) {
+          const expectedCashDelta =
+            toMethod === "CASH" ? cashAmount : -cashAmount;
+          if (
+            expectedCashDelta < 0 &&
+            cashShift.expected_cash_centavos < -expectedCashDelta
+          ) {
             throw new ReversalError(409, "insufficient_shift_cash");
           }
           const adjustedExpectedCash =
-            cashShift.expected_cash_centavos - original.amount_due_centavos;
+            cashShift.expected_cash_centavos + expectedCashDelta;
+          if (!Number.isSafeInteger(adjustedExpectedCash)) {
+            throw new ReversalError(409, "sale_totals_do_not_reconcile");
+          }
           const now = new Date().toISOString();
           const switchId = randomUUID();
 
@@ -492,30 +530,38 @@ export function registerReversalRoutes(
 
           const updatedSale = db
             .prepare(
-              `UPDATE sales SET payment_method = 'QR', amount_due_centavos = ?,
-                  cash_rounding_adjustment_centavos = 0
-               WHERE id = ? AND payment_method = 'CASH'`,
+              `UPDATE sales SET payment_method = ?, amount_due_centavos = ?,
+                  cash_rounding_adjustment_centavos = ?
+               WHERE id = ? AND payment_method = ?`,
             )
-            .run(qrAmount, original.id);
+            .run(
+              toMethod,
+              toMethod === "CASH" ? cashAmount : qrAmount,
+              toMethod === "CASH" ? cashRoundingAdjustmentCentavos : 0,
+              original.id,
+              fromMethod,
+            );
           if (updatedSale.changes !== 1) {
             throw new ReversalError(409, "payment_switch_already_saved");
           }
           db.prepare(
             `INSERT INTO sale_payment_switches
-               (id, sale_id, cash_shift_id, changed_by_user_id, reason,
+             (id, sale_id, cash_shift_id, changed_by_user_id, reason,
                 from_method, to_method, cash_amount_centavos,
                 qr_amount_centavos, cash_rounding_adjustment_centavos,
                 created_at)
-             VALUES (?, ?, ?, ?, ?, 'CASH', 'QR', ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             switchId,
             original.id,
             cashShift.id,
             req.user!.id,
             parsed.data.reason,
-            original.amount_due_centavos,
+            fromMethod,
+            toMethod,
+            cashAmount,
             qrAmount,
-            original.cash_rounding_adjustment_centavos,
+            cashRoundingAdjustmentCentavos,
             now,
           );
           const products = db
@@ -536,12 +582,11 @@ export function registerReversalRoutes(
             details: {
               transactionId: transactionId.data,
               reason: parsed.data.reason,
-              fromMethod: "CASH",
-              toMethod: "QR",
-              cashAmountCentavos: original.amount_due_centavos,
+              fromMethod,
+              toMethod,
+              cashAmountCentavos: cashAmount,
               qrAmountCentavos: qrAmount,
-              cashRoundingAdjustmentCentavos:
-                original.cash_rounding_adjustment_centavos,
+              cashRoundingAdjustmentCentavos,
               cashShiftId: cashShift.id,
               products: products.map((product) => ({
                 name: product.product_name_snapshot,
@@ -554,9 +599,11 @@ export function registerReversalRoutes(
             id: switchId,
             saleId: original.id,
             cashShiftId: cashShift.id,
-            cashAmount: original.amount_due_centavos,
+            fromMethod,
+            toMethod,
+            cashAmount,
             qrAmount,
-            cashRoundingAdjustment: original.cash_rounding_adjustment_centavos,
+            cashRoundingAdjustment: cashRoundingAdjustmentCentavos,
             createdAt: now,
           };
         })();
@@ -565,8 +612,8 @@ export function registerReversalRoutes(
           paymentSwitch: {
             id: result.id,
             transactionId: transactionId.data,
-            fromMethod: "CASH",
-            toMethod: "QR",
+            fromMethod: result.fromMethod,
+            toMethod: result.toMethod,
             cashAmount: money(result.cashAmount),
             qrAmount: money(result.qrAmount),
             cashRoundingAdjustment: money(result.cashRoundingAdjustment),

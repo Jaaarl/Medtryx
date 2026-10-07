@@ -75,8 +75,8 @@ type SaleChange = {
     stockTreatment: "RESTOCK" | "WRITE_OFF" | null;
   }>;
   payment: null | {
-    fromMethod: "CASH";
-    toMethod: "QR";
+    fromMethod: "CASH" | "QR";
+    toMethod: "CASH" | "QR";
     cashAmount: string;
     qrAmount: string;
     cashRoundingAdjustment: string;

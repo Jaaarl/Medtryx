@@ -5,6 +5,86 @@ import { describe, expect, it } from "vitest";
 import { migrateDatabase, repositoryRoot } from "./db.js";
 
 describe("database migrations", () => {
+  it("preserves existing payment corrections while allowing the reverse direction", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      const priorMigrations = readdirSync(migrationsDirectory)
+        .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/iu.test(name))
+        .filter((name) => Number(name.slice(0, 4)) < 18)
+        .sort();
+      for (const name of priorMigrations) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+           (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('switch-cashier', 'switch@example.test', 'synthetic-hash', 'cashier', 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO shifts
+          (id, cashier_user_id, opened_at, opening_cash_centavos,
+           expected_cash_centavos)
+         VALUES ('switch-shift', 'switch-cashier', ?, 0, 10000)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sales
+          (id, transaction_id, business_date, request_key, request_hash,
+           cashier_user_id, shift_id, benefit_type, customer_id_checked,
+           payment_method, subtotal_centavos, vat_centavos,
+           vat_removed_centavos, senior_discount_centavos,
+           pwd_discount_centavos, amount_due_centavos, tax_policy_version,
+           created_at)
+         VALUES ('switch-sale', 'MTX-20261007-000001', '2026-10-07',
+           'switch-sale-key', 'switch-sale-hash', 'switch-cashier',
+           'switch-shift', 'REGULAR', 0, 'QR', 11213, 0, 0, 0, 0,
+           11213, 'SYNTHETIC', ?)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sale_payment_switches
+          (id, sale_id, cash_shift_id, changed_by_user_id, reason,
+           from_method, to_method, cash_amount_centavos, qr_amount_centavos,
+           cash_rounding_adjustment_centavos, created_at)
+         VALUES ('switch-history', 'switch-sale', 'switch-shift',
+           'switch-cashier', 'Historical cash to QR correction',
+           'CASH', 'QR', 11225, 11213, 12, ?)`,
+      ).run(now);
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            `SELECT from_method, to_method, cash_amount_centavos,
+                    qr_amount_centavos, cash_rounding_adjustment_centavos
+             FROM sale_payment_switches WHERE id = 'switch-history'`,
+          )
+          .get(),
+      ).toEqual({
+        from_method: "CASH",
+        to_method: "QR",
+        cash_amount_centavos: 11225,
+        qr_amount_centavos: 11213,
+        cash_rounding_adjustment_centavos: 12,
+      });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("upgrades populated stock into unallocated legacy balances without inventing lots", () => {
     const db = new Database(":memory:");
     try {

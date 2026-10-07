@@ -455,6 +455,131 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     });
   });
 
+  it("switches a QR sale to cash and nets drawer and QR totals after cancellation", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+    const product = await createProduct(owner, { sellingPrice: "112.13" });
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const shift = await openShift(cashier, "200.00");
+    const sale = await sell(cashier, product.id, "QR");
+    expect(sale.amountDue).toBe("112.13");
+
+    const beforeSwitch = (await cashier.get("/api/shifts/current")).body
+      .shift as { expectedCash: string; expectedQrSales: string };
+    expect(beforeSwitch).toMatchObject({
+      expectedCash: "200.00",
+      expectedQrSales: "112.13",
+    });
+    const recentBeforeSwitch = await cashier.get("/api/sales/recent");
+    expect(recentBeforeSwitch.body.sales[0]).toMatchObject({
+      transactionId: sale.transactionId,
+      paymentMethod: "QR",
+      cashAmountIfSwitched: "112.25",
+      paymentSwitchRecorded: false,
+    });
+
+    const switched = await postWithCsrf(
+      cashier,
+      `/api/sales/${sale.transactionId}/payment-switches`,
+      { reason: "Customer paid cash after the QR sale was saved" },
+    );
+    expect(switched.status, JSON.stringify(switched.body)).toBe(201);
+    expect(switched.body.paymentSwitch).toMatchObject({
+      fromMethod: "QR",
+      toMethod: "CASH",
+      cashAmount: "112.25",
+      qrAmount: "112.13",
+      cashRoundingAdjustment: "0.12",
+    });
+    expect(switched.body.sale).toMatchObject({
+      paymentMethod: "CASH",
+      amountDue: "112.25",
+      cashRoundingAdjustment: "0.12",
+    });
+    expect((await cashier.get("/api/shifts/current")).body.shift).toMatchObject(
+      {
+        expectedCash: "312.25",
+        expectedQrSales: "0.00",
+      },
+    );
+
+    const repeatedSwitch = await postWithCsrf(
+      cashier,
+      `/api/sales/${sale.transactionId}/payment-switches`,
+      { reason: "Attempt a second payment correction" },
+    );
+    expect(repeatedSwitch.status).toBe(409);
+    expect(repeatedSwitch.body.error).toBe("payment_switch_already_saved");
+
+    const cancelled = await quickCancel(
+      cashier,
+      sale.transactionId,
+      sale.lines[0]!.saleLineId,
+      {
+        method: "CASH",
+        shiftId: shift.body.shift.id as string,
+        restock: true,
+        reason: "Customer returned the cash purchase",
+      },
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(201);
+    expect((await cashier.get("/api/shifts/current")).body.shift).toMatchObject(
+      {
+        expectedCash: "200.00",
+        expectedQrSales: "0.00",
+      },
+    );
+
+    const history = await owner.get("/api/shifts/history");
+    expect(
+      history.body.shifts.find(
+        (savedShift: { id: string }) => savedShift.id === shift.body.shift.id,
+      ),
+    ).toMatchObject({
+      cashSales: "112.25",
+      qrSales: "0.00",
+      cashRefunds: "112.25",
+      qrRefunds: "0.00",
+      expectedCash: "200.00",
+    });
+
+    const saleDetails = await owner.get(`/api/sales/${sale.transactionId}`);
+    const report = await owner.get(
+      `/api/reports/daily?date=${saleDetails.body.sale.businessDate}`,
+    );
+    expect(report.body.report.metrics).toMatchObject({
+      cashSales: "112.25",
+      cashRefunds: "112.25",
+      qrSales: "0.00",
+      qrRefunds: "0.00",
+      cashRoundingAdjustments: "0.00",
+    });
+    expect(saleDetails.body.sale.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "PAYMENT_SWITCH",
+          payment: {
+            fromMethod: "QR",
+            toMethod: "CASH",
+            cashAmount: "112.25",
+            qrAmount: "112.13",
+            cashRoundingAdjustment: "0.12",
+          },
+        }),
+        expect.objectContaining({
+          kind: "CANCELLATION",
+          refund: expect.objectContaining({
+            method: "CASH",
+            amount: "112.25",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("cancels a cash sale within ten minutes, refunds the drawer, restocks, and logs who changed it", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
@@ -584,16 +709,6 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     const shift = await openShift(cashier, "100.00");
     const sale = await sell(cashier, product.id, "QR");
     const saleLineId = sale.lines[0]!.saleLineId;
-    const unsupportedQrToCash = await postWithCsrf(
-      cashier,
-      `/api/sales/${sale.transactionId}/payment-switches`,
-      { reason: "Testing the unsupported reverse payment direction" },
-    );
-    expect(unsupportedQrToCash.status).toBe(409);
-    expect(unsupportedQrToCash.body.error).toBe(
-      "payment_switch_requires_cash_sale",
-    );
-
     const unconfirmed = await quickCancel(
       cashier,
       sale.transactionId,

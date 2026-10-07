@@ -18,8 +18,8 @@ type SalesReport = {
     kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
     reason: string;
     payment: {
-      fromMethod: "CASH";
-      toMethod: "QR";
+      fromMethod: "CASH" | "QR";
+      toMethod: "CASH" | "QR";
       cashAmount: string;
       qrAmount: string;
     } | null;

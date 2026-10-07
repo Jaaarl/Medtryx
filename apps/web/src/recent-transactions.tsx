@@ -7,6 +7,8 @@ type RecentTransaction = {
   paymentMethod: "CASH" | "QR";
   amountDue: string;
   qrAmountIfSwitched: string;
+  cashAmountIfSwitched: string;
+  paymentSwitchRecorded: boolean;
   createdAt: string;
   status: "FINALIZED" | "REVERSED";
   reversalTransactionId: string | null;
@@ -46,8 +48,6 @@ function transactionError(error: unknown): string {
     qr_refund_confirmation_required:
       "Confirm that the QR refund was sent before recording the cancellation.",
     sale_already_reversed: "This sale has already been cancelled or reversed.",
-    payment_switch_requires_cash_sale:
-      "Only an uncorrected cash sale can be switched to QR.",
     payment_switch_already_saved:
       "This transaction has already had a payment correction.",
     cash_shift_unavailable:
@@ -210,7 +210,7 @@ export function RecentTransactions({
     }
   }
 
-  async function switchToQr(
+  async function switchPayment(
     event: FormEvent<HTMLFormElement>,
     transaction: RecentTransaction,
   ) {
@@ -228,7 +228,9 @@ export function RecentTransactions({
         ),
       });
       setNotice(
-        `Payment switched: cash reduced by ₱${result.paymentSwitch.cashAmount}; QR now shows ₱${result.paymentSwitch.qrAmount}.`,
+        transaction.paymentMethod === "CASH"
+          ? `Payment switched: cash reduced by ₱${result.paymentSwitch.cashAmount}; QR now shows ₱${result.paymentSwitch.qrAmount}.`
+          : `Payment switched: QR reduced by ₱${result.paymentSwitch.qrAmount}; cash now shows ₱${result.paymentSwitch.cashAmount}.`,
       );
       setLocalRefresh((value) => value + 1);
       await onUpdated();
@@ -325,11 +327,11 @@ export function RecentTransactions({
                 ) : canCancel ? (
                   <>
                     <div
-                      className={`recent-action-picker ${transaction.paymentMethod === "QR" ? "recent-action-picker-single" : ""}`}
+                      className={`recent-action-picker ${transaction.paymentSwitchRecorded ? "recent-action-picker-single" : ""}`}
                       role="group"
                       aria-label={`Actions for ${transaction.transactionId}`}
                     >
-                      {transaction.paymentMethod === "CASH" && (
+                      {!transaction.paymentSwitchRecorded && (
                         <button
                           className={`recent-action-button ${openAction === "payment" ? "recent-action-button-active" : ""}`}
                           type="button"
@@ -352,29 +354,34 @@ export function RecentTransactions({
                         Cancel sale
                       </button>
                     </div>
-                    {transaction.paymentMethod === "CASH" &&
+                    {!transaction.paymentSwitchRecorded &&
                       openAction === "payment" && (
                         <form
                           id={`payment-action-${transaction.transactionId}`}
                           className="recent-cancel-form recent-payment-switch-form"
                           onSubmit={(event) =>
-                            void switchToQr(event, transaction)
+                            void switchPayment(event, transaction)
                           }
                         >
                           <div className="recent-action-heading">
                             <span className="recent-action-kicker">
                               Optional payment correction
                             </span>
-                            <h3>Cash was recorded by mistake?</h3>
+                            <h3>
+                              {transaction.paymentMethod === "CASH"
+                                ? "Cash was recorded by mistake?"
+                                : "QR was recorded by mistake?"}
+                            </h3>
                             <p>
-                              This changes the payment record to QR only. The
-                              sale stays active, and no refund is sent.
+                              {transaction.paymentMethod === "CASH"
+                                ? "This changes the payment record to QR. The sale stays active, and no refund is sent."
+                                : "This changes the payment record to cash. The sale stays active, and no refund is sent."}
                             </p>
                           </div>
                           <small className="field-hint">
-                            Cash will decrease by ₱{transaction.amountDue}; QR
-                            will increase by ₱{transaction.qrAmountIfSwitched}.
-                            The QR total does not include cash rounding.
+                            {transaction.paymentMethod === "CASH"
+                              ? `Cash will decrease by ₱${transaction.amountDue}; QR will increase by ₱${transaction.qrAmountIfSwitched}. The QR total does not include cash rounding.`
+                              : `QR will decrease by ₱${transaction.amountDue}; expected drawer cash will increase by ₱${transaction.cashAmountIfSwitched}.`}
                           </small>
                           <label
                             className="field-label"
@@ -434,7 +441,9 @@ export function RecentTransactions({
                           >
                             {savingId === transaction.transactionId
                               ? "Updating payment…"
-                              : "Switch cash to QR"}
+                              : transaction.paymentMethod === "CASH"
+                                ? "Switch cash to QR"
+                                : "Switch QR to cash"}
                           </button>
                         </form>
                       )}

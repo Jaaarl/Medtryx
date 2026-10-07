@@ -1315,8 +1315,8 @@ type SaleChange = {
     stockTreatment: "RESTOCK" | "WRITE_OFF" | null;
   }>;
   payment: null | {
-    fromMethod: "CASH";
-    toMethod: "QR";
+    fromMethod: "CASH" | "QR";
+    toMethod: "CASH" | "QR";
     cashAmount: string;
     qrAmount: string;
     cashRoundingAdjustment: string;
@@ -1405,8 +1405,8 @@ export function getSavedSale(
     | {
         id: string;
         reason: string;
-        from_method: "CASH";
-        to_method: "QR";
+        from_method: "CASH" | "QR";
+        to_method: "CASH" | "QR";
         cash_amount_centavos: number;
         qr_amount_centavos: number;
         cash_rounding_adjustment_centavos: number;
