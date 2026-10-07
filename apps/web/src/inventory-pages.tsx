@@ -1611,6 +1611,7 @@ export function StockPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [stockQuery, setStockQuery] = useState("");
   const [receiptQty, setReceiptQty] = useState("1");
   const [receiptCost, setReceiptCost] = useState("");
   const [zeroCostReason, setZeroCostReason] = useState("");
@@ -1651,13 +1652,16 @@ export function StockPage() {
     selected && costCorrectionUnitCostCents !== null
       ? costCorrectionUnitCostCents * BigInt(selected.quantityOnHand)
       : null;
-  const filteredProducts = lowOnly
-    ? products.filter(
-        (product) =>
-          product.reorderLevel !== null &&
-          product.quantityOnHand <= product.reorderLevel,
-      )
-    : products;
+  const stockSearch = stockQuery.trim().toLowerCase();
+  const filteredProducts = products.filter((product) => {
+    const matchesQuery = `${product.name} ${product.sku} ${product.barcode ?? ""}`
+      .toLowerCase()
+      .includes(stockSearch);
+    const isLowStock =
+      product.reorderLevel !== null &&
+      product.quantityOnHand <= product.reorderLevel;
+    return matchesQuery && (!lowOnly || isLowStock);
+  });
   const sortedStockProducts = sortRows(
     filteredProducts,
     (product) => {
@@ -2098,6 +2102,19 @@ export function StockPage() {
               <span>Low stock only</span>
             </label>
           </div>
+          <div className="inventory-search-row">
+            <Search size={16} />
+            <input
+              className="text-input"
+              aria-label="Search current stock"
+              placeholder="Search product name, SKU, or barcode"
+              value={stockQuery}
+              onChange={(event) => {
+                setStockQuery(event.target.value);
+                setStockPage(1);
+              }}
+            />
+          </div>
           <div className="inventory-table-wrap">
             <table className="inventory-table">
               <thead>
@@ -2192,7 +2209,9 @@ export function StockPage() {
                 ) : (
                   <tr>
                     <td colSpan={5} className="table-loading">
-                      {lowOnly
+                      {stockQuery.trim()
+                        ? "No matching products."
+                        : lowOnly
                         ? "No products are below their reorder level."
                         : "Create a product before receiving stock."}
                     </td>
