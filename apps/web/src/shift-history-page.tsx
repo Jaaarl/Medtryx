@@ -13,6 +13,7 @@ type ShiftHistoryRow = {
   cashSales: string;
   qrSales: string;
   cashRefunds: string;
+  qrRefunds: string;
   cashIn: string;
   cashOut: string;
   expectedCash: string;
@@ -153,6 +154,7 @@ export function ShiftHistoryPage() {
                   <th>CASH SALES</th>
                   <th>QR SALES</th>
                   <th>CASH REFUNDS</th>
+                  <th>QR REFUNDS</th>
                   <th>CASH-IN</th>
                   <th>CASH-OUT</th>
                   <th>EXPECTED CASH</th>
@@ -183,6 +185,7 @@ export function ShiftHistoryPage() {
                     <td>₱{shift.cashSales}</td>
                     <td>₱{shift.qrSales}</td>
                     <td>₱{shift.cashRefunds}</td>
+                    <td>₱{shift.qrRefunds}</td>
                     <td>₱{shift.cashIn}</td>
                     <td>₱{shift.cashOut}</td>
                     <td>₱{shift.expectedCash}</td>
@@ -216,9 +219,9 @@ export function ShiftHistoryPage() {
       )}
       <div className="report-notes">
         <p>
-          QR-declared sales are displayed separately and do not enter expected
-          physical cash. Expected cash includes the opening float, cash sales,
-          cash refunds, and recorded cash-in/out movements.
+          QR sales and QR refunds are listed separately and do not enter
+          expected physical cash. Expected cash includes the opening float, cash
+          sales, cash refunds, and recorded cash-in/out movements.
         </p>
       </div>
     </section>

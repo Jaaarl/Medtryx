@@ -3570,7 +3570,8 @@ export function CheckoutPage() {
                       Expected physical cash: ₱{registerShift.expectedCash}
                     </span>
                     <span>
-                      Expected QR sales: ₱{registerShift.expectedQrSales}
+                      Expected QR after refunds: ₱
+                      {registerShift.expectedQrSales}
                     </span>
                     {error && (
                       <div className="banner banner-error" role="alert">
@@ -3637,7 +3638,9 @@ export function CheckoutPage() {
                   <strong>Shift open</strong>
                   <ShiftElapsed openedAt={shift.openedAt} />
                   <span>Expected physical cash: ₱{shift.expectedCash}</span>
-                  <span>Expected QR sales: ₱{shift.expectedQrSales}</span>
+                  <span>
+                    Expected QR after refunds: ₱{shift.expectedQrSales}
+                  </span>
                 </div>
                 <button
                   className="button button-secondary"

@@ -1826,8 +1826,15 @@ export function registerSalesRoutes(
       ? (
           db
             .prepare(
-              `SELECT COALESCE(SUM(amount_due_centavos), 0) AS qr_sales_centavos
-               FROM sales WHERE shift_id = ? AND payment_method = 'QR'`,
+              `SELECT COALESCE(SUM(
+                 CASE WHEN s.payment_method = 'QR'
+                      THEN s.amount_due_centavos ELSE 0 END
+                 - CASE WHEN r.refund_method = 'QR'
+                        THEN r.amount_centavos ELSE 0 END
+               ), 0) AS qr_sales_centavos
+               FROM sales s
+               LEFT JOIN sale_reversals r ON r.sale_id = s.id
+               WHERE s.shift_id = ?`,
             )
             .get(registerShiftRow.id) as { qr_sales_centavos: number }
         ).qr_sales_centavos
@@ -1991,6 +1998,7 @@ export function registerSalesRoutes(
                 closed.email AS closed_by_email,
                 COALESCE(sales.cash_sales_centavos, 0) AS cash_sales_centavos,
                 COALESCE(sales.qr_sales_centavos, 0) AS qr_sales_centavos,
+                COALESCE(sales.qr_refunds_centavos, 0) AS qr_refunds_centavos,
                 COALESCE(movements.cash_refunds_centavos, 0) AS cash_refunds_centavos,
                 COALESCE(movements.cash_in_centavos, 0) AS cash_in_centavos,
                 COALESCE(movements.cash_out_centavos, 0) AS cash_out_centavos
@@ -1998,12 +2006,16 @@ export function registerSalesRoutes(
          JOIN users opened ON opened.id = s.cashier_user_id
          LEFT JOIN users closed ON closed.id = s.close_actor_user_id
          LEFT JOIN (
-           SELECT shift_id,
-                  SUM(CASE WHEN payment_method = 'CASH' THEN amount_due_centavos ELSE 0 END)
+           SELECT s.shift_id,
+                  SUM(CASE WHEN s.payment_method = 'CASH' THEN s.amount_due_centavos ELSE 0 END)
                     AS cash_sales_centavos,
-                  SUM(CASE WHEN payment_method = 'QR' THEN amount_due_centavos ELSE 0 END)
-                    AS qr_sales_centavos
-           FROM sales GROUP BY shift_id
+                  SUM(CASE WHEN s.payment_method = 'QR' THEN s.amount_due_centavos ELSE 0 END)
+                    AS qr_sales_centavos,
+                  SUM(CASE WHEN r.refund_method = 'QR' THEN r.amount_centavos ELSE 0 END)
+                    AS qr_refunds_centavos
+           FROM sales s
+           LEFT JOIN sale_reversals r ON r.sale_id = s.id
+           GROUP BY s.shift_id
          ) sales ON sales.shift_id = s.id
          LEFT JOIN (
            SELECT shift_id,
@@ -2037,6 +2049,7 @@ export function registerSalesRoutes(
       closed_by_email: string | null;
       cash_sales_centavos: number;
       qr_sales_centavos: number;
+      qr_refunds_centavos: number;
       cash_refunds_centavos: number;
       cash_in_centavos: number;
       cash_out_centavos: number;
@@ -2052,6 +2065,7 @@ export function registerSalesRoutes(
         openingCash: money(row.opening_cash_centavos),
         cashSales: money(row.cash_sales_centavos),
         qrSales: money(row.qr_sales_centavos),
+        qrRefunds: money(row.qr_refunds_centavos),
         cashRefunds: money(row.cash_refunds_centavos),
         cashIn: money(row.cash_in_centavos),
         cashOut: money(row.cash_out_centavos),
