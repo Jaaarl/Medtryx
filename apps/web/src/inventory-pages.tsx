@@ -3473,7 +3473,7 @@ export function CheckoutPage() {
           {notice}
         </div>
       )}
-      <div className="checkout-grid">
+      <div className="checkout-grid checkout-register-scope">
         <section className="settings-main-card catalog-search-card">
           <div className="card-heading inventory-card-heading">
             <div>
@@ -3730,7 +3730,7 @@ export function CheckoutPage() {
                 : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
           {!operationsLoading && !shift && (
-            <div className="shift-modal-backdrop">
+            <div className="shift-modal-backdrop checkout-register-required-backdrop">
               <section
                 className="checkout-shift-modal"
                 role="dialog"

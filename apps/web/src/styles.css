@@ -2144,6 +2144,18 @@ a {
   position: fixed;
   z-index: 60;
 }
+.checkout-register-scope {
+  isolation: isolate;
+  position: relative;
+}
+.checkout-register-required-backdrop {
+  align-items: start;
+  inset: 0;
+  overflow-y: auto;
+  padding: clamp(20px, 6vh, 56px) 18px 18px;
+  position: absolute;
+  z-index: 50;
+}
 .checkout-shift-modal {
   background: #fff;
   border: 1px solid #e4ebe8;
