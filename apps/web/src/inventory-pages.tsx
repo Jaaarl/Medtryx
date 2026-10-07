@@ -261,6 +261,15 @@ function centsFromMoney(value: string): bigint {
   return negative ? -cents : cents;
 }
 
+function parseCashTenderAmount(value: string): bigint | null {
+  if (!/^\d+(?:\.\d{0,2})?$/.test(value)) return null;
+  try {
+    return centsFromMoney(value);
+  } catch {
+    return null;
+  }
+}
+
 function formatCents(cents: bigint): string {
   const sign = cents < 0n ? "−" : "";
   const absolute = cents < 0n ? -cents : cents;
@@ -311,8 +320,8 @@ function createBrowserUuid(): string {
     return window.crypto.randomUUID();
 
   const bytes = window.crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = Array.from(bytes, (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
@@ -2684,6 +2693,8 @@ export function CheckoutPage() {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [openingCash, setOpeningCash] = useState("0.00");
   const [closingCash, setClosingCash] = useState("0.00");
+  const [cashReceived, setCashReceived] = useState("");
+  const [showCashChangeModal, setShowCashChangeModal] = useState(false);
   const [showShiftCloseModal, setShowShiftCloseModal] = useState(false);
   const [emergencyClosingCash, setEmergencyClosingCash] = useState("");
   const [varianceReason, setVarianceReason] = useState<
@@ -2845,6 +2856,19 @@ export function CheckoutPage() {
       ),
     );
   const effectiveBenefitType = hasSelectedBenefit ? benefitType : "REGULAR";
+  const cashReceivedCents = parseCashTenderAmount(cashReceived);
+  const saleAmountDueCents = preview
+    ? centsFromMoney(preview.totals.amountDue)
+    : null;
+  const customerChangeCents =
+    preview?.paymentMethod === "CASH" &&
+    cashReceivedCents !== null &&
+    saleAmountDueCents !== null
+      ? cashReceivedCents - saleAmountDueCents
+      : null;
+  const cashReceivedIsValid =
+    preview?.paymentMethod !== "CASH" ||
+    (customerChangeCents !== null && customerChangeCents >= 0n);
   const bnpcChecks = {
     bookletChecked: bnpcBookletChecked,
     priorPurchaseConfirmed: bnpcPriorPurchaseConfirmed,
@@ -3231,6 +3255,9 @@ export function CheckoutPage() {
         ...(hasBnpc ? { customerIdNumber, bnpcChecks } : {}),
       });
       setPreview(result);
+      setCashReceived(
+        result.paymentMethod === "CASH" ? result.totals.amountDue : "",
+      );
       setLotPickConfirmed(false);
       setRequestKey(createBrowserUuid());
     } catch (caught) {
@@ -3242,6 +3269,7 @@ export function CheckoutPage() {
 
   async function finalizeSale() {
     if (!preview || !policy?.approved || !shift || !requestKey) return;
+    if (preview.paymentMethod === "CASH" && !cashReceivedIsValid) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -3343,6 +3371,15 @@ export function CheckoutPage() {
     }
   }
 
+  function requestSaleConfirmation() {
+    if (!preview || !cashReceivedIsValid) return;
+    if (preview.paymentMethod === "CASH") {
+      setShowCashChangeModal(true);
+      return;
+    }
+    void finalizeSale();
+  }
+
   function makeCartReceipt(): SampleReceiptData {
     const usablePreview =
       preview?.paymentMethod === paymentMethod ? preview : null;
@@ -3354,11 +3391,12 @@ export function CheckoutPage() {
         const bundleComponent = bundleCart
           .flatMap((item) => item.offer.components)
           .find((component) => component.productId === line.productId);
+        const sku = cartProduct?.sku ?? bundleComponent?.sku;
         return {
           description: line.bundle
             ? `${line.bundle.name} · ${line.name}`
             : line.name,
-          sku: cartProduct?.sku ?? bundleComponent?.sku,
+          ...(sku ? { sku } : {}),
           unit: cartProduct?.unit ?? bundleComponent?.unit ?? "item",
           quantity: line.quantity,
           unitPrice: line.unitPrice,
@@ -4554,6 +4592,45 @@ export function CheckoutPage() {
                 </span>
                 <strong>₱{preview.totals.amountDue}</strong>
               </div>
+              {preview.paymentMethod === "CASH" && (
+                <div className="checkout-cash-tender">
+                  <label className="field-label" htmlFor="cash-received-amount">
+                    Cash received from customer
+                  </label>
+                  <div className="checkout-cash-tender-input">
+                    <span>₱</span>
+                    <input
+                      id="cash-received-amount"
+                      className="text-input"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={cashReceived}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onChange={(event) => setCashReceived(event.target.value)}
+                      aria-describedby="cash-change-hint"
+                    />
+                  </div>
+                  <div
+                    className={`checkout-cash-change ${!cashReceivedIsValid ? "checkout-cash-change-invalid" : ""}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span>Change for customer</span>
+                    <strong>
+                      {customerChangeCents === null
+                        ? "Enter a valid amount"
+                        : customerChangeCents < 0n
+                          ? "Below amount due"
+                          : formatCents(customerChangeCents)}
+                    </strong>
+                  </div>
+                  <small id="cash-change-hint" className="field-hint">
+                    The amount due is filled in automatically. Edit it to match
+                    the cash received.
+                  </small>
+                </div>
+              )}
               {hasTrackedCart && (
                 <label className="inventory-checkbox">
                   <input
@@ -4588,10 +4665,11 @@ export function CheckoutPage() {
                   saving ||
                   !policy?.approved ||
                   !shift ||
+                  !cashReceivedIsValid ||
                   !requestKey ||
                   (hasTrackedCart && !lotPickConfirmed)
                 }
-                onClick={() => void finalizeSale()}
+                onClick={requestSaleConfirmation}
               >
                 {saving ? "Saving…" : "Confirm sale"}
               </button>
@@ -4636,6 +4714,61 @@ export function CheckoutPage() {
           )}
         </aside>
       </div>
+      {showCashChangeModal &&
+        preview?.paymentMethod === "CASH" &&
+        customerChangeCents !== null &&
+        customerChangeCents >= 0n && (
+          <div className="shift-modal-backdrop checkout-cash-change-backdrop">
+            <section
+              className="checkout-shift-modal checkout-cash-change-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cash-change-modal-title"
+            >
+              <div className="checkout-shift-modal-heading">
+                <span className="eyebrow">CASH PAYMENT</span>
+                <h2 id="cash-change-modal-title">
+                  Give the customer their change
+                </h2>
+                <p>Check the amount to return before recording this sale.</p>
+              </div>
+              <div className="checkout-cash-change-summary">
+                <div>
+                  <span>Amount due</span>
+                  <strong>{formatCents(saleAmountDueCents ?? 0n)}</strong>
+                </div>
+                <div>
+                  <span>Cash received</span>
+                  <strong>{formatCents(cashReceivedCents ?? 0n)}</strong>
+                </div>
+                <div className="checkout-cash-change-summary-due">
+                  <span>Customer change</span>
+                  <strong>{formatCents(customerChangeCents)}</strong>
+                </div>
+              </div>
+              <div className="checkout-quantity-actions">
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() => setShowCashChangeModal(false)}
+                >
+                  Edit amount
+                </button>
+                <button
+                  className="button button-primary"
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setShowCashChangeModal(false);
+                    void finalizeSale();
+                  }}
+                >
+                  {saving ? "Saving…" : "Confirm cash sale"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       {productToAdd && (
         <div className="shift-modal-backdrop checkout-quantity-backdrop">
           <section

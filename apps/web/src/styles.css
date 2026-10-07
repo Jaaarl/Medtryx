@@ -2332,9 +2332,119 @@ a {
   color: #225e4d;
   font-size: 15px;
 }
+.checkout-cash-tender {
+  background: #f5f9f7;
+  border: 1px solid #dce9e3;
+  border-radius: 10px;
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+}
+.checkout-cash-tender .field-label {
+  color: #385b4e;
+  font-size: 13px;
+  font-weight: 700;
+}
+.checkout-cash-tender-input {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #b9cec4;
+  border-radius: 8px;
+  display: flex;
+  gap: 9px;
+  min-height: 52px;
+  padding: 0 12px;
+}
+.checkout-cash-tender-input > span {
+  color: #527164;
+  font-size: 19px;
+  font-weight: 700;
+}
+.checkout-cash-tender-input .text-input {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  flex: 1;
+  font-size: 21px;
+  font-weight: 750;
+  height: 48px;
+  min-width: 0;
+  padding: 0;
+}
+.checkout-cash-change {
+  align-items: center;
+  background: #eaf5ef;
+  border-radius: 8px;
+  color: #345d4c;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 9px 12px;
+}
+.checkout-cash-change > span {
+  font-size: 13px;
+  font-weight: 650;
+}
+.checkout-cash-change > strong {
+  color: #155c49;
+  font-size: 19px;
+  font-weight: 800;
+  text-align: right;
+}
+.checkout-cash-change-invalid {
+  background: #fff1ef;
+  color: #9b4037;
+}
+.checkout-cash-change-invalid > strong {
+  color: #a33830;
+  font-size: 14px;
+}
+.checkout-cash-tender .field-hint {
+  margin: 0;
+  text-align: left;
+}
 .checkout-preview .field-hint {
   margin: -5px 0 0;
   text-align: center;
+}
+.checkout-cash-change-modal {
+  max-width: 560px;
+}
+.checkout-cash-change-summary {
+  background: #f5f9f7;
+  border: 1px solid #e0e9e4;
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+.checkout-cash-change-summary > div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.checkout-cash-change-summary span {
+  color: #64786e;
+  font-size: 14px;
+}
+.checkout-cash-change-summary strong {
+  color: #365a4d;
+  font-size: 16px;
+  white-space: nowrap;
+}
+.checkout-cash-change-summary-due {
+  border-top: 1px solid #d9e5de;
+  margin-top: 2px;
+  padding-top: 12px;
+}
+.checkout-cash-change-summary-due span,
+.checkout-cash-change-summary-due strong {
+  color: #155c49;
+  font-size: 21px;
+  font-weight: 800;
 }
 .sale-saved-card {
   background: #edf7f1;
@@ -4137,5 +4247,23 @@ a {
   .sample-receipt-due dt,
   .sample-receipt-due dd {
     font-size: 19px;
+  }
+  .checkout-page .checkout-cash-tender .field-label,
+  .checkout-page .checkout-cash-change > span {
+    font-size: 15px;
+  }
+  .checkout-page .checkout-cash-tender-input {
+    min-height: 60px;
+  }
+  .checkout-page .checkout-cash-tender-input .text-input {
+    font-size: 24px;
+    height: 56px;
+  }
+  .checkout-page .checkout-cash-change > strong {
+    font-size: 22px;
+  }
+  .checkout-page .checkout-cash-tender .field-hint {
+    font-size: 13px;
+    line-height: 1.5;
   }
 }
