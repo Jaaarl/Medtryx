@@ -183,13 +183,6 @@ function Layout() {
               <strong>{user.email}</strong>
               <span>{user.role === "owner" ? "Store owner" : "Cashier"}</span>
             </div>
-            <button
-              className="icon-button signout-button"
-              onClick={() => void handleSignOut()}
-              aria-label="Sign out"
-            >
-              <LogOut size={17} />
-            </button>
           </div>
         </div>
       </aside>
@@ -214,12 +207,15 @@ function Layout() {
             <ArrowRight size={13} />
             <strong>{pageTitle(location.pathname)}</strong>
           </div>
-          <div className="topbar-meta">
-            <span className="today-label">PHILIPPINE STANDARD TIME</span>
-            <span className="live-indicator">
-              <span />
-              System online
-            </span>
+          <div className="topbar-actions">
+            <button
+              className="topbar-signout"
+              onClick={() => void handleSignOut()}
+              aria-label="Log out"
+            >
+              <LogOut size={18} />
+              <span>Log out</span>
+            </button>
           </div>
         </header>
         <div className="page-content">

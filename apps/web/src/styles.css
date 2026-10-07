@@ -70,12 +70,14 @@ a {
 .sidebar-header {
   align-items: center;
   display: flex;
+  flex-shrink: 0;
   gap: 8px;
   justify-content: space-between;
 }
 .sidebar-workspace-heading {
   align-items: center;
   display: flex;
+  flex-shrink: 0;
   justify-content: space-between;
   margin: 54px 0 12px;
 }
@@ -126,8 +128,15 @@ a {
   margin-left: 11px;
 }
 .main-nav {
+  align-content: start;
   display: grid;
+  flex: 1 1 auto;
   gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-color: #d9e5e1 transparent;
+  scrollbar-width: thin;
 }
 .nav-link {
   align-items: center;
@@ -160,6 +169,7 @@ a {
   padding: 2px 5px;
 }
 .sidebar-bottom {
+  flex: 0 0 auto;
   margin-top: auto;
 }
 .network-status {
@@ -173,8 +183,7 @@ a {
   margin: 0 0 16px;
   padding: 10px;
 }
-.status-dot,
-.live-indicator span {
+.status-dot {
   background: #36a37e;
   border-radius: 50%;
   height: 7px;
@@ -234,12 +243,12 @@ a {
   background: #f0f5f3;
   color: #235d51;
 }
-.signout-button {
-  margin-left: auto;
-}
 .main-panel {
+  height: 100vh;
+  height: 100dvh;
   margin-left: 252px;
-  min-height: 100vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   transition: margin-left 0.18s ease;
 }
 .topbar {
@@ -266,27 +275,30 @@ a {
   font-size: 11px;
   font-weight: 650;
 }
-.topbar-meta {
+.topbar-actions {
   align-items: center;
   display: flex;
-  gap: 19px;
+  margin-left: auto;
 }
-.today-label {
-  color: #9aa5a1;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.75px;
-}
-.live-indicator {
+.topbar-signout {
   align-items: center;
-  color: #71817b;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: #315f53;
   display: flex;
-  font-size: 10px;
-  gap: 7px;
+  font-size: 14px;
+  font-weight: 650;
+  gap: 9px;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 15px;
+  white-space: nowrap;
 }
-.live-indicator span {
-  height: 6px;
-  width: 6px;
+.topbar-signout:hover {
+  background: var(--green-soft);
+  border-color: #c8dfd5;
+  color: var(--green-dark);
 }
 .page-content {
   margin: 0 auto;
@@ -947,12 +959,6 @@ a {
     display: inline-flex;
     margin-left: -6px;
   }
-  .topbar-meta {
-    margin-left: auto;
-  }
-  .today-label {
-    display: none;
-  }
   .page-content {
     padding: 26px 19px 40px;
   }
@@ -1096,11 +1102,6 @@ a {
     gap: 8px;
     justify-content: center;
     padding-top: 12px;
-  }
-  .app-shell.sidebar-collapsed .signout-button {
-    height: 44px;
-    margin-left: 0;
-    width: 44px;
   }
 }
 
@@ -3699,10 +3700,10 @@ a {
   }
   .checkout-app-shell .breadcrumb,
   .checkout-app-shell .breadcrumb strong {
-    font-size: 13px;
+    font-size: 17px;
   }
-  .checkout-app-shell .live-indicator {
-    font-size: 12px;
+  .checkout-app-shell .topbar-signout {
+    font-size: 18px;
   }
   .checkout-app-shell .page-content {
     padding: clamp(24px, 3vh, 36px) clamp(22px, 3.5vw, 48px) 48px;
@@ -3711,15 +3712,15 @@ a {
     margin-bottom: 24px;
   }
   .checkout-page .page-heading h1 {
-    font-size: 32px;
+    font-size: 36px;
   }
   .checkout-page .page-heading p {
-    font-size: 15px;
+    font-size: 19px;
     line-height: 1.55;
     max-width: 680px;
   }
   .checkout-page .eyebrow {
-    font-size: 11px;
+    font-size: 15px;
   }
   .checkout-page .checkout-grid {
     gap: 20px;
@@ -3728,10 +3729,10 @@ a {
     padding: 21px 23px;
   }
   .checkout-page .card-heading h2 {
-    font-size: 17px;
+    font-size: 21px;
   }
   .checkout-page .card-heading p {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.45;
   }
   .checkout-page .checkout-search {
@@ -3743,7 +3744,7 @@ a {
     width: 20px;
   }
   .checkout-page .checkout-search .text-input {
-    font-size: 16px;
+    font-size: 20px;
     height: 44px;
   }
   .checkout-page .checkout-search .text-input::placeholder {
@@ -3755,7 +3756,7 @@ a {
   }
   .checkout-page .button {
     min-height: 48px;
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .catalog-result {
     gap: 16px;
@@ -3766,27 +3767,27 @@ a {
     gap: 6px;
   }
   .checkout-page .catalog-product-copy strong {
-    font-size: 15px;
+    font-size: 19px;
     line-height: 1.35;
   }
   .checkout-page .catalog-product-copy small {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.4;
   }
   .checkout-page .catalog-product-copy span {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.45;
   }
   .checkout-page .catalog-result .button {
     min-height: 48px;
     padding: 0 16px;
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .bundle-offer-list {
     padding: 19px 22px 0;
   }
   .checkout-page .bundle-offer-list h3 {
-    font-size: 15px;
+    font-size: 19px;
   }
   .checkout-page .cart-lines {
     padding: 0 22px;
@@ -3801,22 +3802,22 @@ a {
     gap: 5px;
   }
   .checkout-page .cart-line strong {
-    font-size: 14px;
+    font-size: 18px;
     line-height: 1.4;
   }
   .checkout-page .cart-line small {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.45;
   }
   .checkout-page .cart-line-actions {
     gap: 5px;
   }
   .checkout-page .cart-line-actions > span {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .cart-card .cart-quantity-input {
     flex-basis: 50px;
-    font-size: 16px;
+    font-size: 20px;
     height: 48px;
     width: 50px;
   }
@@ -3833,38 +3834,38 @@ a {
     padding: 19px 23px;
   }
   .checkout-page .cart-total span {
-    font-size: 13px;
+    font-size: 17px;
   }
   .checkout-page .cart-total strong {
-    font-size: 23px;
+    font-size: 27px;
   }
   .checkout-page .cart-empty {
     padding: 38px 22px;
   }
   .checkout-page .cart-empty strong {
-    font-size: 15px;
+    font-size: 19px;
   }
   .checkout-page .cart-empty small {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.5;
   }
   .checkout-page .checkout-policy-status,
   .checkout-page .checkout-next-note {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.55;
     padding: 14px 22px;
   }
   .checkout-page .checkout-shift-open {
-    font-size: 12px;
+    font-size: 16px;
     gap: 8px;
     padding: 15px 22px;
   }
   .checkout-page .checkout-shift-open strong,
   .checkout-page .checkout-shift-elapsed {
-    font-size: 13px;
+    font-size: 17px;
   }
   .checkout-page .checkout-shift-open summary {
-    font-size: 12px;
+    font-size: 16px;
     min-height: 40px;
     padding: 9px 0;
   }
@@ -3882,12 +3883,12 @@ a {
     max-width: 560px;
   }
   .checkout-page .checkout-shift-modal-heading h2 {
-    font-size: 25px;
+    font-size: 29px;
   }
   .checkout-page .checkout-shift-modal-heading p,
   .checkout-page .checkout-shift-modal-form > p,
   .checkout-page .checkout-emergency-close {
-    font-size: 14px;
+    font-size: 18px;
     line-height: 1.55;
   }
   .checkout-page .inventory-field {
@@ -3895,12 +3896,12 @@ a {
   }
   .checkout-page .inventory-field > span,
   .checkout-page .field-label {
-    font-size: 13px;
+    font-size: 17px;
   }
   .checkout-page .checkout-options .text-input,
   .checkout-page .checkout-shift-form .text-input,
   .checkout-page .checkout-preview .text-input {
-    font-size: 16px;
+    font-size: 20px;
     height: 48px;
     padding: 0 12px;
   }
@@ -3908,7 +3909,7 @@ a {
   .checkout-page .checkout-preview > .button,
   .checkout-page .checkout-shift-form > .button {
     min-height: 52px;
-    font-size: 15px;
+    font-size: 19px;
   }
   .checkout-page .checkout-benefit-lines,
   .checkout-page .checkout-customer-fields {
@@ -3917,12 +3918,12 @@ a {
     padding: 14px;
   }
   .checkout-page .checkout-benefit-lines > strong {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.5;
   }
   .checkout-page .inventory-checkbox {
     align-items: flex-start;
-    font-size: 13px;
+    font-size: 17px;
     gap: 10px;
     line-height: 1.5;
     min-height: 42px;
@@ -3936,7 +3937,7 @@ a {
   }
   .checkout-page .checkout-preview h3,
   .checkout-page .checkout-shift-form h3 {
-    font-size: 16px;
+    font-size: 20px;
   }
   .checkout-page .checkout-preview-lines {
     gap: 14px;
@@ -3946,116 +3947,116 @@ a {
     padding-bottom: 12px;
   }
   .checkout-page .checkout-preview-lines strong {
-    font-size: 14px;
+    font-size: 18px;
     line-height: 1.4;
   }
   .checkout-page .checkout-preview-lines small,
   .checkout-page .checkout-preview-lines span {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.55;
   }
   .checkout-page .checkout-preview-total span {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .checkout-preview-total strong {
-    font-size: 22px;
+    font-size: 26px;
   }
   .checkout-page .checkout-policy-warning,
   .checkout-page .register-in-use-note,
   .checkout-page .bundle-preview-summary span,
   .checkout-page .bundle-preview-summary small {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.55;
   }
   .checkout-page .bundle-preview-summary strong {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .field-hint {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.5;
   }
   .checkout-page .sale-saved-card {
-    font-size: 13px;
+    font-size: 17px;
     gap: 7px;
     padding: 16px 22px;
   }
   .checkout-page .sale-saved-card strong {
-    font-size: 11px;
+    font-size: 15px;
   }
   .checkout-page .table-loading {
-    font-size: 14px;
+    font-size: 18px;
     padding: 34px 22px;
   }
   .checkout-page .recent-transactions-card .card-heading h2 {
-    font-size: 18px;
+    font-size: 22px;
   }
   .checkout-page .recent-transactions-card .card-heading p {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.5;
   }
   .checkout-page .recent-transaction {
     padding: 18px;
   }
   .checkout-page .recent-transaction-heading strong {
-    font-size: 15px;
+    font-size: 19px;
   }
   .checkout-page .recent-transaction-heading small,
   .checkout-page .recent-transaction-products small {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.45;
   }
   .checkout-page .recent-transaction-products li > strong {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .recent-action-heading h3 {
-    font-size: 17px;
+    font-size: 21px;
   }
   .checkout-page .recent-action-heading p,
   .checkout-page .recent-payment-switch-form .field-hint {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.55;
   }
   .checkout-page .recent-action-kicker {
-    font-size: 10px;
+    font-size: 14px;
   }
   .checkout-page .recent-cancel-section-heading strong,
   .checkout-page .recent-cancel-details > strong {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .recent-cancel-section-heading small,
   .checkout-page .recent-cancel-line-stock legend small {
-    font-size: 12px;
+    font-size: 16px;
   }
   .checkout-page .recent-cancel-line-stock legend strong {
-    font-size: 14px;
+    font-size: 18px;
   }
   .checkout-page .recent-cancel-line-stock .recent-stock-choice label {
-    font-size: 13px;
+    font-size: 17px;
     min-height: 42px;
   }
   .checkout-page .recent-cancel-details > .field-label,
   .checkout-page .recent-cancel-action .inventory-checkbox {
-    font-size: 13px;
+    font-size: 17px;
   }
   .checkout-page .recent-payment-switch-form .text-input,
   .checkout-page .recent-cancel-details .text-input {
-    font-size: 16px;
+    font-size: 20px;
     min-height: 48px;
   }
   .checkout-page .recent-payment-switch-form .button,
   .checkout-page .recent-cancel-action > .button-danger {
-    font-size: 15px;
+    font-size: 19px;
     min-height: 50px;
   }
   .checkout-page .recent-action-picker {
     gap: 14px;
   }
   .checkout-page .recent-action-button {
-    font-size: 15px;
+    font-size: 19px;
     min-height: 54px;
   }
   .checkout-page .recent-cancel-details .field-hint {
-    font-size: 12px;
+    font-size: 16px;
     line-height: 1.5;
   }
 }
@@ -4303,59 +4304,59 @@ a {
     padding: 18px 24px;
   }
   .sample-receipt-toolbar h2 {
-    font-size: 22px;
+    font-size: 26px;
   }
   .sample-receipt-label,
   .sample-receipt-overline {
-    font-size: 12px;
+    font-size: 16px;
   }
   .sample-receipt-paper {
     padding: 28px clamp(24px, 5vw, 48px);
   }
   .sample-receipt-warning {
-    font-size: 14px;
+    font-size: 18px;
     padding: 11px 14px;
   }
   .sample-receipt-meta span {
-    font-size: 14px;
+    font-size: 18px;
   }
   .sample-receipt-meta strong {
-    font-size: 15px;
+    font-size: 19px;
   }
   .sample-receipt-table th {
-    font-size: 13px;
+    font-size: 17px;
   }
   .sample-receipt-table td {
-    font-size: 14px;
+    font-size: 18px;
     padding: 13px 10px;
   }
   .sample-receipt-table td:first-child small {
-    font-size: 12px;
+    font-size: 16px;
   }
   .sample-receipt-totals dt,
   .sample-receipt-totals dd {
-    font-size: 14px;
+    font-size: 18px;
   }
   .sample-receipt-due dt,
   .sample-receipt-due dd {
-    font-size: 19px;
+    font-size: 23px;
   }
   .checkout-page .checkout-cash-tender .field-label,
   .checkout-page .checkout-cash-change > span {
-    font-size: 15px;
+    font-size: 19px;
   }
   .checkout-page .checkout-cash-tender-input {
     min-height: 60px;
   }
   .checkout-page .checkout-cash-tender-input .text-input {
-    font-size: 24px;
+    font-size: 28px;
     height: 56px;
   }
   .checkout-page .checkout-cash-change > strong {
-    font-size: 22px;
+    font-size: 26px;
   }
   .checkout-page .checkout-cash-tender .field-hint {
-    font-size: 13px;
+    font-size: 17px;
     line-height: 1.5;
   }
 }
