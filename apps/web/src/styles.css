@@ -1268,6 +1268,32 @@ a {
   text-align: left;
   white-space: nowrap;
 }
+.inventory-sort-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  letter-spacing: inherit;
+  padding: 0;
+}
+.inventory-sort-button:hover,
+.inventory-sort-button:focus-visible {
+  color: #326f5e;
+}
+.inventory-sort-button:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid #82b5a1;
+  outline-offset: 3px;
+}
+.inventory-sort-indicator {
+  color: #6c9384;
+  font-size: 12px;
+  line-height: 1;
+}
 .inventory-table td {
   border-bottom: 1px solid #edf1ef;
   color: #536b62;

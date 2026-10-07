@@ -119,6 +119,62 @@ type StockEvent = {
   createdAt: string;
 };
 
+type SortDirection = "asc" | "desc";
+
+function sortRows<T>(
+  rows: T[],
+  valueFor: (row: T) => string | number | null,
+  direction: SortDirection,
+): T[] {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const leftValue = valueFor(left);
+    const rightValue = valueFor(right);
+    if (leftValue === null) return rightValue === null ? 0 : 1;
+    if (rightValue === null) return -1;
+    const comparison =
+      typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), undefined, {
+            numeric: true,
+            sensitivity: "base",
+          });
+    return comparison * multiplier;
+  });
+}
+
+function SortableHeader({
+  label,
+  active,
+  direction,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <th
+      aria-sort={
+        active ? (direction === "asc" ? "ascending" : "descending") : "none"
+      }
+    >
+      <button
+        className="inventory-sort-button"
+        type="button"
+        aria-label={`Sort by ${label}`}
+        onClick={onClick}
+      >
+        <span>{label}</span>
+        <span className="inventory-sort-indicator" aria-hidden="true">
+          {active ? (direction === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
 const EMPTY_FORM = {
   name: "",
   unit: "piece",
@@ -637,6 +693,10 @@ export function ProductsPage() {
   const { products, loading, error, setError, refresh } = useProducts();
   const productTableRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<{
+    key: string;
+    direction: SortDirection;
+  }>({ key: "product", direction: "asc" });
   const [form, setForm] = useState(EMPTY_FORM);
   const [editing, setEditing] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
@@ -710,6 +770,42 @@ export function ProductsPage() {
       `${product.name} ${product.sku} ${product.barcode ?? ""}`.toLowerCase();
     return text.includes(query.trim().toLowerCase());
   });
+  const sortedProducts = sortRows(
+    visibleProducts,
+    (product) => {
+      switch (sort.key) {
+        case "onHand":
+          return product.quantityOnHand;
+        case "sellingPrice":
+          return Number(product.sellingPrice);
+        case "latestCost":
+          return product.latestAcquisitionCost === null
+            ? null
+            : Number(product.latestAcquisitionCost);
+        case "averageCost":
+          return Number(product.weightedAverageUnitCost);
+        case "priceSpread":
+          return Number(product.unitPriceSpread);
+        case "grossProfit":
+          return Number(product.estimatedUnitGrossProfit);
+        case "inventoryValue":
+          return Number(product.inventoryValue);
+        case "status":
+          return product.active ? "Active" : "Inactive";
+        default:
+          return product.name;
+      }
+    },
+    sort.direction,
+  );
+
+  function selectSort(key: string) {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
 
   function startEdit(product: Product) {
     setNotice("");
@@ -891,15 +987,60 @@ export function ProductsPage() {
             <table className="inventory-table">
               <thead>
                 <tr>
-                  <th>PRODUCT</th>
-                  <th>ON HAND</th>
-                  <th>SELL PRICE</th>
-                  <th>LATEST COST</th>
-                  <th>AVG. COST</th>
-                  <th>PRICE SPREAD</th>
-                  <th>EST. GROSS PROFIT</th>
-                  <th>INVENTORY VALUE</th>
-                  <th>STATUS</th>
+                  <SortableHeader
+                    label="PRODUCT"
+                    active={sort.key === "product"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("product")}
+                  />
+                  <SortableHeader
+                    label="ON HAND"
+                    active={sort.key === "onHand"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("onHand")}
+                  />
+                  <SortableHeader
+                    label="SELL PRICE"
+                    active={sort.key === "sellingPrice"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("sellingPrice")}
+                  />
+                  <SortableHeader
+                    label="LATEST COST"
+                    active={sort.key === "latestCost"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("latestCost")}
+                  />
+                  <SortableHeader
+                    label="AVG. COST"
+                    active={sort.key === "averageCost"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("averageCost")}
+                  />
+                  <SortableHeader
+                    label="PRICE SPREAD"
+                    active={sort.key === "priceSpread"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("priceSpread")}
+                  />
+                  <SortableHeader
+                    label="EST. GROSS PROFIT"
+                    active={sort.key === "grossProfit"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("grossProfit")}
+                  />
+                  <SortableHeader
+                    label="INVENTORY VALUE"
+                    active={sort.key === "inventoryValue"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("inventoryValue")}
+                  />
+                  <SortableHeader
+                    label="STATUS"
+                    active={sort.key === "status"}
+                    direction={sort.direction}
+                    onClick={() => selectSort("status")}
+                  />
                   <th></th>
                 </tr>
               </thead>
@@ -910,8 +1051,8 @@ export function ProductsPage() {
                       Loading products…
                     </td>
                   </tr>
-                ) : visibleProducts.length ? (
-                  visibleProducts.map((product) => (
+                ) : sortedProducts.length ? (
+                  sortedProducts.map((product) => (
                     <tr key={product.id}>
                       <td>
                         <strong>{product.name}</strong>
@@ -1362,6 +1503,10 @@ export function StockPage() {
   const [warningDaysInput, setWarningDaysInput] = useState("30");
   const [selectedId, setSelectedId] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
+  const [stockSort, setStockSort] = useState<{
+    key: string;
+    direction: SortDirection;
+  }>({ key: "product", direction: "asc" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -1400,9 +1545,33 @@ export function StockPage() {
           product.quantityOnHand <= product.reorderLevel,
       )
     : products;
+  const sortedStockProducts = sortRows(
+    filteredProducts,
+    (product) => {
+      switch (stockSort.key) {
+        case "onHand":
+          return product.quantityOnHand;
+        case "averageCost":
+          return Number(product.weightedAverageUnitCost);
+        case "stockValue":
+          return Number(product.inventoryValue);
+        default:
+          return product.name;
+      }
+    },
+    stockSort.direction,
+  );
   const selectedLots = lots.filter(
     (lot) => lot.productId === selectedId && lot.quantity > 0,
   );
+
+  function selectStockSort(key: string) {
+    setStockSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
 
   async function refreshProducts() {
     const result = await api.get<{ products: Product[] }>("/products");
@@ -1728,10 +1897,30 @@ export function StockPage() {
             <table className="inventory-table">
               <thead>
                 <tr>
-                  <th>PRODUCT</th>
-                  <th>ON HAND</th>
-                  <th>AVG. COST</th>
-                  <th>STOCK VALUE</th>
+                  <SortableHeader
+                    label="PRODUCT"
+                    active={stockSort.key === "product"}
+                    direction={stockSort.direction}
+                    onClick={() => selectStockSort("product")}
+                  />
+                  <SortableHeader
+                    label="ON HAND"
+                    active={stockSort.key === "onHand"}
+                    direction={stockSort.direction}
+                    onClick={() => selectStockSort("onHand")}
+                  />
+                  <SortableHeader
+                    label="AVG. COST"
+                    active={stockSort.key === "averageCost"}
+                    direction={stockSort.direction}
+                    onClick={() => selectStockSort("averageCost")}
+                  />
+                  <SortableHeader
+                    label="STOCK VALUE"
+                    active={stockSort.key === "stockValue"}
+                    direction={stockSort.direction}
+                    onClick={() => selectStockSort("stockValue")}
+                  />
                 </tr>
               </thead>
               <tbody>
@@ -1741,8 +1930,8 @@ export function StockPage() {
                       Loading stock…
                     </td>
                   </tr>
-                ) : filteredProducts.length ? (
-                  filteredProducts.map((product) => (
+                ) : sortedStockProducts.length ? (
+                  sortedStockProducts.map((product) => (
                     <tr
                       key={product.id}
                       className={
@@ -2650,8 +2839,9 @@ function ShiftElapsed({ openedAt }: { openedAt: string }) {
 export function CheckoutPage() {
   const [query, setQuery] = useState("");
   const [productToAdd, setProductToAdd] = useState<CatalogProduct | null>(null);
-  const [bundleOfferToAdd, setBundleOfferToAdd] =
-    useState<BundleOffer | null>(null);
+  const [bundleOfferToAdd, setBundleOfferToAdd] = useState<BundleOffer | null>(
+    null,
+  );
   const [quantityToAdd, setQuantityToAdd] = useState("");
   const [quantityDialogError, setQuantityDialogError] = useState("");
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>(
@@ -2706,7 +2896,9 @@ export function CheckoutPage() {
   const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
   const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
-  const [cartReceipt, setCartReceipt] = useState<SampleReceiptData | null>(null);
+  const [cartReceipt, setCartReceipt] = useState<SampleReceiptData | null>(
+    null,
+  );
   const [recentSalesRefresh, setRecentSalesRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [operationsLoading, setOperationsLoading] = useState(true);
@@ -4878,8 +5070,8 @@ export function CheckoutPage() {
                 />
               </Field>
               <small className="field-hint">
-                {quantityDialogAvailable} available to add.
-                You can adjust the quantity in the cart.
+                {quantityDialogAvailable} available to add. You can adjust the
+                quantity in the cart.
               </small>
               <div className="checkout-quantity-actions">
                 <button
