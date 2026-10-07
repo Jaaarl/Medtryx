@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "./api";
+import {
+  addMoney,
+  moneyTimesQuantity,
+  SampleReceiptModal,
+  type SampleReceiptData,
+} from "./sample-receipt";
 
 type RecentTransaction = {
   transactionId: string;
@@ -28,6 +34,28 @@ type RecentTransaction = {
 
 type RefundShift = { id: string; expectedCash: string };
 type TransactionAction = "payment" | "cancel";
+type SavedSaleForReceipt = {
+  transactionId: string;
+  createdAt: string;
+  paymentMethod: "CASH" | "QR";
+  subtotal: string;
+  vat: string;
+  vatRemoved: string;
+  seniorDiscount: string;
+  pwdDiscount: string;
+  bnpcDiscount: string;
+  amountDue: string;
+  cashRoundingAdjustment: string;
+  lines: Array<{
+    productName: string;
+    sku: string;
+    unit: string;
+    quantity: number;
+    unitPrice: string;
+    bundlePromotionDiscount: string;
+    bundle: null | { name: string };
+  }>;
+};
 
 const ACTION_WINDOW_MS = 10 * 60 * 1000;
 type ReasonChoice = "" | "Cashier Fault" | "Customer Fault" | "Custom";
@@ -108,6 +136,9 @@ export function RecentTransactions({
   >({});
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
+  const [receiptLoadingId, setReceiptLoadingId] = useState("");
+  const [receiptError, setReceiptError] = useState("");
+  const [receipt, setReceipt] = useState<SampleReceiptData | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -248,6 +279,52 @@ export function RecentTransactions({
     }));
   }
 
+  async function viewReceipt(transaction: RecentTransaction) {
+    setReceiptError("");
+    setReceiptLoadingId(transaction.transactionId);
+    try {
+      const result = await api.get<{ sale: SavedSaleForReceipt }>(
+        `/sales/${transaction.transactionId}`,
+      );
+      const sale = result.sale;
+      setReceipt({
+        transactionId: sale.transactionId,
+        createdAt: sale.createdAt,
+        paymentMethod: sale.paymentMethod,
+        lines: sale.lines.map((line) => ({
+          description: line.bundle
+            ? `${line.bundle.name} · ${line.productName}`
+            : line.productName,
+          sku: line.sku,
+          unit: line.unit,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          amount: moneyTimesQuantity(line.unitPrice, line.quantity),
+        })),
+        totalSales: addMoney(
+          ...sale.lines.map((line) =>
+            moneyTimesQuantity(line.unitPrice, line.quantity),
+          ),
+        ),
+        discounts: addMoney(
+          sale.seniorDiscount,
+          sale.pwdDiscount,
+          sale.bnpcDiscount,
+          ...sale.lines.map((line) => line.bundlePromotionDiscount),
+        ),
+        vat: sale.vat,
+        vatRemoved: sale.vatRemoved,
+        amountDue: sale.amountDue,
+        cashRoundingAdjustment: sale.cashRoundingAdjustment,
+        cancelled: transaction.status === "REVERSED",
+      });
+    } catch {
+      setReceiptError("Unable to load this receipt preview. Refresh and try again.");
+    } finally {
+      setReceiptLoadingId("");
+    }
+  }
+
   return (
     <section className="settings-main-card recent-transactions-card">
       <div className="card-heading">
@@ -268,6 +345,11 @@ export function RecentTransactions({
       {notice && (
         <div className="banner banner-success" role="status">
           {notice}
+        </div>
+      )}
+      {receiptError && (
+        <div className="banner banner-error" role="alert">
+          {receiptError}
         </div>
       )}
       {loading ? (
@@ -320,6 +402,18 @@ export function RecentTransactions({
                     </li>
                   ))}
                 </ul>
+                <div className="recent-receipt-action">
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={receiptLoadingId === transaction.transactionId}
+                    onClick={() => void viewReceipt(transaction)}
+                  >
+                    {receiptLoadingId === transaction.transactionId
+                      ? "Loading receipt…"
+                      : "View sample invoice"}
+                  </button>
+                </div>
                 {transaction.status === "REVERSED" ? (
                   <small className="reversal-saved-note">
                     Cancelled as {transaction.reversalTransactionId}.
@@ -660,6 +754,12 @@ export function RecentTransactions({
         <div className="table-loading">
           No transactions are within the 10-minute cancellation window.
         </div>
+      )}
+      {receipt && (
+        <SampleReceiptModal
+          receipt={receipt}
+          onClose={() => setReceipt(null)}
+        />
       )}
     </section>
   );

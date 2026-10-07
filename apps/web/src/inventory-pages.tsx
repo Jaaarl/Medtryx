@@ -15,6 +15,12 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "./api";
 import { RecentTransactions } from "./recent-transactions";
+import {
+  addMoney,
+  moneyTimesQuantity,
+  SampleReceiptModal,
+  type SampleReceiptData,
+} from "./sample-receipt";
 
 type Product = {
   id: string;
@@ -259,6 +265,45 @@ function formatCents(cents: bigint): string {
   const sign = cents < 0n ? "−" : "";
   const absolute = cents < 0n ? -cents : cents;
   return `${sign}₱${(absolute / 100n).toLocaleString("en-PH")}.${String(absolute % 100n).padStart(2, "0")}`;
+}
+
+function moneyStringFromCents(cents: bigint): string {
+  const sign = cents < 0n ? "-" : "";
+  const absolute = cents < 0n ? -cents : cents;
+  return `${sign}${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`;
+}
+
+function sampleReceiptFromSale(sale: SaleRecord): SampleReceiptData {
+  return {
+    transactionId: sale.transactionId,
+    createdAt: sale.createdAt,
+    paymentMethod: sale.paymentMethod,
+    lines: sale.lines.map((line) => ({
+      description: line.bundle
+        ? `${line.bundle.name} · ${line.productName}`
+        : line.productName,
+      sku: line.sku,
+      unit: line.unit,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      amount: moneyTimesQuantity(line.unitPrice, line.quantity),
+    })),
+    totalSales: addMoney(
+      ...sale.lines.map((line) =>
+        moneyTimesQuantity(line.unitPrice, line.quantity),
+      ),
+    ),
+    discounts: addMoney(
+      sale.seniorDiscount,
+      sale.pwdDiscount,
+      sale.bnpcDiscount,
+      ...sale.lines.map((line) => line.bundlePromotionDiscount),
+    ),
+    vat: sale.vat,
+    vatRemoved: sale.vatRemoved,
+    amountDue: sale.amountDue,
+    cashRoundingAdjustment: sale.cashRoundingAdjustment,
+  };
 }
 
 function createBrowserUuid(): string {
@@ -2473,6 +2518,8 @@ type CheckoutPreview = {
       quantity: number;
     }>;
     gross: string;
+    regularGross: string;
+    unitPrice: string;
     bnpcEligible: boolean;
     bnpcCategory: "BASIC_NECESSITY" | "PRIME_COMMODITY" | null;
     benefitTreatment: "REGULAR" | "SENIOR_CITIZEN" | "PWD" | "BNPC";
@@ -2529,12 +2576,27 @@ type CheckoutPreview = {
 type SaleRecord = {
   id: string;
   transactionId: string;
+  createdAt: string;
   paymentMethod: "CASH" | "QR";
+  subtotal: string;
+  vat: string;
+  vatRemoved: string;
+  seniorDiscount: string;
+  pwdDiscount: string;
   amountDue: string;
   bnpcDiscount: string;
   cashRoundingMode: "NONE" | "NEAREST_25_CENTAVOS";
   cashRoundingAdjustment: string;
   label: string;
+  lines: Array<{
+    productName: string;
+    sku: string;
+    unit: string;
+    quantity: number;
+    unitPrice: string;
+    bundlePromotionDiscount: string;
+    bundle: null | { name: string };
+  }>;
 };
 
 type TaxPolicySummary = { approved: boolean; version: string };
@@ -2631,6 +2693,7 @@ export function CheckoutPage() {
   const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
   const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
+  const [cartReceipt, setCartReceipt] = useState<SampleReceiptData | null>(null);
   const [recentSalesRefresh, setRecentSalesRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [operationsLoading, setOperationsLoading] = useState(true);
@@ -3249,6 +3312,7 @@ export function CheckoutPage() {
         },
       );
       setSaleRecord(result.sale);
+      setCartReceipt(sampleReceiptFromSale(result.sale));
       setRecentSalesRefresh((value) => value + 1);
       setCart([]);
       setBundleCart([]);
@@ -3277,6 +3341,81 @@ export function CheckoutPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function makeCartReceipt(): SampleReceiptData {
+    const usablePreview =
+      preview?.paymentMethod === paymentMethod ? preview : null;
+    if (usablePreview) {
+      const lines = usablePreview.lines.map((line) => {
+        const cartProduct = cart.find(
+          (item) => item.product.id === line.productId,
+        )?.product;
+        const bundleComponent = bundleCart
+          .flatMap((item) => item.offer.components)
+          .find((component) => component.productId === line.productId);
+        return {
+          description: line.bundle
+            ? `${line.bundle.name} · ${line.name}`
+            : line.name,
+          sku: cartProduct?.sku ?? bundleComponent?.sku,
+          unit: cartProduct?.unit ?? bundleComponent?.unit ?? "item",
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          amount: line.regularGross,
+        };
+      });
+      return {
+        transactionId: "Cart preview",
+        createdAt: new Date().toISOString(),
+        paymentMethod,
+        lines,
+        totalSales: addMoney(
+          ...usablePreview.lines.map((line) => line.regularGross),
+        ),
+        discounts: addMoney(
+          usablePreview.totals.seniorDiscount,
+          usablePreview.totals.pwdDiscount,
+          usablePreview.totals.bnpcDiscount,
+          usablePreview.totals.bundlePromotionalDiscount,
+        ),
+        vat: usablePreview.totals.vat,
+        vatRemoved: usablePreview.totals.vatRemoved,
+        amountDue: usablePreview.totals.amountDue,
+        cashRoundingAdjustment: usablePreview.totals.cashRoundingAdjustment,
+      };
+    }
+
+    const lines = [
+      ...cart.map((line) => ({
+        description: line.product.name,
+        sku: line.product.sku,
+        unit: line.product.unit,
+        quantity: line.quantity,
+        unitPrice: line.product.sellingPrice,
+        amount: moneyTimesQuantity(line.product.sellingPrice, line.quantity),
+      })),
+      ...bundleCart.map((line) => ({
+        description: `${line.offer.name} bundle`,
+        sku: line.offer.code,
+        unit: "bundle",
+        quantity: line.quantity,
+        unitPrice: line.offer.promotionalPrice,
+        amount: moneyTimesQuantity(line.offer.promotionalPrice, line.quantity),
+      })),
+    ];
+    return {
+      transactionId: "Cart preview",
+      createdAt: new Date().toISOString(),
+      paymentMethod,
+      lines,
+      totalSales: moneyStringFromCents(total),
+      discounts: "0.00",
+      vat: "0.00",
+      vatRemoved: "0.00",
+      amountDue: moneyStringFromCents(total),
+      estimate: true,
+    };
   }
 
   return (
@@ -4456,6 +4595,13 @@ export function CheckoutPage() {
               >
                 {saving ? "Saving…" : "Confirm sale"}
               </button>
+              <button
+                className="button button-secondary checkout-receipt-preview-button"
+                type="button"
+                onClick={() => setCartReceipt(makeCartReceipt())}
+              >
+                Preview sample invoice
+              </button>
               {!policy?.approved && (
                 <small className="field-hint">
                   Finalization is locked while the policy is provisional.
@@ -4569,6 +4715,12 @@ export function CheckoutPage() {
         refreshKey={recentSalesRefresh}
         onUpdated={refreshShiftState}
       />
+      {cartReceipt && (
+        <SampleReceiptModal
+          receipt={cartReceipt}
+          onClose={() => setCartReceipt(null)}
+        />
+      )}
     </section>
   );
 }
