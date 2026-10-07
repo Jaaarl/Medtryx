@@ -103,7 +103,9 @@ function Layout() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${location.pathname === "/checkout" ? "checkout-app-shell" : ""}`}
+    >
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
         <Link
           className="brand"
