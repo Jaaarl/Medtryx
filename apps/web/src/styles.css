@@ -63,14 +63,32 @@ a {
   padding: 26px 18px 15px;
   position: fixed;
   top: 0;
+  transition: width 0.18s ease;
   width: 252px;
   z-index: 20;
+}
+.sidebar-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.sidebar-workspace-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin: 54px 0 12px;
 }
 .brand {
   align-items: center;
   display: inline-flex;
   gap: 11px;
   width: fit-content;
+}
+.sidebar-collapse-button {
+  flex: 0 0 44px;
+  height: 44px;
+  width: 44px;
 }
 .brand-mark {
   align-items: center;
@@ -105,7 +123,7 @@ a {
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 1.1px;
-  margin: 54px 0 12px 11px;
+  margin-left: 11px;
 }
 .main-nav {
   display: grid;
@@ -222,6 +240,7 @@ a {
 .main-panel {
   margin-left: 252px;
   min-height: 100vh;
+  transition: margin-left 0.18s ease;
 }
 .topbar {
   align-items: center;
@@ -901,6 +920,9 @@ a {
   .sidebar-open {
     transform: translateX(0);
   }
+  .sidebar-collapse-button {
+    display: none;
+  }
   .mobile-scrim {
     background: rgba(16, 44, 39, 0.25);
     border: 0;
@@ -1021,6 +1043,64 @@ a {
   }
   .breadcrumb > span {
     display: none;
+  }
+}
+
+@media (min-width: 821px) {
+  .app-shell.sidebar-collapsed .sidebar {
+    padding-left: 10px;
+    padding-right: 10px;
+    width: 84px;
+  }
+  .app-shell.sidebar-collapsed .main-panel {
+    margin-left: 84px;
+  }
+  .app-shell.sidebar-collapsed .sidebar-header {
+    justify-content: center;
+  }
+  .app-shell.sidebar-collapsed .brand {
+    gap: 0;
+  }
+  .app-shell.sidebar-collapsed .brand-copy,
+  .app-shell.sidebar-collapsed .workspace-label {
+    display: none;
+  }
+  .app-shell.sidebar-collapsed .sidebar-workspace-heading {
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0 12px;
+  }
+  .app-shell.sidebar-collapsed .nav-link {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-shell.sidebar-collapsed .nav-link > span {
+    display: none;
+  }
+  .app-shell.sidebar-collapsed .nav-link svg {
+    flex: 0 0 auto;
+  }
+  .app-shell.sidebar-collapsed .network-status {
+    background: transparent;
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .app-shell.sidebar-collapsed .network-status > span:not(.status-dot),
+  .app-shell.sidebar-collapsed .profile-copy {
+    display: none;
+  }
+  .app-shell.sidebar-collapsed .profile-row {
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
+    padding-top: 12px;
+  }
+  .app-shell.sidebar-collapsed .signout-button {
+    height: 44px;
+    margin-left: 0;
+    width: 44px;
   }
 }
 

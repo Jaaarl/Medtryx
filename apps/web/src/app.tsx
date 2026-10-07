@@ -21,6 +21,8 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   PackageSearch,
   ShieldCheck,
   Tag,
@@ -95,6 +97,25 @@ function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem("medtryx-sidebar-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "medtryx-sidebar-collapsed",
+        String(sidebarCollapsed),
+      );
+    } catch {
+      // Keep the navigation usable when browser storage is unavailable.
+    }
+  }, [sidebarCollapsed]);
+
   if (!user) return null;
 
   async function handleSignOut() {
@@ -104,21 +125,35 @@ function Layout() {
 
   return (
     <div
-      className={`app-shell ${location.pathname === "/checkout" ? "checkout-app-shell" : ""}`}
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${location.pathname === "/checkout" ? "checkout-app-shell" : ""}`}
     >
       <aside className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
-        <Link
-          className="brand"
-          to="/checkout"
-          onClick={() => setMenuOpen(false)}
-        >
-          <span className="brand-mark">M</span>
-          <span>
-            <strong>medtryx</strong>
-            <small>PHARMACY OPERATIONS</small>
-          </span>
-        </Link>
-        <div className="workspace-label">WORKSPACE</div>
+        <div className="sidebar-header">
+          <Link
+            className="brand"
+            to="/checkout"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Medtryx checkout"
+          >
+            <span className="brand-mark">M</span>
+            <span className="brand-copy">
+              <strong>medtryx</strong>
+              <small>PHARMACY OPERATIONS</small>
+            </span>
+          </Link>
+        </div>
+        <div className="sidebar-workspace-heading">
+          <div className="workspace-label">WORKSPACE</div>
+          <button
+            className="icon-button sidebar-collapse-button"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+          </button>
+        </div>
         <nav className="main-nav" aria-label="Main navigation">
           {navigation
             .filter((item) => !item.ownerOnly || user.role === "owner")
@@ -128,6 +163,8 @@ function Layout() {
                 to={to}
                 className={`nav-link ${location.pathname.startsWith(to) ? "nav-link-active" : ""}`}
                 onClick={() => setMenuOpen(false)}
+                aria-label={label}
+                title={label}
               >
                 <Icon size={18} strokeWidth={1.8} />
                 <span>{label}</span>
