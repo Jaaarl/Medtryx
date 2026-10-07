@@ -1856,7 +1856,12 @@ a {
   font-weight: 650;
 }
 .stock-workspace {
+  align-items: stretch;
   grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
+}
+.stock-list-card {
+  display: flex;
+  flex-direction: column;
 }
 .stock-list-card .inventory-table {
   min-width: 560px;
@@ -1871,11 +1876,16 @@ a {
 .compact-checkbox {
   white-space: nowrap;
 }
-.stock-actions-column {
+.stock-actions-column,
+.stock-adjustment-column {
   display: grid;
   gap: 14px;
 }
-.stock-actions-column .inventory-form-card {
+.stock-adjustment-column {
+  grid-column: 2;
+}
+.stock-actions-column .inventory-form-card,
+.stock-adjustment-column .inventory-form-card {
   min-width: 0;
 }
 .selected-product-strip {
@@ -4184,6 +4194,9 @@ a {
   }
   .cart-card {
     position: static;
+  }
+  .stock-adjustment-column {
+    grid-column: 1;
   }
 }
 @media (max-width: 620px) {

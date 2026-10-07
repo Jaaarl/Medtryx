@@ -219,3 +219,60 @@ test("product catalog pagination stays bounded and resets after a new search", a
     });
   expect(Math.abs(panelHeights.list - panelHeights.form)).toBeLessThan(2);
 });
+
+test("current stock pagination aligns its panel with Receive stock", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  for (let index = 1; index <= 9; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const response = await page.request.post("/api/products", {
+      headers: { "x-csrf-token": csrf.token },
+      data: {
+        sku: `SYN-STOCK-PAGE-${suffix}`,
+        name: `Synthetic Stock Page ${suffix}`,
+        unit: "piece",
+        sellingPrice: "10.00",
+        taxClass: "VATABLE",
+        productType: "GENERIC",
+        isScEligible: false,
+        isPwdEligible: false,
+        openingQuantity: 0,
+        reorderLevel: 0,
+      },
+    });
+    expect(response.status()).toBe(201);
+  }
+
+  await page.goto("/stock");
+  await page.getByLabel("Low stock only").check();
+  const stockRows = page.locator(".stock-list-card .inventory-table tbody tr");
+  await expect(stockRows).toHaveCount(6);
+  await expect(stockRows.first()).toContainText("Synthetic Stock Page 01");
+  await expect(
+    page.getByText("Showing 1 to 6 of 9 products", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next stock page" }).click();
+  await expect(stockRows).toHaveCount(3);
+  await expect(stockRows.first()).toContainText("Synthetic Stock Page 07");
+  await expect(
+    page.getByText("Showing 7 to 9 of 9 products", { exact: true }),
+  ).toBeVisible();
+
+  const panelHeights = await page
+    .locator(".stock-workspace")
+    .evaluate((root) => {
+      const list = root.querySelector(".stock-list-card");
+      const receive = root.querySelector(
+        ".stock-actions-column > .inventory-form-card",
+      );
+      if (!list || !receive) throw new Error("Stock panels were not rendered.");
+      return {
+        list: list.getBoundingClientRect().height,
+        receive: receive.getBoundingClientRect().height,
+      };
+    });
+  expect(Math.abs(panelHeights.list - panelHeights.receive)).toBeLessThan(2);
+});

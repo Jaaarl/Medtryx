@@ -122,6 +122,7 @@ type StockEvent = {
 
 type SortDirection = "asc" | "desc";
 const PRODUCTS_PER_PAGE = 10;
+const STOCK_PRODUCTS_PER_PAGE = 6;
 
 function sortRows<T>(
   rows: T[],
@@ -1556,6 +1557,7 @@ export function StockPage() {
   const [warningDaysInput, setWarningDaysInput] = useState("30");
   const [selectedId, setSelectedId] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
+  const [stockPage, setStockPage] = useState(1);
   const [stockSort, setStockSort] = useState<{
     key: string;
     direction: SortDirection;
@@ -1615,6 +1617,23 @@ export function StockPage() {
     },
     stockSort.direction,
   );
+  const totalStockPages = Math.max(
+    1,
+    Math.ceil(sortedStockProducts.length / STOCK_PRODUCTS_PER_PAGE),
+  );
+  const currentStockPage = Math.min(stockPage, totalStockPages);
+  const firstStockIndex = (currentStockPage - 1) * STOCK_PRODUCTS_PER_PAGE;
+  const pageStockProducts = sortedStockProducts.slice(
+    firstStockIndex,
+    firstStockIndex + STOCK_PRODUCTS_PER_PAGE,
+  );
+  const firstVisibleStockProduct = sortedStockProducts.length
+    ? firstStockIndex + 1
+    : 0;
+  const lastVisibleStockProduct = Math.min(
+    firstStockIndex + STOCK_PRODUCTS_PER_PAGE,
+    sortedStockProducts.length,
+  );
   const selectedLots = lots.filter(
     (lot) => lot.productId === selectedId && lot.quantity > 0,
   );
@@ -1625,6 +1644,7 @@ export function StockPage() {
   });
 
   function selectStockSort(key: string) {
+    setStockPage(1);
     setStockSort((current) => ({
       key,
       direction:
@@ -1949,7 +1969,10 @@ export function StockPage() {
               <input
                 type="checkbox"
                 checked={lowOnly}
-                onChange={(event) => setLowOnly(event.target.checked)}
+                onChange={(event) => {
+                  setLowOnly(event.target.checked);
+                  setStockPage(1);
+                }}
               />
               <span>Low stock only</span>
             </label>
@@ -1991,8 +2014,8 @@ export function StockPage() {
                       Loading stock…
                     </td>
                   </tr>
-                ) : sortedStockProducts.length ? (
-                  sortedStockProducts.map((product) => (
+                ) : pageStockProducts.length ? (
+                  pageStockProducts.map((product) => (
                     <tr
                       key={product.id}
                       className={
@@ -2039,6 +2062,33 @@ export function StockPage() {
               Stock quantity and inventory value update together with a
               permanent event record. Negative stock is blocked.
             </span>
+          </div>
+          <div className="inventory-pagination" aria-label="Stock pagination">
+            <span aria-live="polite">
+              Showing {firstVisibleStockProduct} to {lastVisibleStockProduct} of{" "}
+              {sortedStockProducts.length} products
+            </span>
+            <div>
+              <button
+                type="button"
+                aria-label="Previous stock page"
+                disabled={currentStockPage === 1}
+                onClick={() => setStockPage(currentStockPage - 1)}
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <span>
+                Page {currentStockPage} of {totalStockPages}
+              </span>
+              <button
+                type="button"
+                aria-label="Next stock page"
+                disabled={currentStockPage === totalStockPages}
+                onClick={() => setStockPage(currentStockPage + 1)}
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
           </div>
         </section>
         <aside className="stock-actions-column">
@@ -2164,6 +2214,8 @@ export function StockPage() {
               </p>
             )}
           </div>
+        </aside>
+        <aside className="stock-adjustment-column">
           <div className="create-card inventory-form-card">
             <h2>Adjustment or write-off</h2>
             <p>
