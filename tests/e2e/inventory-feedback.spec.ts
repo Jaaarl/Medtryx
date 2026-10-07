@@ -301,3 +301,61 @@ test("current stock pagination aligns its panel with Receive stock", async ({
     });
   expect(Math.abs(panelHeights.list - panelHeights.receive)).toBeLessThan(2);
 });
+
+test("lots and expiry paginate, and a new search returns to page one", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  for (let index = 1; index <= 7; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const response = await page.request.post("/api/products", {
+      headers: { "x-csrf-token": csrf.token },
+      data: {
+        sku: `SYN-LOT-PAGE-${suffix}`,
+        name: `Synthetic Lot Page ${suffix}`,
+        unit: "piece",
+        sellingPrice: "10.00",
+        taxClass: "VATABLE",
+        productType: "GENERIC",
+        isScEligible: false,
+        isPwdEligible: false,
+        tracksLots: true,
+        openingQuantity: 1,
+        openingUnitCost: "1.00",
+        openingLotCode: `SYN-LOT-PAGE-BATCH-${suffix}`,
+        openingExpiryDate: "2032-12-31",
+      },
+    });
+    expect(response.status()).toBe(201);
+  }
+
+  await page.goto("/stock");
+  const lotSearch = page.getByLabel(
+    "Search lots by product name, SKU, or batch ID",
+  );
+  await lotSearch.fill("Synthetic Lot Page");
+  const lotRows = page.locator(".stock-lots-card .inventory-table tbody tr");
+  await expect(lotRows).toHaveCount(6);
+  await expect(lotRows.first()).toContainText("Synthetic Lot Page 01");
+  await expect(
+    page.getByText("Showing 1 to 6 of 7 lots", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next lots page" }).click();
+  await expect(lotRows).toHaveCount(1);
+  await expect(lotRows.first()).toContainText("Synthetic Lot Page 07");
+  await expect(
+    page.getByText("Showing 7 to 7 of 7 lots", { exact: true }),
+  ).toBeVisible();
+
+  await lotSearch.fill("Batch 02");
+  await expect(lotRows).toHaveCount(1);
+  await expect(lotRows.first()).toContainText("Synthetic Lot Page 02");
+  await expect(
+    page.getByText("Showing 1 to 1 of 1 lots", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Previous lots page" }),
+  ).toBeDisabled();
+});

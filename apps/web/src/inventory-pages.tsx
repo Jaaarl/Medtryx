@@ -130,6 +130,7 @@ type StockEvent = {
 type SortDirection = "asc" | "desc";
 const PRODUCTS_PER_PAGE = 10;
 const STOCK_PRODUCTS_PER_PAGE = 6;
+const LOTS_PER_PAGE = 6;
 
 function sortRows<T>(
   rows: T[],
@@ -1595,6 +1596,7 @@ export function StockPage() {
   const [physicalCountConfirmed, setPhysicalCountConfirmed] = useState(false);
   const [lotStatusReason, setLotStatusReason] = useState("");
   const [lotQuery, setLotQuery] = useState("");
+  const [lotPage, setLotPage] = useState(1);
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
   const [lotQuantityInput, setLotQuantityInput] = useState("");
   const [lotSellingPriceInput, setLotSellingPriceInput] = useState("");
@@ -1656,6 +1658,21 @@ export function StockPage() {
       fields.some((field) => field.includes(term)),
     );
   });
+  const totalLotPages = Math.max(
+    1,
+    Math.ceil(visibleLots.length / LOTS_PER_PAGE),
+  );
+  const currentLotPage = Math.min(lotPage, totalLotPages);
+  const firstLotIndex = (currentLotPage - 1) * LOTS_PER_PAGE;
+  const pageLots = visibleLots.slice(
+    firstLotIndex,
+    firstLotIndex + LOTS_PER_PAGE,
+  );
+  const firstVisibleLot = visibleLots.length ? firstLotIndex + 1 : 0;
+  const lastVisibleLot = Math.min(
+    firstLotIndex + LOTS_PER_PAGE,
+    visibleLots.length,
+  );
 
   function selectStockSort(key: string) {
     setStockPage(1);
@@ -2438,7 +2455,10 @@ export function StockPage() {
             aria-label="Search lots by product name, SKU, or batch ID"
             placeholder="Search product name, SKU, or batch ID"
             value={lotQuery}
-            onChange={(event) => setLotQuery(event.target.value)}
+            onChange={(event) => {
+              setLotQuery(event.target.value);
+              setLotPage(1);
+            }}
           />
         </div>
         <p className="lot-search-count" role="status">
@@ -2488,7 +2508,7 @@ export function StockPage() {
             </thead>
             <tbody>
               {visibleLots.length ? (
-                visibleLots.map((lot) => (
+                pageLots.map((lot) => (
                   <tr key={lot.id}>
                     <td>
                       <strong>{lot.productName}</strong>
@@ -2633,6 +2653,36 @@ export function StockPage() {
               )}
             </tbody>
           </table>
+        </div>
+        <div
+          className="inventory-pagination"
+          aria-label="Lots and expiry pagination"
+        >
+          <span aria-live="polite">
+            Showing {firstVisibleLot} to {lastVisibleLot} of{" "}
+            {visibleLots.length} lots
+          </span>
+          <div>
+            <button
+              type="button"
+              aria-label="Previous lots page"
+              disabled={currentLotPage === 1}
+              onClick={() => setLotPage(currentLotPage - 1)}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <span>
+              Page {currentLotPage} of {totalLotPages}
+            </span>
+            <button
+              type="button"
+              aria-label="Next lots page"
+              disabled={currentLotPage === totalLotPages}
+              onClick={() => setLotPage(currentLotPage + 1)}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
         </div>
         <div className="inventory-two-fields">
           <Field id="lot-status-reason" label="Reason for quarantine change">
