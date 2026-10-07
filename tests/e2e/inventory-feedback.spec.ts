@@ -106,17 +106,42 @@ test("owners can search a batch and edit its quantity and product price", async 
     },
   });
   expect(createResponse.status()).toBe(201);
+  const secondLotResponse = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-OTHER-LOT",
+      name: "Synthetic Other Lot Product",
+      unit: "piece",
+      sellingPrice: "8.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      tracksLots: true,
+      openingQuantity: 2,
+      openingUnitCost: "4.00",
+      openingLotCode: "SYN-OTHER-BATCH-31",
+      openingExpiryDate: "2031-12-31",
+    },
+  });
+  expect(secondLotResponse.status()).toBe(201);
 
   await page.goto("/stock");
-  await page
-    .getByLabel("Search lots by product name, SKU, or batch ID")
-    .fill("SYN-SEARCH-BATCH-31");
+  const lotSearch = page.getByLabel(
+    "Search lots by product name, SKU, or batch ID",
+  );
+  await lotSearch.fill("Searchable Product");
   const lotRow = page
     .locator(".stock-lots-card .inventory-table tbody tr")
     .filter({ hasText: "SYN-SEARCH-BATCH-31" });
   await expect(lotRow).toContainText("Synthetic Searchable Lot Product");
   await expect(
-    page.getByRole("status").filter({ hasText: "Showing 1 of 1 lots" }),
+    page.getByRole("status").filter({ hasText: "Showing 1 of 2 lots" }),
+  ).toBeVisible();
+  await lotSearch.fill("SYN-SEARCH-BATCH-31");
+  await expect(lotRow).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Showing 1 of 2 lots" }),
   ).toBeVisible();
   await lotRow.getByRole("button", { name: "Edit lot" }).click();
   await expect(page.getByLabel("Physical quantity")).toHaveValue("4");

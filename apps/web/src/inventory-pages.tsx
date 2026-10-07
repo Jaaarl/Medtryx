@@ -104,6 +104,13 @@ function lotStatusPresentation(
   return { label: "Saleable", className: "is-saleable" };
 }
 
+function normalizeLotSearch(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 type StockEvent = {
   id: string;
   productId: string;
@@ -1637,10 +1644,17 @@ export function StockPage() {
   const selectedLots = lots.filter(
     (lot) => lot.productId === selectedId && lot.quantity > 0,
   );
+  const lotSearchTerms = normalizeLotSearch(lotQuery)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
   const visibleLots = lots.filter((lot) => {
-    const searchText =
-      `${lot.productName} ${lot.sku} ${lot.lotCode} ${lot.expiryDate}`.toLowerCase();
-    return searchText.includes(lotQuery.trim().toLowerCase());
+    const fields = [lot.productName, lot.sku, lot.lotCode, lot.expiryDate].map(
+      normalizeLotSearch,
+    );
+    return lotSearchTerms.every((term) =>
+      fields.some((field) => field.includes(term)),
+    );
   });
 
   function selectStockSort(key: string) {
