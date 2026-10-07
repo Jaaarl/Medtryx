@@ -421,6 +421,24 @@ const adjustmentSchema = z
     }
   });
 
+const lotEditSchema = z
+  .object({
+    quantity: z.number().int().min(0).max(MAX_QUANTITY),
+    sellingPrice: moneySchema,
+    expiryDate: expiryDateSchema,
+    reason: reasonSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (parseMoney(value.sellingPrice) <= 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["sellingPrice"],
+        message: "selling_price_must_be_positive",
+      });
+    }
+  });
+
 type TaxClass = z.infer<typeof taxClassSchema>;
 type ProductRow = {
   id: string;
@@ -1694,7 +1712,8 @@ export function registerInventoryRoutes(
     const products = db
       .prepare(
         `SELECT id, sku, name, tracks_lots, quantity_on_hand,
-                inventory_value_centavos FROM products WHERE tracks_lots = 1
+                inventory_value_centavos, selling_price_centavos
+         FROM products WHERE tracks_lots = 1
          ORDER BY name COLLATE NOCASE`,
       )
       .all() as Array<{
@@ -1704,12 +1723,14 @@ export function registerInventoryRoutes(
       tracks_lots: number;
       quantity_on_hand: number;
       inventory_value_centavos: number;
+      selling_price_centavos: number;
     }>;
     const lots = products.flatMap((product) =>
       getLotBalances(db, product.id, today).map((lot) => ({
         ...lot,
         sku: product.sku,
         productName: product.name,
+        sellingPrice: money(product.selling_price_centavos),
         alert:
           lot.quantity <= 0
             ? null
@@ -1915,6 +1936,183 @@ export function registerInventoryRoutes(
           return id;
         })();
         res.status(201).json({ reconciliationId, reconciliation: "recorded" });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
+
+  router.patch(
+    "/stock/lots/:id",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const lotId = z.uuid().safeParse(req.params.id);
+      const parsed = lotEditSchema.safeParse(req.body);
+      if (!lotId.success || !parsed.success || !req.user)
+        return bodyValidation(res);
+      try {
+        const result = db.transaction(() => {
+          const lot = db
+            .prepare(
+              `SELECT l.id, l.product_id, l.lot_code, l.expiry_date,
+                      p.sku, p.tracks_lots, p.quantity_on_hand,
+                      p.inventory_value_centavos, p.selling_price_centavos
+               FROM inventory_lots l JOIN products p ON p.id = l.product_id
+               WHERE l.id = ?`,
+            )
+            .get(lotId.data) as
+            | {
+                id: string;
+                product_id: string;
+                lot_code: string;
+                expiry_date: string;
+                sku: string;
+                tracks_lots: number;
+                quantity_on_hand: number;
+                inventory_value_centavos: number;
+                selling_price_centavos: number;
+              }
+            | undefined;
+          if (!lot) throw new InventoryError(404, "lot_not_found");
+          if (lot.tracks_lots !== 1)
+            throw new InventoryError(409, "product_does_not_track_lots");
+          const balance = getLotBalances(db, lot.product_id).find(
+            (entry) => entry.id === lot.id,
+          );
+          if (!balance) throw new InventoryError(404, "lot_not_found");
+
+          const priceCents = parseMoney(parsed.data.sellingPrice);
+          const quantityDelta = parsed.data.quantity - balance.quantity;
+          const nextQuantity = lot.quantity_on_hand + quantityDelta;
+          if (nextQuantity < 0 || nextQuantity > MAX_QUANTITY)
+            throw new InventoryError(409, "invalid_inventory_adjustment");
+          if (
+            quantityDelta > 0 &&
+            parsed.data.expiryDate < manilaCalendarDate()
+          ) {
+            throw new InventoryError(409, "expired_lot_not_allowed");
+          }
+
+          const conflictingLot = db
+            .prepare(
+              `SELECT 1 FROM inventory_lots
+               WHERE product_id = ? AND lot_code = ? AND expiry_date = ? AND id <> ?`,
+            )
+            .get(lot.product_id, lot.lot_code, parsed.data.expiryDate, lot.id);
+          if (conflictingLot)
+            throw new InventoryError(409, "lot_expiry_conflict");
+
+          let valueDelta = 0;
+          let unitCostCents: number | null = null;
+          if (quantityDelta > 0) {
+            unitCostCents =
+              lot.quantity_on_hand === 0
+                ? 0
+                : roundedInteger(
+                    new Decimal(lot.inventory_value_centavos).div(
+                      lot.quantity_on_hand,
+                    ),
+                  );
+            valueDelta = roundedInteger(
+              new Decimal(unitCostCents).mul(quantityDelta),
+            );
+          } else if (quantityDelta < 0) {
+            const removedQuantity = Math.abs(quantityDelta);
+            if (removedQuantity > lot.quantity_on_hand)
+              throw new InventoryError(409, "insufficient_stock");
+            const removedValue = roundedInteger(
+              removedQuantity === lot.quantity_on_hand
+                ? new Decimal(lot.inventory_value_centavos)
+                : new Decimal(lot.inventory_value_centavos)
+                    .mul(removedQuantity)
+                    .div(lot.quantity_on_hand),
+            );
+            unitCostCents = roundedInteger(
+              new Decimal(removedValue).div(removedQuantity),
+            );
+            valueDelta = -removedValue;
+          }
+          const nextValue = lot.inventory_value_centavos + valueDelta;
+          if (nextValue < 0 || !Number.isSafeInteger(nextValue))
+            throw new InventoryError(409, "invalid_inventory_adjustment");
+
+          const now = new Date().toISOString();
+          if (quantityDelta !== 0) {
+            const reason = `COUNT_CORRECTION: ${parsed.data.reason}`;
+            const stockEventId = writeStockEvent(db, {
+              productId: lot.product_id,
+              type: "ADJUSTMENT",
+              quantityDelta,
+              unitCostCents,
+              inventoryValueDeltaCents: valueDelta,
+              reference: lot.lot_code,
+              reason,
+              actorUserId: req.user!.id,
+              createdAt: now,
+            });
+            writeLotMovement(db, {
+              productId: lot.product_id,
+              lotId: lot.id,
+              type: "ADJUSTMENT",
+              stockEventId,
+              quantityDelta,
+              inventoryValueDeltaCentavos: valueDelta,
+              unitCostCentavos: unitCostCents,
+              reason,
+              actorUserId: req.user!.id,
+              createdAt: now,
+            });
+          }
+
+          const priceChanged = priceCents !== lot.selling_price_centavos;
+          const expiryChanged = parsed.data.expiryDate !== lot.expiry_date;
+          if (quantityDelta !== 0 || priceChanged || expiryChanged) {
+            db.prepare(
+              `UPDATE products
+               SET quantity_on_hand = ?, inventory_value_centavos = ?,
+                   selling_price_centavos = ?, updated_at = ?
+               WHERE id = ?`,
+            ).run(nextQuantity, nextValue, priceCents, now, lot.product_id);
+            if (expiryChanged) {
+              db.prepare(
+                "UPDATE inventory_lots SET expiry_date = ? WHERE id = ?",
+              ).run(parsed.data.expiryDate, lot.id);
+            }
+            writeAuditEvent(db, {
+              actorUserId: req.user!.id,
+              action: "stock.lot_details_updated",
+              entityType: "inventory_lot",
+              entityId: lot.id,
+              details: {
+                sku: lot.sku,
+                lotCode: lot.lot_code,
+                reason: parsed.data.reason,
+                old: {
+                  expiryDate: lot.expiry_date,
+                  quantity: balance.quantity,
+                  sellingPrice: money(lot.selling_price_centavos),
+                },
+                new: {
+                  expiryDate: parsed.data.expiryDate,
+                  quantity: parsed.data.quantity,
+                  sellingPrice: money(priceCents),
+                },
+                quantityDelta,
+                inventoryValueDeltaCentavos: valueDelta,
+                at: now,
+              },
+            });
+          }
+          return {
+            lotId: lot.id,
+            expiryDate: parsed.data.expiryDate,
+            quantity: parsed.data.quantity,
+            sellingPrice: money(priceCents),
+          };
+        })();
+        res.json(result);
       } catch (error) {
         if (!handleInventoryError(error, res)) throw error;
       }

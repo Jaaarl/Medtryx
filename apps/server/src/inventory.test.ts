@@ -577,6 +577,118 @@ describe("owner catalog and stock operations", () => {
     });
   });
 
+  it("lets owners edit a lot quantity and product selling price with ledger and audit records", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const initialExpiry = manilaDayAfter(30);
+    const updatedExpiry = manilaDayAfter(45);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-LOT-DETAIL-EDIT",
+      tracksLots: true,
+      openingLotCode: "SYN-LOT-DETAIL-BATCH",
+      openingExpiryDate: initialExpiry,
+    });
+    expect(created.status).toBe(201);
+    activeProductId = created.body.product.id as string;
+    const lot = (await owner.get("/api/stock/lots")).body.lots[0] as {
+      id: string;
+      quantity: number;
+      sellingPrice: string;
+    };
+    expect(lot).toMatchObject({ quantity: 10, sellingPrice: "70.00" });
+
+    const cashier = await signIn(
+      "cashier.inventory@example.test",
+      cashierPassword,
+    );
+    const cashierToken = await csrfFor(cashier);
+    const denied = await cashier
+      .patch(`/api/stock/lots/${lot.id}`)
+      .set("x-csrf-token", cashierToken)
+      .send({
+        quantity: 7,
+        sellingPrice: "75.00",
+        expiryDate: updatedExpiry,
+        reason: "Synthetic unauthorized lot edit",
+      });
+    expect(denied.status).toBe(403);
+
+    const ownerToken = await csrfFor(owner);
+    const reduced = await owner
+      .patch(`/api/stock/lots/${lot.id}`)
+      .set("x-csrf-token", ownerToken)
+      .send({
+        quantity: 7,
+        sellingPrice: "75.00",
+        expiryDate: updatedExpiry,
+        reason: "Corrected physical batch count and shelf price",
+      });
+    expect(reduced.status, JSON.stringify(reduced.body)).toBe(200);
+    expect(reduced.body).toEqual({
+      lotId: lot.id,
+      expiryDate: updatedExpiry,
+      quantity: 7,
+      sellingPrice: "75.00",
+    });
+    expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
+      id: activeProductId,
+      quantityOnHand: 7,
+      inventoryValue: "280.00",
+      sellingPrice: "75.00",
+    });
+
+    const increased = await owner
+      .patch(`/api/stock/lots/${lot.id}`)
+      .set("x-csrf-token", ownerToken)
+      .send({
+        quantity: 9,
+        sellingPrice: "75.00",
+        expiryDate: updatedExpiry,
+        reason: "Verified two additional units on the shelf",
+      });
+    expect(increased.status, JSON.stringify(increased.body)).toBe(200);
+    expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
+      id: activeProductId,
+      quantityOnHand: 9,
+      inventoryValue: "360.00",
+      sellingPrice: "75.00",
+    });
+    expect((await owner.get("/api/stock/lots")).body.lots[0]).toMatchObject({
+      id: lot.id,
+      quantity: 9,
+      expiryDate: updatedExpiry,
+      sellingPrice: "75.00",
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT sum(quantity_delta) AS quantity,
+                  sum(inventory_value_delta_centavos) AS value
+           FROM lot_stock_movements WHERE product_id = ? AND lot_id = ?`,
+        )
+        .get(activeProductId, lot.id),
+    ).toEqual({ quantity: 9, value: 36_000 });
+    expect(
+      (await owner.get(`/api/stock/events?productId=${activeProductId}`)).body
+        .events[0],
+    ).toMatchObject({
+      type: "ADJUSTMENT",
+      quantityDelta: 2,
+      inventoryValueDelta: "80.00",
+      reason: "COUNT_CORRECTION: Verified two additional units on the shelf",
+    });
+    expect(
+      (await owner.get("/api/audit?limit=20")).body.events[0],
+    ).toMatchObject({
+      action: "stock.lot_details_updated",
+      entityId: lot.id,
+      details: {
+        reason: "Verified two additional units on the shelf",
+        old: expect.objectContaining({ quantity: 7, sellingPrice: "75.00" }),
+        new: expect.objectContaining({ quantity: 9, sellingPrice: "75.00" }),
+      },
+    });
+  });
+
   it("creates opening inventory with a unique SKU and records exact centavo value", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const created = await createOpeningProduct(owner);

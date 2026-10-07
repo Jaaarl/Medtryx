@@ -85,6 +85,7 @@ type InventoryLot = {
   saleableQuantity: number;
   sku: string;
   productName: string;
+  sellingPrice: string;
   alert: "EXPIRED" | "NEAR_EXPIRY" | null;
 };
 
@@ -251,6 +252,9 @@ function errorMessage(error: unknown): string {
       "Choose Basic Necessity or Prime Commodity for this BNPC-eligible product.",
     insufficient_stock:
       "The requested change exceeds available stock. Refresh and review the cart.",
+    invalid_inventory_adjustment:
+      "That quantity would make the stock value invalid. Refresh and check the current stock.",
+    selling_price_must_be_positive: "Enter a selling price greater than zero.",
     customer_encryption_unavailable:
       "Customer ID encryption is not configured for this environment.",
     variance_reason_required:
@@ -1532,11 +1536,12 @@ export function StockPage() {
   const [reconcileReason, setReconcileReason] = useState("");
   const [physicalCountConfirmed, setPhysicalCountConfirmed] = useState(false);
   const [lotStatusReason, setLotStatusReason] = useState("");
-  const [editingExpiryLotId, setEditingExpiryLotId] = useState<string | null>(
-    null,
-  );
+  const [lotQuery, setLotQuery] = useState("");
+  const [editingLotId, setEditingLotId] = useState<string | null>(null);
+  const [lotQuantityInput, setLotQuantityInput] = useState("");
+  const [lotSellingPriceInput, setLotSellingPriceInput] = useState("");
   const [expiryDateInput, setExpiryDateInput] = useState("");
-  const [expiryEditReason, setExpiryEditReason] = useState("");
+  const [lotEditReason, setLotEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
   const filteredProducts = lowOnly
     ? products.filter(
@@ -1564,6 +1569,11 @@ export function StockPage() {
   const selectedLots = lots.filter(
     (lot) => lot.productId === selectedId && lot.quantity > 0,
   );
+  const visibleLots = lots.filter((lot) => {
+    const searchText =
+      `${lot.productName} ${lot.sku} ${lot.lotCode} ${lot.expiryDate}`.toLowerCase();
+    return searchText.includes(lotQuery.trim().toLowerCase());
+  });
 
   function selectStockSort(key: string) {
     setStockSort((current) => ({
@@ -1809,7 +1819,7 @@ export function StockPage() {
     }
   }
 
-  async function saveLotExpiry(
+  async function saveLotEdit(
     event: FormEvent<HTMLFormElement>,
     lot: InventoryLot,
   ) {
@@ -1818,14 +1828,16 @@ export function StockPage() {
     setError("");
     setNotice("");
     try {
-      await api.patch(`/stock/lots/${lot.id}/expiry`, {
+      await api.patch(`/stock/lots/${lot.id}`, {
+        quantity: Number(lotQuantityInput),
+        sellingPrice: lotSellingPriceInput,
         expiryDate: expiryDateInput,
-        reason: expiryEditReason.trim(),
+        reason: lotEditReason.trim(),
       });
-      await refreshLots();
-      setEditingExpiryLotId(null);
-      setExpiryEditReason("");
-      setNotice("Expiry date updated.");
+      await Promise.all([refreshLots(), refreshProducts(), refreshEvents()]);
+      setEditingLotId(null);
+      setLotEditReason("");
+      setNotice("Lot details updated.");
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -2304,6 +2316,19 @@ export function StockPage() {
             {lots.filter((lot) => lot.alert !== null).length} expiry alerts
           </span>
         </div>
+        <div className="inventory-search-row lot-search-row">
+          <Search size={16} />
+          <input
+            className="text-input"
+            aria-label="Search lots by product name, SKU, or batch ID"
+            placeholder="Search product name, SKU, or batch ID"
+            value={lotQuery}
+            onChange={(event) => setLotQuery(event.target.value)}
+          />
+        </div>
+        <p className="lot-search-count" role="status">
+          Showing {visibleLots.length} of {lots.length} lots
+        </p>
         <form
           className="stock-horizon-form"
           onSubmit={(event) => void saveExpiryWarning(event)}
@@ -2341,13 +2366,14 @@ export function StockPage() {
                 <th>EXPIRY</th>
                 <th>PHYSICAL</th>
                 <th>SALEABLE</th>
+                <th>SELL PRICE</th>
                 <th>STATUS</th>
                 <th>CONTROL</th>
               </tr>
             </thead>
             <tbody>
-              {lots.length ? (
-                lots.map((lot) => (
+              {visibleLots.length ? (
+                visibleLots.map((lot) => (
                   <tr key={lot.id}>
                     <td>
                       <strong>{lot.productName}</strong>
@@ -2358,6 +2384,7 @@ export function StockPage() {
                     <td>{lot.expiryDate}</td>
                     <td>{lot.quantity}</td>
                     <td>{lot.saleableQuantity}</td>
+                    <td>₱{lot.sellingPrice}</td>
                     <td>
                       <span
                         className={`stock-lot-status ${lotStatusPresentation(lot).className}`}
@@ -2380,29 +2407,66 @@ export function StockPage() {
                           type="button"
                           disabled={saving}
                           onClick={() => {
-                            if (editingExpiryLotId === lot.id) {
-                              setEditingExpiryLotId(null);
-                              setExpiryEditReason("");
+                            if (editingLotId === lot.id) {
+                              setEditingLotId(null);
+                              setLotEditReason("");
                               return;
                             }
-                            setEditingExpiryLotId(lot.id);
+                            setEditingLotId(lot.id);
+                            setLotQuantityInput(String(lot.quantity));
+                            setLotSellingPriceInput(lot.sellingPrice);
                             setExpiryDateInput(lot.expiryDate);
-                            setExpiryEditReason("");
+                            setLotEditReason("");
                           }}
                         >
-                          {editingExpiryLotId === lot.id
-                            ? "Cancel edit"
-                            : "Edit expiry"}
+                          {editingLotId === lot.id ? "Cancel edit" : "Edit lot"}
                         </button>
                       </div>
-                      {editingExpiryLotId === lot.id && (
+                      {editingLotId === lot.id && (
                         <form
-                          className="stock-lot-expiry-editor"
-                          onSubmit={(event) => void saveLotExpiry(event, lot)}
+                          className="stock-lot-editor"
+                          onSubmit={(event) => void saveLotEdit(event, lot)}
                         >
                           <Field
+                            id={`lot-quantity-${lot.id}`}
+                            label="Physical quantity"
+                          >
+                            <input
+                              id={`lot-quantity-${lot.id}`}
+                              className="text-input"
+                              type="number"
+                              min="0"
+                              max="1000000"
+                              step="1"
+                              value={lotQuantityInput}
+                              onChange={(event) =>
+                                setLotQuantityInput(event.target.value)
+                              }
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-price-${lot.id}`}
+                            label="Product selling price (₱)"
+                          >
+                            <input
+                              id={`lot-price-${lot.id}`}
+                              className="text-input"
+                              inputMode="decimal"
+                              value={lotSellingPriceInput}
+                              onChange={(event) =>
+                                setLotSellingPriceInput(event.target.value)
+                              }
+                              pattern="[0-9]+(\.[0-9]{1,2})?"
+                              required
+                            />
+                            <small className="field-hint">
+                              Applies to every batch of this product.
+                            </small>
+                          </Field>
+                          <Field
                             id={`lot-expiry-date-${lot.id}`}
-                            label="New expiry date"
+                            label="Expiry date"
                           >
                             <input
                               id={`lot-expiry-date-${lot.id}`}
@@ -2417,14 +2481,14 @@ export function StockPage() {
                           </Field>
                           <Field
                             id={`lot-expiry-reason-${lot.id}`}
-                            label="Reason for correction"
+                            label="Reason for lot correction"
                           >
                             <input
                               id={`lot-expiry-reason-${lot.id}`}
                               className="text-input"
-                              value={expiryEditReason}
+                              value={lotEditReason}
                               onChange={(event) =>
-                                setExpiryEditReason(event.target.value)
+                                setLotEditReason(event.target.value)
                               }
                               minLength={3}
                               maxLength={500}
@@ -2436,7 +2500,7 @@ export function StockPage() {
                             type="submit"
                             disabled={saving}
                           >
-                            {saving ? "Saving…" : "Save expiry date"}
+                            {saving ? "Saving…" : "Save lot details"}
                           </button>
                         </form>
                       )}
@@ -2445,8 +2509,10 @@ export function StockPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6} className="table-loading">
-                    No lots recorded for tracked products.
+                  <td colSpan={7} className="table-loading">
+                    {lotQuery
+                      ? "No lots match this search."
+                      : "No lots recorded for tracked products."}
                   </td>
                 </tr>
               )}
