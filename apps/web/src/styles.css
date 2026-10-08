@@ -2138,6 +2138,9 @@ a {
   color: #35574c;
   font-size: 11px;
 }
+.product-description {
+  text-transform: uppercase;
+}
 .catalog-product-copy small,
 .catalog-product-copy span {
   color: #8a9a92;

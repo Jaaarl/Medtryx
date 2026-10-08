@@ -177,6 +177,139 @@ describe("owner catalog and stock operations", () => {
     ).toEqual({ count: 1 });
   });
 
+  it("exports a formula-safe CSV for editing existing product records", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-EXPORT",
+      name: "=Synthetic Formula Product",
+    });
+    expect(created.status).toBe(201);
+
+    const exported = await owner.get("/api/products/export-csv");
+    expect(exported.status).toBe(200);
+    expect(exported.headers["content-type"]).toContain("text/csv");
+    expect(exported.headers["content-disposition"]).toContain(
+      'filename="products.csv"',
+    );
+    expect(exported.text).toContain("quantityonhand");
+    expect(exported.text).toContain("weightedaverageunitcost");
+    expect(exported.text).toContain("estimatedunitgrossprofit");
+    expect(exported.text).toContain("'=Synthetic Formula Product");
+
+    const token = await csrfFor(owner);
+    const roundTrip = await owner
+      .post("/api/products/update-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send(exported.text);
+    expect(roundTrip.status, JSON.stringify(roundTrip.body)).toBe(200);
+    const product = await owner.get("/api/products?q=SYN-CSV-EXPORT");
+    expect(product.body.products[0].name).toBe("=Synthetic Formula Product");
+
+    const cashier = await signIn(
+      "cashier.inventory@example.test",
+      cashierPassword,
+    );
+    expect((await cashier.get("/api/products/export-csv")).status).toBe(403);
+  });
+
+  it("updates existing products from the exported CSV without changing stock history", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-UPDATE",
+    });
+    expect(created.status).toBe(201);
+
+    const exported = await owner.get("/api/products/export-csv");
+    const csvLines = exported.text.trim().split(/\r?\n/u);
+    const productLine = csvLines.find((line) =>
+      line.startsWith('"SYN-CSV-UPDATE"'),
+    );
+    expect(productLine).toBeDefined();
+    if (!productLine) throw new Error("Exported product row was not found.");
+    const editedProductLine = productLine
+      .replace(
+        '"Synthetic Paracetamol Tablet"',
+        '"Updated, ""Synthetic"" Product"',
+      )
+      .replace('"70.00"', '"75.50"')
+      .replace('"BRANDED"', '"GENERIC"')
+      .replace(',"true","true","false",', ',"false","true","false",');
+    const token = await csrfFor(owner);
+    const updated = await owner
+      .post("/api/products/update-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send(`${csvLines[0]}\r\n${editedProductLine}`);
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body).toMatchObject({
+      updatedCount: 1,
+      products: [{ sku: "SYN-CSV-UPDATE" }],
+    });
+
+    const product = await owner.get("/api/products?q=SYN-CSV-UPDATE");
+    expect(product.body.products[0]).toMatchObject({
+      name: 'Updated, "Synthetic" Product',
+      sellingPrice: "75.50",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: true,
+      quantityOnHand: 10,
+      saleableQuantity: 10,
+      latestAcquisitionCost: "40.00",
+      inventoryValue: "400.00",
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM stock_events").get(),
+    ).toEqual({ count: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT action FROM audit_events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .get(created.body.product.id as string),
+    ).toEqual({ action: "product.updated" });
+  });
+
+  it("validates every product update row before saving any changes", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-ATOMIC",
+    });
+    expect(created.status).toBe(201);
+    const exported = await owner.get("/api/products/export-csv");
+    const csvLines = exported.text.trim().split(/\r?\n/u);
+    const productLine = csvLines.find((line) =>
+      line.startsWith('"SYN-CSV-ATOMIC"'),
+    );
+    expect(productLine).toBeDefined();
+    if (!productLine) throw new Error("Exported product row was not found.");
+    const wouldUpdate = productLine.replace(
+      '"Synthetic Paracetamol Tablet"',
+      '"Should Not Be Saved"',
+    );
+    const missingSku = productLine.replace(
+      '"SYN-CSV-ATOMIC"',
+      '"SYN-CSV-MISSING"',
+    );
+    const token = await csrfFor(owner);
+    const rejected = await owner
+      .post("/api/products/update-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send(`${csvLines[0]}\r\n${wouldUpdate}\r\n${missingSku}`);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toBe("csv_import_invalid");
+    expect(rejected.body.rowErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: "SKU does not exist." }),
+      ]),
+    );
+    const product = await owner.get("/api/products?q=SYN-CSV-ATOMIC");
+    expect(product.body.products[0].name).toBe("Synthetic Paracetamol Tablet");
+    expect(product.body.products[0].sellingPrice).toBe("70.00");
+  });
+
   it("imports receipts for existing products and preserves lot, cost, and atomicity", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const tracked = await createOpeningProduct(owner, {

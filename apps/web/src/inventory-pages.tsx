@@ -286,13 +286,6 @@ function errorMessage(error: unknown): string {
   );
 }
 
-function productTypeLabel(productType: Product["productType"]): string {
-  if (productType === null) return "Unclassified";
-  if (productType === "GENERIC") return "Generic";
-  if (productType === "BRANDED") return "Branded";
-  return "N/A";
-}
-
 function Field({
   label,
   id,
@@ -544,6 +537,14 @@ function ProductCsvImportPanel({
             <ArrowDownToLine size={14} />
             Download new products CSV sample
           </a>
+          <a
+            className="text-action csv-template-download"
+            href="/api/products/export-csv"
+            download="products.csv"
+          >
+            <ArrowDownToLine size={14} />
+            Export product data CSV
+          </a>
         </div>
       </div>
       {error && (
@@ -578,6 +579,126 @@ function ProductCsvImportPanel({
           disabled={saving || !file}
         >
           {saving ? "Importing products…" : "Import products"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function ProductCsvUpdatePanel({
+  onUpdated,
+}: {
+  onUpdated: () => Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function updateCsv(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file) return;
+    if (file.size > 200_000) {
+      setError("Choose a CSV file that is 200 KB or smaller.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.postCsv<{ updatedCount: number }>(
+        "/products/update-csv",
+        await file.text(),
+      );
+      setNotice(
+        `Updated ${result.updatedCount} product${result.updatedCount === 1 ? "" : "s"}.`,
+      );
+      setFile(null);
+      if (inputRef.current) inputRef.current.value = "";
+      await onUpdated().catch(() => {
+        setError("Products updated, but the catalog could not be refreshed.");
+      });
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.code === "csv_import_invalid") {
+        const rowErrors = caught.responseBody?.rowErrors;
+        const details = Array.isArray(rowErrors)
+          ? rowErrors
+              .map((item) => {
+                if (typeof item !== "object" || item === null) return "";
+                const row = "row" in item ? item.row : "?";
+                const message =
+                  "message" in item ? item.message : "Invalid row.";
+                return `Row ${String(row)}: ${String(message)}`;
+              })
+              .filter(Boolean)
+              .join(" ")
+          : "";
+        setError(
+          details
+            ? `No products were updated. ${details}`
+            : "The CSV headers or rows are invalid. No products were updated.",
+        );
+      } else if (
+        caught instanceof ApiError &&
+        caught.code === "zero_rated_not_approved"
+      ) {
+        setError(
+          "Zero-rated products are unavailable until tax settings are approved. No products were updated.",
+        );
+      } else {
+        setError("The CSV update failed. No products were updated.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-main-card csv-import-card">
+      <div className="card-heading">
+        <div>
+          <h2>Update products from CSV</h2>
+          <p>
+            Export the catalog, edit product details, then upload the CSV. Every
+            row is checked before changes are saved. Stock quantities, costs,
+            and gross-profit estimates are read-only; use Stock to record
+            inventory changes.
+          </p>
+        </div>
+      </div>
+      {error && (
+        <div className="banner banner-error" role="alert">
+          {error}
+        </div>
+      )}
+      {notice && (
+        <div className="banner banner-success" role="status">
+          {notice}
+        </div>
+      )}
+      <form
+        className="csv-import-form"
+        onSubmit={(event) => void updateCsv(event)}
+      >
+        <Field id="product-update-csv-file" label="Product update CSV file">
+          <input
+            ref={inputRef}
+            id="product-update-csv-file"
+            className="text-input"
+            type="file"
+            accept=".csv,text/csv"
+            required
+            disabled={saving}
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+        </Field>
+        <button
+          className="button button-secondary"
+          type="submit"
+          disabled={saving || !file}
+        >
+          {saving ? "Updating products…" : "Update products"}
         </button>
       </form>
     </section>
@@ -993,7 +1114,7 @@ export function ProductsPage() {
       <PageHeading
         eyebrow="OWNER CATALOG"
         title="Products"
-        description="Maintain selling prices, classifications, and starting inventory for each SKU."
+        description="Maintain product details, pricing, and starting inventory for each SKU."
       />
       {(error || notice) && (
         <div
@@ -1004,6 +1125,7 @@ export function ProductsPage() {
         </div>
       )}
       <ProductCsvImportPanel onImported={refresh} />
+      <ProductCsvUpdatePanel onUpdated={refresh} />
       <div className="inventory-layout product-workspace">
         <section className="settings-main-card product-list-card">
           <div className="card-heading inventory-card-heading">
@@ -1127,10 +1249,11 @@ export function ProductsPage() {
                   pageProducts.map((product) => (
                     <tr key={product.id}>
                       <td>
-                        <strong>{product.name}</strong>
+                        <strong className="product-description">
+                          {product.name}
+                        </strong>
                         <small>
                           {product.sku}
-                          {` · ${productTypeLabel(product.productType)}`}
                           {product.barcode
                             ? ` · ${product.barcode}`
                             : ""} ·{" "}
@@ -1654,9 +1777,10 @@ export function StockPage() {
       : null;
   const stockSearch = stockQuery.trim().toLowerCase();
   const filteredProducts = products.filter((product) => {
-    const matchesQuery = `${product.name} ${product.sku} ${product.barcode ?? ""}`
-      .toLowerCase()
-      .includes(stockSearch);
+    const matchesQuery =
+      `${product.name} ${product.sku} ${product.barcode ?? ""}`
+        .toLowerCase()
+        .includes(stockSearch);
     const isLowStock =
       product.reorderLevel !== null &&
       product.quantityOnHand <= product.reorderLevel;
@@ -1928,10 +2052,7 @@ export function StockPage() {
         unitCost: costCorrectionInput,
         reason: costCorrectionReason.trim(),
       });
-      await Promise.all([
-        refreshProducts(),
-        refreshEvents(selected.id),
-      ]);
+      await Promise.all([refreshProducts(), refreshEvents(selected.id)]);
       setNotice(
         `Average acquisition cost corrected for ${selected.name}. Past sales and receipt records were left unchanged.`,
       );
@@ -2165,7 +2286,9 @@ export function StockPage() {
                       onClick={() => setSelectedId(product.id)}
                     >
                       <td>
-                        <strong>{product.name}</strong>
+                        <strong className="product-description">
+                          {product.name}
+                        </strong>
                         <small>
                           {product.sku} · {product.unit}
                         </small>
@@ -2212,8 +2335,8 @@ export function StockPage() {
                       {stockQuery.trim()
                         ? "No matching products."
                         : lowOnly
-                        ? "No products are below their reorder level."
-                        : "Create a product before receiving stock."}
+                          ? "No products are below their reorder level."
+                          : "Create a product before receiving stock."}
                     </td>
                   </tr>
                 )}
@@ -2271,7 +2394,9 @@ export function StockPage() {
                 onSubmit={(event) => void receive(event)}
               >
                 <div className="selected-product-strip">
-                  <strong>{selected.name}</strong>
+                  <strong className="product-description">
+                    {selected.name}
+                  </strong>
                   <span>
                     {selected.sku} · on hand {selected.quantityOnHand}
                   </span>
@@ -2395,10 +2520,13 @@ export function StockPage() {
                 onSubmit={(event) => void correctAcquisitionCost(event)}
               >
                 <div className="selected-product-strip">
-                  <strong>{selected.name}</strong>
+                  <strong className="product-description">
+                    {selected.name}
+                  </strong>
                   <span>
-                    {selected.sku} · {selected.quantityOnHand} {selected.unit} on
-                    hand · current average ₱{selected.weightedAverageUnitCost}
+                    {selected.sku} · {selected.quantityOnHand} {selected.unit}{" "}
+                    on hand · current average ₱
+                    {selected.weightedAverageUnitCost}
                   </span>
                 </div>
                 <Field
@@ -2424,7 +2552,8 @@ export function StockPage() {
                     {formatCents(
                       correctedInventoryValueCents -
                         centsFromMoney(selected.inventoryValue),
-                    )}.
+                    )}
+                    .
                   </small>
                 )}
                 <Field
@@ -2471,7 +2600,9 @@ export function StockPage() {
                 onSubmit={(event) => void adjust(event)}
               >
                 <div className="selected-product-strip">
-                  <strong>{selected.name}</strong>
+                  <strong className="product-description">
+                    {selected.name}
+                  </strong>
                   <span>Selected for adjustment</span>
                 </div>
                 <Field
@@ -2724,7 +2855,9 @@ export function StockPage() {
                 pageLots.map((lot) => (
                   <tr key={lot.id}>
                     <td>
-                      <strong>{lot.productName}</strong>
+                      <strong className="product-description">
+                        {lot.productName}
+                      </strong>
                       <small>
                         {lot.sku} · batch {lot.lotCode}
                       </small>
@@ -4198,19 +4331,16 @@ export function CheckoutPage() {
               products.map((product) => (
                 <div className="catalog-result" key={product.id}>
                   <div className="catalog-product-copy">
-                    <strong>{product.name}</strong>
+                    <strong className="product-description">
+                      {product.name}
+                    </strong>
                     <small>
                       {product.sku} · {product.unit}
-                      {` · ${productTypeLabel(product.productType)}`}
                       {product.barcode ? ` · ${product.barcode}` : ""}
                     </small>
                     <span>
                       ₱{product.sellingPrice} · {product.quantityAvailable}{" "}
                       available
-                      {product.tracksLots &&
-                        product.assignedLots.length > 0 && (
-                          <> · {product.assignedLots.length} saleable lot(s)</>
-                        )}
                     </span>
                   </div>
                   <button
@@ -4289,7 +4419,9 @@ export function CheckoutPage() {
                 {cart.map((line) => (
                   <div className="cart-line" key={line.product.id}>
                     <div>
-                      <strong>{line.product.name}</strong>
+                      <strong className="product-description">
+                        {line.product.name}
+                      </strong>
                       <small className="checkout-cart-price">
                         ₱{line.product.sellingPrice} × {line.quantity}
                       </small>

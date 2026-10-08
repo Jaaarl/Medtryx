@@ -426,6 +426,7 @@ describe("virtual bundle offers", () => {
         paymentMethod: "QR",
         requestKey: randomUUID(),
         customerName: "Synthetic Customer",
+        customerBirthday: "1970-01-01",
         customerIdType: "Synthetic ID",
         customerIdNumber: "SYNTHETIC-ID-ONLY",
         customerIdChecked: true,

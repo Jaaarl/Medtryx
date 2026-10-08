@@ -151,6 +151,34 @@ const PRODUCT_CSV_HEADERS = [
   "openingsupplier",
   "zerocostreason",
 ];
+const PRODUCT_UPDATE_CSV_HEADERS = [
+  "sku",
+  "name",
+  "barcode",
+  "unit",
+  "sellingprice",
+  "taxclass",
+  "producttype",
+  "issceligible",
+  "ispwdeligible",
+  "bnpceligible",
+  "bnpccategory",
+  "trackslots",
+  "reorderlevel",
+  "active",
+  "quantityonhand",
+  "saleablequantity",
+  "latestacquisitioncost",
+  "weightedaverageunitcost",
+  "inventoryvalue",
+  "unitpricespread",
+  "estimatedunitgrossprofit",
+  "grossprofitestimateapproved",
+];
+const PRODUCT_UPDATE_CSV_REQUIRED_HEADERS = PRODUCT_UPDATE_CSV_HEADERS.slice(
+  0,
+  14,
+);
 
 function parseCsvRows(
   source: unknown,
@@ -308,6 +336,34 @@ function csvBoolean(
   }
 }
 
+function csvRequiredBoolean(
+  value: string | undefined,
+  row: number,
+  field: string,
+  issues: CsvIssue[],
+): boolean {
+  if (!value) {
+    issues.push({
+      row,
+      message: `${field} is required and must be TRUE or FALSE.`,
+    });
+    return false;
+  }
+  return csvBoolean(value, false, row, field, issues);
+}
+
+function productCsvCell(value: string | number | boolean | null): string {
+  let normalized = value === null ? "" : String(value);
+  if (/^[\s\u0000-\u001f]*[=+\-@]/u.test(normalized)) {
+    normalized = `'${normalized}`;
+  }
+  return `"${normalized.replaceAll('"', '""')}"`;
+}
+
+function productCsvValue(value: string): string {
+  return /^'[\s\u0000-\u001f]*[=+\-@]/u.test(value) ? value.slice(1) : value;
+}
+
 const updateProductSchema = z
   .object({
     name: z.string().trim().min(1).max(160).optional(),
@@ -448,6 +504,7 @@ const stockCostCorrectionSchema = z
   .strict();
 
 type TaxClass = z.infer<typeof taxClassSchema>;
+type UpdateProductInput = z.infer<typeof updateProductSchema>;
 type ProductRow = {
   id: string;
   sku: string;
@@ -1188,6 +1245,264 @@ export function registerInventoryRoutes(
     });
   });
 
+  router.get("/products/export-csv", requireAuth, requireOwner, (_req, res) => {
+    const products = db
+      .prepare(`${baseProductSelect()} ORDER BY p.name COLLATE NOCASE, p.sku`)
+      .all() as ProductRow[];
+    const rows: Array<Array<string | number | boolean | null>> = [
+      PRODUCT_UPDATE_CSV_HEADERS,
+    ];
+    for (const row of products) {
+      const product = presentProduct(db, row);
+      rows.push([
+        product.sku,
+        product.name,
+        product.barcode,
+        product.unit,
+        product.sellingPrice,
+        product.taxClass,
+        product.productType,
+        product.isScEligible,
+        product.isPwdEligible,
+        product.isBnpcEligible,
+        product.bnpcCategory,
+        product.tracksLots,
+        product.reorderLevel,
+        product.active,
+        product.quantityOnHand,
+        product.saleableQuantity,
+        product.latestAcquisitionCost,
+        product.weightedAverageUnitCost,
+        product.inventoryValue,
+        product.unitPriceSpread,
+        product.estimatedUnitGrossProfit,
+        product.grossProfitEstimateApproved,
+      ]);
+    }
+    const csv = rows
+      .map((row) => row.map(productCsvCell).join(","))
+      .join("\r\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="products.csv"');
+    res.send(csv);
+  });
+
+  router.post(
+    "/products/update-csv",
+    requireAuth,
+    requireOwner,
+    csrf,
+    express.text({ type: "text/csv", limit: "256kb" }),
+    (req, res) => {
+      if (!req.user) {
+        res.status(401).json({ error: "authentication_required" });
+        return;
+      }
+      const document = parseCsvRows(
+        req.body,
+        PRODUCT_UPDATE_CSV_HEADERS,
+        PRODUCT_UPDATE_CSV_REQUIRED_HEADERS,
+      );
+      if (document.issues.length) {
+        res.status(400).json({
+          error: "csv_import_invalid",
+          rowErrors: document.issues,
+        });
+        return;
+      }
+
+      const rowErrors: CsvIssue[] = [];
+      const updates: Array<{
+        row: number;
+        sku: string;
+        current: ProductRow;
+        input: UpdateProductInput;
+      }> = [];
+      const seenSkus = new Set<string>();
+      const seenBarcodes = new Set<string>();
+      for (const row of document.rows) {
+        const values = row.values;
+        const sku = skuSchema.safeParse(values.sku);
+        if (!sku.success) {
+          rowErrors.push({ row: row.row, message: "SKU is invalid." });
+          continue;
+        }
+        const normalizedSku = sku.data.toUpperCase();
+        if (seenSkus.has(normalizedSku)) {
+          rowErrors.push({
+            row: row.row,
+            message: "SKU repeats in this file.",
+          });
+          continue;
+        }
+        seenSkus.add(normalizedSku);
+        const match = db
+          .prepare("SELECT id FROM products WHERE sku = ? COLLATE NOCASE")
+          .get(sku.data) as { id: string } | undefined;
+        const current = match ? findProduct(db, match.id) : undefined;
+        if (!current) {
+          rowErrors.push({ row: row.row, message: "SKU does not exist." });
+          continue;
+        }
+
+        const isScEligible = csvRequiredBoolean(
+          values.issceligible,
+          row.row,
+          "isScEligible",
+          rowErrors,
+        );
+        const isPwdEligible = csvRequiredBoolean(
+          values.ispwdeligible,
+          row.row,
+          "isPwdEligible",
+          rowErrors,
+        );
+        const bnpcEligible = csvRequiredBoolean(
+          values.bnpceligible,
+          row.row,
+          "bnpcEligible",
+          rowErrors,
+        );
+        const tracksLots = csvRequiredBoolean(
+          values.trackslots,
+          row.row,
+          "tracksLots",
+          rowErrors,
+        );
+        const active = csvRequiredBoolean(
+          values.active,
+          row.row,
+          "active",
+          rowErrors,
+        );
+        const candidate = {
+          name: productCsvValue(values.name ?? ""),
+          barcode: values.barcode ? productCsvValue(values.barcode) : null,
+          unit: productCsvValue(values.unit ?? ""),
+          sellingPrice: values.sellingprice ?? "",
+          taxClass: values.taxclass?.toUpperCase(),
+          ...(values.producttype
+            ? { productType: values.producttype.toUpperCase() }
+            : {}),
+          isScEligible,
+          isPwdEligible,
+          bnpcEligible,
+          bnpcCategory: values.bnpccategory
+            ? values.bnpccategory.toUpperCase()
+            : null,
+          tracksLots,
+          reorderLevel:
+            values.reorderlevel === "" || values.reorderlevel === undefined
+              ? null
+              : Number(values.reorderlevel),
+          active,
+        };
+        const parsed = updateProductSchema.safeParse(candidate);
+        if (!parsed.success) {
+          for (const issue of parsed.error.issues) {
+            rowErrors.push({
+              row: row.row,
+              message: `${issue.path.join(".") || "row"}: ${issue.message}`,
+            });
+          }
+          continue;
+        }
+        try {
+          productFromBody(db, parsed.data);
+          if (
+            parsed.data.sellingPrice !== undefined &&
+            parseMoney(parsed.data.sellingPrice) <= 0
+          ) {
+            throw new InventoryError(400, "selling_price_must_be_positive");
+          }
+        } catch (error) {
+          if (error instanceof InventoryError) {
+            rowErrors.push({ row: row.row, message: error.code });
+          } else {
+            throw error;
+          }
+        }
+        if (parsed.data.unit && parsed.data.unit !== current.unit) {
+          const history = db
+            .prepare("SELECT 1 FROM stock_events WHERE product_id = ? LIMIT 1")
+            .get(current.id);
+          if (current.quantity_on_hand > 0 || history) {
+            rowErrors.push({
+              row: row.row,
+              message: "unit_locked_after_stock_history",
+            });
+          }
+        }
+        if (parsed.data.tracksLots === false && current.tracks_lots === 1) {
+          const activeLot = db
+            .prepare(
+              `SELECT 1 FROM inventory_lots l
+               JOIN lot_stock_movements m ON m.lot_id = l.id
+               WHERE l.product_id = ? GROUP BY l.id
+               HAVING sum(m.quantity_delta) > 0 LIMIT 1`,
+            )
+            .get(current.id);
+          if (current.quantity_on_hand > 0 || activeLot) {
+            rowErrors.push({
+              row: row.row,
+              message: "active_lots_require_tracking",
+            });
+          }
+        }
+        if (parsed.data.barcode) {
+          const barcode = parsed.data.barcode.toLowerCase();
+          if (seenBarcodes.has(barcode)) {
+            rowErrors.push({
+              row: row.row,
+              message: "Barcode repeats in this file.",
+            });
+          } else {
+            const owner = db
+              .prepare(
+                "SELECT id FROM products WHERE barcode = ? COLLATE NOCASE",
+              )
+              .get(parsed.data.barcode) as { id: string } | undefined;
+            if (owner && owner.id !== current.id) {
+              rowErrors.push({
+                row: row.row,
+                message: "Barcode already exists.",
+              });
+            }
+          }
+          seenBarcodes.add(barcode);
+        }
+        updates.push({
+          row: row.row,
+          sku: current.sku,
+          current,
+          input: parsed.data,
+        });
+      }
+      if (rowErrors.length) {
+        res.status(400).json({ error: "csv_import_invalid", rowErrors });
+        return;
+      }
+
+      try {
+        const now = new Date().toISOString();
+        const updated = db.transaction(() =>
+          updates.map(({ current, input }) =>
+            applyProductUpdate(db, current, input, req.user!.id, now),
+          ),
+        )();
+        res.status(200).json({
+          updatedCount: updated.length,
+          products: updated.map((product) => ({
+            id: product.id,
+            sku: product.sku,
+          })),
+        });
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
+
   router.post(
     "/products/import-csv",
     requireAuth,
@@ -1524,192 +1839,18 @@ export function registerInventoryRoutes(
     const current = findProduct(db, id.data);
     if (!current) return res.status(404).json({ error: "product_not_found" });
     try {
-      productFromBody(db, parsed.data);
-      if (parsed.data.unit && parsed.data.unit !== current.unit) {
-        const history = db
-          .prepare("SELECT 1 FROM stock_events WHERE product_id = ? LIMIT 1")
-          .get(current.id);
-        if (current.quantity_on_hand > 0 || history) {
-          throw new InventoryError(409, "unit_locked_after_stock_history");
-        }
-      }
-      const changes: Record<string, string | number | boolean | null> = {};
-      if (parsed.data.name !== undefined && parsed.data.name !== current.name) {
-        changes.name = parsed.data.name;
-      }
-      if (parsed.data.barcode !== undefined) {
-        const barcode = parsed.data.barcode?.trim() || null;
-        if (barcode !== current.barcode) changes.barcode = barcode;
-      }
-      if (parsed.data.unit !== undefined && parsed.data.unit !== current.unit) {
-        changes.unit = parsed.data.unit;
-      }
-      if (parsed.data.sellingPrice !== undefined) {
-        const amount = parseMoney(parsed.data.sellingPrice);
-        if (amount <= 0)
-          throw new InventoryError(400, "selling_price_must_be_positive");
-        if (amount !== current.selling_price_centavos)
-          changes.sellingPriceCentavos = amount;
-      }
-      if (
-        parsed.data.taxClass !== undefined &&
-        parsed.data.taxClass !== current.tax_class
-      ) {
-        changes.taxClass = parsed.data.taxClass;
-      }
-      const nextScEligible =
-        parsed.data.isScEligible ?? current.sc_eligible === 1;
-      const nextPwdEligible =
-        parsed.data.isPwdEligible ?? current.pwd_eligible === 1;
-      const nextBnpcEligible =
-        parsed.data.bnpcEligible ?? current.bnpc_eligible === 1;
-      const nextBnpcCategory = nextBnpcEligible
-        ? (parsed.data.bnpcCategory ?? current.bnpc_category)
-        : null;
-      if (nextBnpcEligible && !nextBnpcCategory) {
-        throw new InventoryError(400, "bnpc_classification_review_required");
-      }
-      const bnpcClassificationChanged =
-        nextBnpcEligible !== (current.bnpc_eligible === 1) ||
-        nextBnpcCategory !== current.bnpc_category;
-      if (bnpcClassificationChanged) {
-        changes.bnpcEligible = nextBnpcEligible;
-        changes.bnpcCategory = nextBnpcCategory;
-      }
-      if (
-        parsed.data.isScEligible !== undefined &&
-        parsed.data.isScEligible !== (current.sc_eligible === 1)
-      ) {
-        changes.isScEligible = parsed.data.isScEligible;
-      }
-      if (
-        parsed.data.isPwdEligible !== undefined &&
-        parsed.data.isPwdEligible !== (current.pwd_eligible === 1)
-      ) {
-        changes.isPwdEligible = parsed.data.isPwdEligible;
-      }
-      const currentProductType =
-        current.product_type_applicable === 0
-          ? "NOT_APPLICABLE"
-          : current.product_type;
-      if (
-        parsed.data.productType !== undefined &&
-        parsed.data.productType !== currentProductType
-      ) {
-        changes.productType = parsed.data.productType;
-        changes.productTypeApplicable =
-          parsed.data.productType === "NOT_APPLICABLE" ? 0 : 1;
-      }
-      if (
-        parsed.data.tracksLots !== undefined &&
-        parsed.data.tracksLots !== (current.tracks_lots === 1)
-      ) {
-        if (!parsed.data.tracksLots) {
-          const activeLot = db
-            .prepare(
-              `SELECT 1 FROM inventory_lots l
-               JOIN lot_stock_movements m ON m.lot_id = l.id
-               WHERE l.product_id = ? GROUP BY l.id
-               HAVING sum(m.quantity_delta) > 0 LIMIT 1`,
-            )
-            .get(current.id);
-          if (current.quantity_on_hand > 0 || activeLot)
-            throw new InventoryError(409, "active_lots_require_tracking");
-        }
-        changes.tracksLots = parsed.data.tracksLots;
-      }
-      if (
-        nextScEligible !== (current.sc_eligible === 1) ||
-        nextPwdEligible !== (current.pwd_eligible === 1)
-      ) {
-        changes.scPwdEligible = nextScEligible || nextPwdEligible;
-      }
-      if (
-        parsed.data.reorderLevel !== undefined &&
-        parsed.data.reorderLevel !== current.reorder_level
-      ) {
-        changes.reorderLevel = parsed.data.reorderLevel;
-      }
-      if (
-        parsed.data.active !== undefined &&
-        parsed.data.active !== (current.is_active === 1)
-      ) {
-        changes.active = parsed.data.active;
-      }
-      if (Object.keys(changes).length === 0) {
-        res.json({ product: presentProduct(db, current) });
-        return;
-      }
-      const assignments: string[] = [];
-      const values: (string | number | null)[] = [];
-      const map: Record<string, [string, string | number | null]> = {
-        name: ["name", parsed.data.name ?? current.name],
-        barcode: ["barcode", parsed.data.barcode?.trim() || null],
-        unit: ["unit", parsed.data.unit ?? current.unit],
-        sellingPriceCentavos: [
-          "selling_price_centavos",
-          Number(changes.sellingPriceCentavos),
-        ],
-        taxClass: ["tax_class", String(changes.taxClass)],
-        isScEligible: ["sc_eligible", changes.isScEligible ? 1 : 0],
-        isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
-        bnpcEligible: ["bnpc_eligible", changes.bnpcEligible ? 1 : 0],
-        bnpcCategory: ["bnpc_category", changes.bnpcCategory as string | null],
-        productType: [
-          "product_type",
-          changes.productType === "NOT_APPLICABLE"
-            ? null
-            : String(changes.productType),
-        ],
-        productTypeApplicable: [
-          "product_type_applicable",
-          Number(changes.productTypeApplicable),
-        ],
-        tracksLots: ["tracks_lots", changes.tracksLots ? 1 : 0],
-        scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
-        reorderLevel: ["reorder_level", parsed.data.reorderLevel ?? null],
-        active: ["is_active", changes.active ? 1 : 0],
-      };
-      for (const key of Object.keys(changes)) {
-        const [column, value] = map[key]!;
-        assignments.push(`${column} = ?`);
-        values.push(value);
-      }
-      const now = new Date().toISOString();
-      if (bnpcClassificationChanged) {
-        assignments.push(
-          "bnpc_reviewed_at = ?",
-          "bnpc_reviewed_by_user_id = ?",
-        );
-        values.push(
-          nextBnpcEligible ? now : null,
-          nextBnpcEligible ? req.user.id : null,
-        );
-      }
-      assignments.push("updated_at = ?");
-      values.push(now, current.id);
-      db.transaction(() => {
-        db.prepare(
-          `UPDATE products SET ${assignments.join(", ")} WHERE id = ?`,
-        ).run(...values);
-        writeAuditEvent(db, {
-          actorUserId: req.user!.id,
-          action:
-            parsed.data.active === false
-              ? "product.deactivated"
-              : "product.updated",
-          entityType: "product",
-          entityId: current.id,
-          details: { old: currentValues(current, changes), new: changes },
-        });
-      })();
-      const updated = findProduct(db, current.id);
-      res.json({ product: updated ? presentProduct(db, updated) : null });
+      const updated = applyProductUpdate(
+        db,
+        current,
+        parsed.data,
+        req.user.id,
+        new Date().toISOString(),
+      );
+      res.json({ product: presentProduct(db, updated) });
     } catch (error) {
       if (!handleInventoryError(error, res)) throw error;
     }
   });
-
   router.get("/stock", requireAuth, requireOwner, (req, res) => {
     const lowStock = z
       .enum(["true", "false"])
@@ -2853,4 +2994,181 @@ function currentValues(
     output[key] = values[key] ?? null;
   }
   return output;
+}
+
+function applyProductUpdate(
+  db: Database.Database,
+  current: ProductRow,
+  input: UpdateProductInput,
+  actorUserId: string,
+  now: string,
+): ProductRow {
+  productFromBody(db, input);
+  if (input.unit && input.unit !== current.unit) {
+    const history = db
+      .prepare("SELECT 1 FROM stock_events WHERE product_id = ? LIMIT 1")
+      .get(current.id);
+    if (current.quantity_on_hand > 0 || history) {
+      throw new InventoryError(409, "unit_locked_after_stock_history");
+    }
+  }
+  const changes: Record<string, string | number | boolean | null> = {};
+  if (input.name !== undefined && input.name !== current.name) {
+    changes.name = input.name;
+  }
+  if (input.barcode !== undefined) {
+    const barcode = input.barcode?.trim() || null;
+    if (barcode !== current.barcode) changes.barcode = barcode;
+  }
+  if (input.unit !== undefined && input.unit !== current.unit) {
+    changes.unit = input.unit;
+  }
+  if (input.sellingPrice !== undefined) {
+    const amount = parseMoney(input.sellingPrice);
+    if (amount <= 0)
+      throw new InventoryError(400, "selling_price_must_be_positive");
+    if (amount !== current.selling_price_centavos)
+      changes.sellingPriceCentavos = amount;
+  }
+  if (input.taxClass !== undefined && input.taxClass !== current.tax_class) {
+    changes.taxClass = input.taxClass;
+  }
+  const nextScEligible = input.isScEligible ?? current.sc_eligible === 1;
+  const nextPwdEligible = input.isPwdEligible ?? current.pwd_eligible === 1;
+  const nextBnpcEligible = input.bnpcEligible ?? current.bnpc_eligible === 1;
+  const nextBnpcCategory = nextBnpcEligible
+    ? (input.bnpcCategory ?? current.bnpc_category)
+    : null;
+  if (nextBnpcEligible && !nextBnpcCategory) {
+    throw new InventoryError(400, "bnpc_classification_review_required");
+  }
+  const bnpcClassificationChanged =
+    nextBnpcEligible !== (current.bnpc_eligible === 1) ||
+    nextBnpcCategory !== current.bnpc_category;
+  if (bnpcClassificationChanged) {
+    changes.bnpcEligible = nextBnpcEligible;
+    changes.bnpcCategory = nextBnpcCategory;
+  }
+  if (
+    input.isScEligible !== undefined &&
+    input.isScEligible !== (current.sc_eligible === 1)
+  ) {
+    changes.isScEligible = input.isScEligible;
+  }
+  if (
+    input.isPwdEligible !== undefined &&
+    input.isPwdEligible !== (current.pwd_eligible === 1)
+  ) {
+    changes.isPwdEligible = input.isPwdEligible;
+  }
+  const currentProductType =
+    current.product_type_applicable === 0
+      ? "NOT_APPLICABLE"
+      : current.product_type;
+  if (
+    input.productType !== undefined &&
+    input.productType !== currentProductType
+  ) {
+    changes.productType = input.productType;
+    changes.productTypeApplicable =
+      input.productType === "NOT_APPLICABLE" ? 0 : 1;
+  }
+  if (
+    input.tracksLots !== undefined &&
+    input.tracksLots !== (current.tracks_lots === 1)
+  ) {
+    if (!input.tracksLots) {
+      const activeLot = db
+        .prepare(
+          `SELECT 1 FROM inventory_lots l
+           JOIN lot_stock_movements m ON m.lot_id = l.id
+           WHERE l.product_id = ? GROUP BY l.id
+           HAVING sum(m.quantity_delta) > 0 LIMIT 1`,
+        )
+        .get(current.id);
+      if (current.quantity_on_hand > 0 || activeLot)
+        throw new InventoryError(409, "active_lots_require_tracking");
+    }
+    changes.tracksLots = input.tracksLots;
+  }
+  if (
+    nextScEligible !== (current.sc_eligible === 1) ||
+    nextPwdEligible !== (current.pwd_eligible === 1)
+  ) {
+    changes.scPwdEligible = nextScEligible || nextPwdEligible;
+  }
+  if (
+    input.reorderLevel !== undefined &&
+    input.reorderLevel !== current.reorder_level
+  ) {
+    changes.reorderLevel = input.reorderLevel;
+  }
+  if (
+    input.active !== undefined &&
+    input.active !== (current.is_active === 1)
+  ) {
+    changes.active = input.active;
+  }
+  if (Object.keys(changes).length === 0) return current;
+
+  const assignments: string[] = [];
+  const values: (string | number | null)[] = [];
+  const map: Record<string, [string, string | number | null]> = {
+    name: ["name", input.name ?? current.name],
+    barcode: ["barcode", input.barcode?.trim() || null],
+    unit: ["unit", input.unit ?? current.unit],
+    sellingPriceCentavos: [
+      "selling_price_centavos",
+      Number(changes.sellingPriceCentavos),
+    ],
+    taxClass: ["tax_class", String(changes.taxClass)],
+    isScEligible: ["sc_eligible", changes.isScEligible ? 1 : 0],
+    isPwdEligible: ["pwd_eligible", changes.isPwdEligible ? 1 : 0],
+    bnpcEligible: ["bnpc_eligible", changes.bnpcEligible ? 1 : 0],
+    bnpcCategory: ["bnpc_category", changes.bnpcCategory as string | null],
+    productType: [
+      "product_type",
+      changes.productType === null || changes.productType === "NOT_APPLICABLE"
+        ? null
+        : String(changes.productType),
+    ],
+    productTypeApplicable: [
+      "product_type_applicable",
+      Number(changes.productTypeApplicable),
+    ],
+    tracksLots: ["tracks_lots", changes.tracksLots ? 1 : 0],
+    scPwdEligible: ["sc_pwd_eligible", changes.scPwdEligible ? 1 : 0],
+    reorderLevel: ["reorder_level", input.reorderLevel ?? null],
+    active: ["is_active", changes.active ? 1 : 0],
+  };
+  for (const key of Object.keys(changes)) {
+    const [column, value] = map[key]!;
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  }
+  if (bnpcClassificationChanged) {
+    assignments.push("bnpc_reviewed_at = ?", "bnpc_reviewed_by_user_id = ?");
+    values.push(
+      nextBnpcEligible ? now : null,
+      nextBnpcEligible ? actorUserId : null,
+    );
+  }
+  assignments.push("updated_at = ?");
+  values.push(now, current.id);
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE products SET ${assignments.join(", ")} WHERE id = ?`,
+    ).run(...values);
+    writeAuditEvent(db, {
+      actorUserId,
+      action:
+        input.active === false ? "product.deactivated" : "product.updated",
+      entityType: "product",
+      entityId: current.id,
+      details: { old: currentValues(current, changes), new: changes },
+    });
+  })();
+  const updated = findProduct(db, current.id);
+  if (!updated) throw new InventoryError(500, "product_update_failed");
+  return updated;
 }

@@ -101,3 +101,87 @@ test("owner imports new products with opening stock, lots, and expiry from CSV",
     ]),
   );
 });
+
+test("owner exports and updates product data from the catalog page", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill("owner@example.test");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("SyntheticOwnerPassword-48!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/checkout$/);
+
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const created = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-CSV-UPDATE-E2E",
+      name: "Synthetic E2E CSV Product",
+      unit: "tablet",
+      sellingPrice: "10.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 4,
+      openingUnitCost: "5.00",
+    },
+  });
+  expect(created.status()).toBe(201);
+
+  await page.goto("/products");
+  const productRow = page.getByRole("row").filter({
+    hasText: "SYN-CSV-UPDATE-E2E",
+  });
+  await expect(productRow.locator(".product-description")).toHaveCSS(
+    "text-transform",
+    "uppercase",
+  );
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("link", { name: "Export product data CSV" }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe("products.csv");
+  const exportedCsv = await readFile((await download.path())!, "utf8");
+  expect(exportedCsv).toContain("quantityonhand");
+  const exportLines = exportedCsv.trim().split(/\r?\n/u);
+  const productLine = exportLines.find((line) =>
+    line.startsWith('"SYN-CSV-UPDATE-E2E"'),
+  );
+  expect(productLine).toBeDefined();
+  if (!productLine) throw new Error("Exported product row was not found.");
+  const editedProductLine = productLine
+    .replace('"Synthetic E2E CSV Product"', '"Updated E2E CSV Product"')
+    .replace('"10.00"', '"12.50"');
+  const editedCsv = `${exportLines[0]}\r\n${editedProductLine}`;
+  await page.getByLabel("Product update CSV file").setInputFiles({
+    name: "products.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(editedCsv),
+  });
+  await page.getByRole("button", { name: "Update products" }).click();
+  await expect(page.getByRole("status")).toContainText("Updated 1 product.");
+
+  const updatedResponse = await page.request.get(
+    "/api/products?q=SYN-CSV-UPDATE-E2E",
+  );
+  expect(updatedResponse.status()).toBe(200);
+  const updated = (await updatedResponse.json()) as {
+    products: Array<{
+      name: string;
+      sellingPrice: string;
+      quantityOnHand: number;
+      inventoryValue: string;
+    }>;
+  };
+  expect(updated.products[0]).toMatchObject({
+    name: "Updated E2E CSV Product",
+    sellingPrice: "12.50",
+    quantityOnHand: 4,
+    inventoryValue: "20.00",
+  });
+});

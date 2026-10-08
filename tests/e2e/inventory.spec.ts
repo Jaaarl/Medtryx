@@ -49,14 +49,13 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(
     ownerPage.getByRole("heading", { name: "Products", exact: true }),
   ).toBeVisible();
-  await ownerPage
-    .getByLabel("SKU (leave blank to generate)")
-    .fill("SYN-PILOT-001");
-  await ownerPage.getByLabel("Product name").fill("Synthetic Pilot Lotion");
+  const productName = "Synthetic Pilot Lotion";
+  await ownerPage.getByLabel("Product name").fill(productName);
   await ownerPage.getByLabel("Generic").check();
-  await ownerPage.getByLabel("Senior Citizen eligible").check();
+  await ownerPage
+    .getByLabel("Senior Citizen 20% discount + VAT exemption eligible")
+    .check();
   await ownerPage.getByLabel("Track lots and expiry for this product").check();
-  await ownerPage.getByLabel("Barcode (optional)").fill("SYN-BAR-PILOT-001");
   await ownerPage.getByLabel("Selling price (₱)").fill("10.99");
   await ownerPage.getByLabel("Counted quantity").fill("3");
   await ownerPage.getByLabel("Unit cost (₱)").fill("5.00");
@@ -65,21 +64,44 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     .getByLabel("Expiry date (last saleable day)")
     .fill("2030-12-31");
   await ownerPage.getByRole("button", { name: "Create product" }).click();
-  await expect(ownerPage.getByText("Product created.")).toBeVisible();
+  await expect(ownerPage.getByRole("status")).toContainText(
+    "Product created with SKU MTX-",
+  );
+  const createdProductResponse = await ownerPage.request.get(
+    `/api/products?q=${encodeURIComponent(productName)}`,
+  );
+  expect(createdProductResponse.status()).toBe(200);
+  const createdProduct = (
+    (await createdProductResponse.json()) as {
+      products: Array<{ sku: string; name: string }>;
+    }
+  ).products.find((product) => product.name === productName);
+  expect(createdProduct).toBeDefined();
+  if (!createdProduct) throw new Error("Created product was not returned.");
+  const productSku = createdProduct.sku;
+  await ownerPage.getByLabel("Search products").fill(productSku);
   const productRow = ownerPage.getByRole("row").filter({
-    hasText: "Synthetic Pilot Lotion",
+    hasText: productName,
   });
-  await expect(productRow).toContainText("SYN-PILOT-001");
-  await expect(productRow).toContainText("Generic");
+  await expect(productRow).toContainText(productSku);
+  await expect(productRow).not.toContainText("Generic");
+  await expect(productRow).not.toContainText("Branded");
+  await expect(productRow).not.toContainText("N/A");
+  await expect(productRow.locator(".product-description")).toHaveCSS(
+    "text-transform",
+    "uppercase",
+  );
   await expect(productRow).toContainText("₱5.00");
-  await expect(
-    ownerPage.getByText(/approved SYNTHETIC-E2E-TAX-12-HALF-UP/i),
-  ).toBeVisible();
-
   await productRow.getByRole("button", { name: "Edit" }).click();
   await expect(ownerPage.getByLabel("Generic")).toBeChecked();
-  await expect(ownerPage.getByLabel("Senior Citizen eligible")).toBeChecked();
-  await expect(ownerPage.getByLabel("PWD eligible")).not.toBeChecked();
+  await expect(
+    ownerPage.getByLabel(
+      "Senior Citizen 20% discount + VAT exemption eligible",
+    ),
+  ).toBeChecked();
+  await expect(
+    ownerPage.getByLabel("PWD 20% discount + VAT exemption eligible"),
+  ).not.toBeChecked();
   await ownerPage.getByLabel("Selling price (₱)").fill("11.99");
   await ownerPage.getByRole("button", { name: "Save product" }).click();
   await expect(ownerPage.getByText("Product changes saved.")).toBeVisible();
@@ -91,9 +113,10 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(productRow).toContainText("Active");
 
   await ownerPage.goto("/stock");
+  await ownerPage.getByLabel("Search current stock").fill(productSku);
   const stockRow = ownerPage
     .locator(".stock-list-card .inventory-table tbody tr")
-    .filter({ hasText: "Synthetic Pilot Lotion" });
+    .filter({ hasText: productName });
   await stockRow.click();
   await ownerPage.getByLabel("Quantity received").fill("2");
   await ownerPage.getByLabel("Unit acquisition cost (₱)").fill("6.00");
@@ -147,24 +170,32 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     "inventory.cashier@example.test",
     "SyntheticInventoryCashier-84!",
   );
-  await cashierPage.getByLabel("Search catalog").fill("SYN-PILOT-001");
+  await cashierPage.getByLabel("Search catalog").fill(productSku);
   const catalogRow = cashierPage
     .locator(".catalog-result")
-    .filter({ hasText: "Synthetic Pilot Lotion" });
-  await expect(catalogRow).toContainText("Generic");
+    .filter({ hasText: productName });
+  await expect(catalogRow).not.toContainText("Generic");
   await expect(catalogRow).toContainText("₱11.99 · 5 available");
-  await expect(catalogRow).toContainText("2 saleable lot(s)");
+  await expect(catalogRow).not.toContainText("saleable lot");
+  await expect(catalogRow.locator(".product-description")).toHaveCSS(
+    "text-transform",
+    "uppercase",
+  );
   await expect(
     cashierPage.getByText(/average cost|inventory value|gross profit/i),
   ).toHaveCount(0);
   await catalogRow.getByRole("button", { name: "Add to cart" }).click();
-  await catalogRow.getByRole("button", { name: "Add to cart" }).click();
+  await cashierPage.getByLabel("Quantity to add").fill("2");
+  await cashierPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add to cart" })
+    .click();
   await cashierPage.getByLabel("Sale benefit").selectOption("PWD");
   await expect(
     cashierPage.getByRole("checkbox", {
       name: /Synthetic Pilot Lotion .* not eligible/,
     }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await cashierPage.getByLabel("Sale benefit").selectOption("SENIOR_CITIZEN");
   await expect(
     cashierPage.getByRole("checkbox", {
@@ -185,7 +216,9 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     "SyntheticInventorySecondCashier-39!",
   );
   await expect(
-    secondCashierPage.getByText(/The single cash register is already open/),
+    secondCashierPage.getByRole("status").filter({
+      hasText: /register is still open under inventory\.cashier@example\.test/i,
+    }),
   ).toBeVisible();
   await expect(
     secondCashierPage.getByRole("button", { name: "Open shift" }),
@@ -216,6 +249,10 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     .getByLabel("I picked and physically confirmed the FEFO lot(s) shown above")
     .check();
   await cashierPage.getByRole("button", { name: "Confirm sale" }).click();
+  await cashierPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Confirm cash sale" })
+    .click();
   await expect(cashierPage.getByText("Sale saved.")).toBeVisible();
   await expect(
     cashierPage.getByText("INTERNAL SALES RECORD — NOT AN INVOICE"),
@@ -271,6 +308,11 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   });
 
   await ownerPage.goto("/stock");
+  await ownerPage.getByLabel("Search current stock").fill(productSku);
+  await ownerPage
+    .locator(".stock-list-card .inventory-table tbody tr")
+    .filter({ hasText: productName })
+    .click();
   await expect(
     ownerPage.locator(
       ".stock-list-card .inventory-table tbody tr.inventory-row-selected",
@@ -341,12 +383,15 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   };
   expect(cashierShiftState.shift.expectedCash).toBe("50.00");
   await cashierPage.goto("/checkout");
-  await cashierPage.getByText("Close shift and count cash").click();
+  await cashierPage.getByRole("button", { name: "Close shift" }).click();
   await cashierPage.getByLabel("Actual cash count (₱)").fill("48.00");
   await cashierPage
     .getByLabel("Variance reason if count differs")
-    .fill("Synthetic browser-test cash variance");
-  await cashierPage.getByRole("button", { name: "Close shift" }).click();
+    .selectOption("Cashier Fault");
+  await cashierPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Close shift" })
+    .click();
   await expect(cashierPage.getByText("Cashier shift closed.")).toBeVisible();
   await ownerPage.goto("/stock");
   await ownerPage.goto("/sales");
