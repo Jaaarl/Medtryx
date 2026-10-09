@@ -195,12 +195,25 @@ test("cashier confirms a shelf count and commits the correction with the sale", 
     "/api/catalog?q=SYN-E2E-STOCK-OVERRIDE",
   );
   expect((await catalogAfterSave.json()).products[0].quantityAvailable).toBe(0);
-  await page.goto("/stock/checkout-overrides");
+  await page.goto("/stock");
+  await expect(page).toHaveURL(/\/stock$/u);
+  await page.getByRole("link", { name: "Checkout count overrides" }).click();
+  await expect(page).toHaveURL(/\/stock#checkout-count-overrides$/u);
+  const overridesPanel = page.locator("#checkout-count-overrides");
   await expect(
-    page.getByRole("heading", { name: "Checkout count overrides" }),
+    overridesPanel.getByRole("heading", {
+      name: "Checkout count overrides",
+    }),
   ).toBeVisible();
   await expect(
-    page.getByText("Synthetic Counted Product", { exact: true }),
+    overridesPanel.getByText("Synthetic Counted Product", { exact: true }),
+  ).toBeVisible();
+  await page.goto("/stock/checkout-overrides");
+  await expect(page).toHaveURL(/\/stock#checkout-count-overrides$/u);
+  await expect(
+    page.locator("#checkout-count-overrides").getByRole("heading", {
+      name: "Checkout count overrides",
+    }),
   ).toBeVisible();
   const historyResponse = await page.request.get(
     "/api/checkout-stock-overrides",

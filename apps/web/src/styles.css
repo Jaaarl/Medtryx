@@ -4818,6 +4818,30 @@ a {
   justify-content: flex-end;
   margin: -8px 0 18px;
 }
+.checkout-overrides-embedded {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  scroll-margin-top: 20px;
+}
+.checkout-overrides-heading {
+  padding: 18px 20px;
+}
+.checkout-overrides-heading .eyebrow {
+  display: block;
+  margin-bottom: 6px;
+}
+.checkout-overrides-heading h2 {
+  color: #24483f;
+  font-size: 16px;
+  margin: 0 0 5px;
+}
+.checkout-overrides-heading p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
 .checkout-override-filters,
 .checkout-override-history {
   margin-bottom: 18px;

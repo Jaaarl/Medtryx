@@ -23,6 +23,7 @@ import {
   SampleReceiptModal,
   type SampleReceiptData,
 } from "./sample-receipt";
+import { CheckoutOverridesPanel } from "./checkout-overrides-page";
 
 const MAX_LINE_QUANTITY = 1_000_000;
 
@@ -1808,6 +1809,15 @@ export function StockPage() {
   const [expiryDateInput, setExpiryDateInput] = useState("");
   const [lotEditReason, setLotEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
+  useEffect(() => {
+    if (window.location.hash !== "#checkout-count-overrides") return;
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .getElementById("checkout-count-overrides")
+        ?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   const costCorrectionUnitCostCents = /^\d{1,7}(?:\.\d{1,2})?$/.test(
     costCorrectionInput,
   )
@@ -2213,12 +2223,9 @@ export function StockPage() {
         description="Receive deliveries, correct counts, record write-offs, and trace every stock change."
       />
       <div className="stock-override-history-link">
-        <Link
-          className="button button-secondary"
-          to="/stock/checkout-overrides"
-        >
+        <a className="button button-secondary" href="#checkout-count-overrides">
           Checkout count overrides
-        </Link>
+        </a>
       </div>
       {(error || notice) && (
         <div
@@ -3267,6 +3274,7 @@ export function StockPage() {
           </table>
         </div>
       </section>
+      <CheckoutOverridesPanel />
     </section>
   );
 }

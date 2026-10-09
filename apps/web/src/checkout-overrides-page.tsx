@@ -57,7 +57,7 @@ function manilaDateTime(value: string): string {
   });
 }
 
-export function CheckoutOverridesPage() {
+export function CheckoutOverridesPanel() {
   const [records, setRecords] = useState<OverrideRecord[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [from, setFrom] = useState("");
@@ -156,19 +156,17 @@ export function CheckoutOverridesPage() {
   const exportHref = `/api/checkout-stock-overrides.csv${filterQuery().size ? `?${filterQuery()}` : ""}`;
 
   return (
-    <section className="page-section inventory-page checkout-overrides-page">
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">OWNER INVENTORY</span>
-          <h1>Checkout count overrides</h1>
-          <p>
-            Review the physical count evidence, inventory correction, and sale
-            saved together.
-          </p>
-        </div>
-        <Link className="button button-secondary" to="/stock">
-          Back to stock
-        </Link>
+    <section
+      className="checkout-overrides-embedded"
+      id="checkout-count-overrides"
+    >
+      <div className="settings-main-card checkout-overrides-heading">
+        <span className="eyebrow">OWNER INVENTORY</span>
+        <h2>Checkout count overrides</h2>
+        <p>
+          Review the physical count confirmation, inventory correction, and sale
+          saved together.
+        </p>
       </div>
       {error && (
         <div className="banner banner-error" role="alert">

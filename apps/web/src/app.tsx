@@ -47,7 +47,6 @@ import { BundlesPage } from "./bundles-page";
 import { ProductMovementPage } from "./product-movement-page";
 import { DailySalesSummaryPage } from "./daily-sales-summary";
 import { JournalPage } from "./journal-page";
-import { CheckoutOverridesPage } from "./checkout-overrides-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -856,7 +855,10 @@ function CheckoutInventorySettings() {
           </small>
         </span>
       </label>
-      <Link className="button button-secondary" to="/stock/checkout-overrides">
+      <Link
+        className="button button-secondary"
+        to="/stock#checkout-count-overrides"
+      >
         Review checkout count overrides
       </Link>
     </section>
@@ -882,7 +884,9 @@ export function App() {
             <Route path="stock" element={<StockPage />} />
             <Route
               path="stock/checkout-overrides"
-              element={<CheckoutOverridesPage />}
+              element={
+                <Navigate to="/stock#checkout-count-overrides" replace />
+              }
             />
             <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
