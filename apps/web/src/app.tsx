@@ -829,10 +829,9 @@ function CheckoutInventorySettings() {
         <div>
           <h2>Checkout inventory</h2>
           <p>
-            Allow cashiers to confirm a physical stock count when recorded
-            saleable stock is short. Corrections require a reason and are saved
-            with the completed sale. Expiry and quarantine restrictions remain
-            in force.
+            Allow cashiers to confirm physically available stock when recorded
+            saleable stock is short. Confirmations are saved with the sale.
+            Expiry and quarantine restrictions remain in force.
           </p>
         </div>
       </div>

@@ -140,26 +140,35 @@ test("cashier confirms a shelf count and commits the correction with the sale", 
   await productResult.getByRole("button", { name: "Add to cart" }).click();
   await cashierPage.getByLabel("Quantity to add").fill("2");
   await cashierPage.getByRole("button", { name: "Add to cart" }).last().click();
+  await expect(
+    cashierPage.getByRole("dialog", {
+      name: "Are you sure you want to add this product?",
+    }),
+  ).toContainText("Unrecorded shortage: 1");
+  await cashierPage.getByRole("button", { name: "Yes, add to cart" }).click();
+  const warnedCartLine = cashierPage
+    .locator(".cart-line.checkout-stock-shortage")
+    .filter({ hasText: "Synthetic Counted Product" });
+  await expect(warnedCartLine).toBeVisible();
+  await expect(warnedCartLine).toHaveCSS(
+    "background-color",
+    "rgb(255, 247, 235)",
+  );
   await cashierPage
     .getByRole("button", { name: "Calculate line taxes and discounts" })
     .click();
 
-  await expect(cashierPage.getByRole("dialog")).toContainText(
-    "Confirm physical stock",
+  const stockConfirmation = cashierPage.getByRole("dialog", {
+    name: "Are you sure this stock is physically available?",
+  });
+  await expect(stockConfirmation).toContainText("Recorded: 1 piece");
+  await expect(stockConfirmation).toContainText("In this sale: 2 piece");
+  await expect(stockConfirmation).toContainText(
+    "Additional stock to record: +1 piece",
   );
-  await expect(cashierPage.getByText("Recorded saleable")).toBeVisible();
-  await expect(cashierPage.getByText("Total requested")).toBeVisible();
-  await cashierPage.getByLabel("Verified physical count (piece)").fill("2");
+  await expect(stockConfirmation.getByRole("textbox")).toHaveCount(0);
   await cashierPage
-    .getByLabel("Short explanation")
-    .fill("Recounted shelf stock before the sale.");
-  await cashierPage
-    .getByLabel(
-      "I physically verified these units are available and suitable for sale.",
-    )
-    .check();
-  await cashierPage
-    .getByRole("button", { name: "Confirm count and continue" })
+    .getByRole("button", { name: "Yes, stock is available" })
     .click();
 
   await expect(

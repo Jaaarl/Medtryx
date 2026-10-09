@@ -3461,6 +3461,29 @@ type StockCountEvidence = {
   lots?: Array<{ lotId: string; physicalQuantity: number }>;
 };
 
+type StockShortageWarning = {
+  productId: string;
+  productName: string;
+  unit: string;
+  recordedQuantity: number;
+  requestedQuantity: number;
+  shortage: number;
+};
+
+type PendingCartAdd =
+  | {
+      kind: "product";
+      product: CatalogProduct;
+      quantity: number;
+      shortages: StockShortageWarning[];
+    }
+  | {
+      kind: "bundle";
+      offer: BundleOffer;
+      quantity: number;
+      shortages: StockShortageWarning[];
+    };
+
 type SaleRecord = {
   id: string;
   transactionId: string;
@@ -3581,15 +3604,9 @@ export function CheckoutPage({
   const [stockCountEvidence, setStockCountEvidence] = useState<
     StockCountEvidence[]
   >([]);
-  const [stockCountPhysical, setStockCountPhysical] = useState("");
-  const [stockCountLotPhysical, setStockCountLotPhysical] = useState<
-    Record<string, string>
-  >({});
-  const [stockCountReasonCategory, setStockCountReasonCategory] = useState<
-    "COUNT_DISCREPANCY" | "OTHER"
-  >("COUNT_DISCREPANCY");
-  const [stockCountReason, setStockCountReason] = useState("");
-  const [stockCountAttested, setStockCountAttested] = useState(false);
+  const [pendingCartAdd, setPendingCartAdd] = useState<PendingCartAdd | null>(
+    null,
+  );
   const [shift, setShift] = useState<CurrentShift | null>(null);
   const [registerShift, setRegisterShift] = useState<RegisterShift | null>(
     null,
@@ -3874,6 +3891,103 @@ export function CheckoutPage({
     });
   }
 
+  function currentCartProductDemand(productId: string) {
+    const directQuantity =
+      cart.find((line) => line.product.id === productId)?.quantity ?? 0;
+    const bundleQuantity = bundleCart.reduce((sum, line) => {
+      const component = line.offer.components.find(
+        (entry) => entry.productId === productId,
+      );
+      return sum + (component ? component.quantity * line.quantity : 0);
+    }, 0);
+    return directQuantity + bundleQuantity;
+  }
+
+  function stockDetailsForProduct(productId: string) {
+    const product =
+      products.find((entry) => entry.id === productId) ??
+      cart.find((entry) => entry.product.id === productId)?.product;
+    if (product) {
+      return {
+        productName: product.name,
+        unit: product.unit,
+        recordedQuantity: product.quantityAvailable,
+      };
+    }
+    const component = [...bundleOffers, ...bundleCart.map((line) => line.offer)]
+      .flatMap((offer) => offer.components)
+      .find((entry) => entry.productId === productId);
+    return component
+      ? {
+          productName: component.name,
+          unit: component.unit,
+          recordedQuantity: component.quantityAvailable,
+        }
+      : null;
+  }
+
+  function getCartAddShortages(
+    additionalQuantities: Array<{ productId: string; quantity: number }>,
+  ): StockShortageWarning[] {
+    const addedByProduct = new Map<string, number>();
+    for (const entry of additionalQuantities) {
+      addedByProduct.set(
+        entry.productId,
+        (addedByProduct.get(entry.productId) ?? 0) + entry.quantity,
+      );
+    }
+    return [...addedByProduct].flatMap(([productId, addedQuantity]) => {
+      const stock = stockDetailsForProduct(productId);
+      if (!stock) return [];
+      const requestedQuantity =
+        currentCartProductDemand(productId) + addedQuantity;
+      const shortage = requestedQuantity - stock.recordedQuantity;
+      return shortage > 0
+        ? [{ productId, ...stock, requestedQuantity, shortage }]
+        : [];
+    });
+  }
+
+  function recordedStockShortage(productId: string) {
+    const stock = stockDetailsForProduct(productId);
+    return stock
+      ? Math.max(
+          0,
+          currentCartProductDemand(productId) - stock.recordedQuantity,
+        )
+      : 0;
+  }
+
+  function bundleCartShortages(offer: BundleOffer) {
+    return offer.components.flatMap((component) => {
+      const stock = stockDetailsForProduct(component.productId);
+      const requestedQuantity = currentCartProductDemand(component.productId);
+      const shortage = stock
+        ? Math.max(0, requestedQuantity - stock.recordedQuantity)
+        : 0;
+      return stock && shortage > 0
+        ? [
+            {
+              productId: component.productId,
+              ...stock,
+              requestedQuantity,
+              shortage,
+            },
+          ]
+        : [];
+    });
+  }
+
+  function confirmPendingCartAdd() {
+    if (!pendingCartAdd) return;
+    if (pendingCartAdd.kind === "product") {
+      addProduct(pendingCartAdd.product, pendingCartAdd.quantity);
+    } else {
+      addBundle(pendingCartAdd.offer, pendingCartAdd.quantity);
+    }
+    setPendingCartAdd(null);
+  }
+
   function confirmQuantityPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const quantity = Number(quantityToAdd);
@@ -3888,6 +4002,36 @@ export function CheckoutPage({
       quantity > available
     ) {
       setQuantityDialogError(`Enter a whole number from 1 to ${available}.`);
+      return;
+    }
+    const additionalQuantities = productToAdd
+      ? [{ productId: productToAdd.id, quantity }]
+      : (bundleOfferToAdd?.components.map((component) => ({
+          productId: component.productId,
+          quantity: component.quantity * quantity,
+        })) ?? []);
+    const shortages = stockOverrideEnabled
+      ? getCartAddShortages(additionalQuantities)
+      : [];
+    if (shortages.length > 0) {
+      if (productToAdd) {
+        setPendingCartAdd({
+          kind: "product",
+          product: productToAdd,
+          quantity,
+          shortages,
+        });
+      } else if (bundleOfferToAdd) {
+        setPendingCartAdd({
+          kind: "bundle",
+          offer: bundleOfferToAdd,
+          quantity,
+          shortages,
+        });
+      }
+      setProductToAdd(null);
+      setBundleOfferToAdd(null);
+      setQuantityDialogError("");
       return;
     }
     if (productToAdd) addProduct(productToAdd, quantity);
@@ -4282,11 +4426,6 @@ export function CheckoutPage({
           tracksLots: details.tracksLots === true,
           eligibleLots: lots,
         });
-        setStockCountPhysical("");
-        setStockCountLotPhysical({});
-        setStockCountReasonCategory("COUNT_DISCREPANCY");
-        setStockCountReason("");
-        setStockCountAttested(false);
         setPreview(null);
         setRequestKey("");
         return;
@@ -4310,68 +4449,56 @@ export function CheckoutPage({
     await requestCheckoutPreview();
   }
 
-  async function confirmStockCount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!stockCountPrompt) return;
-    const reason = stockCountReason.trim();
-    if (reason.replace(/\s/g, "").length < 3 || !stockCountAttested) return;
-    let physicalQuantity: number;
-    let lots: StockCountEvidence["lots"];
-    let correctionQuantity: number;
+  async function confirmStockCount() {
+    if (!stockCountPrompt || saving) return;
+    const correctionQuantity = stockCountPrompt.shortage;
+    const physicalQuantity = stockCountPrompt.requestedQuantity;
+    let lots: StockCountEvidence["lots"] = undefined;
     if (stockCountPrompt.tracksLots) {
+      let correctionRemaining = correctionQuantity;
       lots = [];
-      for (const [lotId, raw] of Object.entries(stockCountLotPhysical)) {
-        if (!raw.trim()) continue;
-        const value = Number(raw);
-        const selectedLot = stockCountPrompt.eligibleLots.find(
-          (lot) => lot.lotId === lotId,
+      const eligibleLots = [...stockCountPrompt.eligibleLots].sort(
+        (first, second) =>
+          first.expiryDate.localeCompare(second.expiryDate) ||
+          first.lotCode.localeCompare(second.lotCode),
+      );
+      for (const lot of eligibleLots) {
+        const correction = Math.min(
+          correctionRemaining,
+          MAX_LINE_QUANTITY - lot.recordedQuantity,
         );
-        if (
-          !selectedLot ||
-          !Number.isSafeInteger(value) ||
-          value <= selectedLot.recordedQuantity
-        ) {
-          setError(
-            "Each counted lot must have a physical count above its recorded balance.",
-          );
-          return;
-        }
-        lots.push({ lotId, physicalQuantity: value });
+        if (correction < 1) continue;
+        lots.push({
+          lotId: lot.lotId,
+          physicalQuantity: lot.recordedQuantity + correction,
+        });
+        correctionRemaining -= correction;
+        if (correctionRemaining === 0) break;
       }
-      correctionQuantity = lots.reduce((total, lot) => {
-        const existing = stockCountPrompt.eligibleLots.find(
-          (entry) => entry.lotId === lot.lotId,
+      if (correctionRemaining > 0) {
+        setError(
+          "There is not enough capacity in the eligible lots to record this stock confirmation.",
         );
-        return total + lot.physicalQuantity - (existing?.recordedQuantity ?? 0);
-      }, 0);
-      physicalQuantity = stockCountPrompt.recordedQuantity + correctionQuantity;
-    } else {
-      physicalQuantity = Number(stockCountPhysical);
-      correctionQuantity = physicalQuantity - stockCountPrompt.recordedQuantity;
-      lots = undefined;
-      if (!Number.isSafeInteger(physicalQuantity)) {
-        setError("Enter a whole number for the physical shelf count.");
         return;
       }
     }
-    if (correctionQuantity < 1) {
+    if (
+      correctionQuantity < 1 ||
+      physicalQuantity < stockCountPrompt.requestedQuantity
+    ) {
       setError(
-        "The verified count must show a positive difference from recorded saleable stock.",
+        "The cart demand changed. Recalculate checkout and confirm again.",
       );
-      return;
-    }
-    if (physicalQuantity < stockCountPrompt.requestedQuantity) {
-      setError(
-        "The verified count is below the total quantity in the cart. Reduce the sale quantity or count enough saleable units.",
-      );
+      setStockCountPrompt(null);
       return;
     }
     const confirmed: StockCountEvidence = {
       productId: stockCountPrompt.productId,
       correctionQuantity,
       physicalQuantity,
-      reasonCategory: stockCountReasonCategory,
-      reason,
+      reasonCategory: "COUNT_DISCREPANCY",
+      reason:
+        "Cashier confirmed the requested saleable units are physically available.",
       physicallyVerified: true,
       ...(lots ? { lots } : {}),
     };
@@ -4634,31 +4761,11 @@ export function CheckoutPage({
     ? "checkout-bundle-quantity"
     : "checkout-product-quantity";
   const checkoutShift = manualEntry || shift;
-  const stockCountDraftCorrection = stockCountPrompt
-    ? stockCountPrompt.tracksLots
-      ? Object.entries(stockCountLotPhysical).reduce((total, [lotId, raw]) => {
-          const lot = stockCountPrompt.eligibleLots.find(
-            (entry) => entry.lotId === lotId,
-          );
-          const quantity = Number(raw);
-          return lot && raw.trim() && Number.isSafeInteger(quantity)
-            ? total + Math.max(0, quantity - lot.recordedQuantity)
-            : total;
-        }, 0)
-      : Number.isSafeInteger(Number(stockCountPhysical))
-        ? Number(stockCountPhysical) - stockCountPrompt.recordedQuantity
-        : 0
-    : 0;
-  const stockCountDraftPhysical = stockCountPrompt
-    ? stockCountPrompt.tracksLots
-      ? stockCountPrompt.recordedQuantity + stockCountDraftCorrection
-      : Number.isSafeInteger(Number(stockCountPhysical))
-        ? Number(stockCountPhysical)
-        : 0
-    : 0;
-  const stockCountDraftRemaining = stockCountPrompt
-    ? stockCountDraftPhysical - stockCountPrompt.requestedQuantity
-    : 0;
+  const stockCountLotCorrectionCapacity = stockCountPrompt?.eligibleLots.reduce(
+    (total, lot) =>
+      total + Math.max(0, MAX_LINE_QUANTITY - lot.recordedQuantity),
+    0,
+  );
 
   return (
     <section className="page-section inventory-page checkout-page">
@@ -4676,8 +4783,8 @@ export function CheckoutPage({
           className="banner banner-info checkout-stock-override-status"
           role="status"
         >
-          Physical stock counts can be confirmed when recorded stock is short.
-          Each correction is saved with the completed sale.
+          Cart additions above recorded stock need confirmation. At checkout,
+          only the shortage needed for the sale is recorded with your approval.
         </div>
       )}
       {manualEntry && (
@@ -4751,7 +4858,16 @@ export function CheckoutPage({
               <div className="table-loading">Searching catalog…</div>
             ) : products.length ? (
               products.map((product) => (
-                <div className="catalog-result" key={product.id}>
+                <div
+                  className={
+                    stockOverrideEnabled &&
+                    (product.quantityAvailable === 0 ||
+                      recordedStockShortage(product.id) > 0)
+                      ? "catalog-result checkout-stock-warning-row"
+                      : "catalog-result"
+                  }
+                  key={product.id}
+                >
                   <div className="catalog-product-copy">
                     <strong className="product-description">
                       {product.name}
@@ -4764,6 +4880,13 @@ export function CheckoutPage({
                       ₱{product.sellingPrice} · {product.quantityAvailable}{" "}
                       available
                     </span>
+                    {stockOverrideEnabled &&
+                      (product.quantityAvailable === 0 ||
+                        recordedStockShortage(product.id) > 0) && (
+                        <small className="checkout-stock-warning-tag">
+                          <AlertTriangle size={13} /> Stock check required
+                        </small>
+                      )}
                   </div>
                   <button
                     className="button button-primary"
@@ -4843,21 +4966,30 @@ export function CheckoutPage({
             <>
               <div className="cart-lines">
                 {cart.map((line) => (
-                  <div className="cart-line" key={line.product.id}>
+                  <div
+                    className={
+                      recordedStockShortage(line.product.id) > 0
+                        ? "cart-line checkout-stock-shortage"
+                        : "cart-line"
+                    }
+                    key={line.product.id}
+                  >
                     <div>
                       <strong className="product-description">
                         {line.product.name}
                       </strong>
-                      {stockCountEvidence.some(
-                        (entry) => entry.productId === line.product.id,
-                      ) && (
+                      {recordedStockShortage(line.product.id) > 0 && (
                         <small className="checkout-count-override-tag">
-                          Count override: +
-                          {
-                            stockCountEvidence.find(
-                              (entry) => entry.productId === line.product.id,
-                            )?.correctionQuantity
-                          }
+                          <AlertTriangle size={13} />
+                          {stockCountEvidence.some(
+                            (entry) => entry.productId === line.product.id,
+                          )
+                            ? "Confirmed count override: +" +
+                              stockCountEvidence.find(
+                                (entry) => entry.productId === line.product.id,
+                              )?.correctionQuantity
+                            : "Recorded stock short by " +
+                              recordedStockShortage(line.product.id)}
                         </small>
                       )}
                       <small className="checkout-cart-price">
@@ -4914,13 +5046,26 @@ export function CheckoutPage({
                 ))}
                 {bundleCart.map((line) => (
                   <div
-                    className="cart-line bundle-cart-line"
+                    className={
+                      bundleCartShortages(line.offer).length > 0
+                        ? "cart-line bundle-cart-line checkout-stock-shortage"
+                        : "cart-line bundle-cart-line"
+                    }
                     key={line.offerKey}
                   >
                     <div>
                       <strong>
                         {line.offer.name} · {line.offer.code}
                       </strong>
+                      {bundleCartShortages(line.offer).length > 0 && (
+                        <small className="checkout-count-override-tag">
+                          <AlertTriangle size={13} />
+                          {"Stock check required for "}
+                          {bundleCartShortages(line.offer)
+                            .map((shortage) => shortage.productName)
+                            .join(", ")}
+                        </small>
+                      )}
                       <small className="checkout-cart-price">
                         ₱{line.offer.regularTotal} regular · ₱
                         {line.offer.promotionalPrice} offer × {line.quantity}
@@ -6089,176 +6234,131 @@ export function CheckoutPage({
             aria-modal="true"
             aria-labelledby="checkout-stock-count-title"
           >
+            <div className="checkout-stock-warning-icon" aria-hidden="true">
+              <AlertTriangle size={23} />
+            </div>
             <div className="checkout-shift-modal-heading">
-              <span className="eyebrow">PHYSICAL STOCK CHECK</span>
-              <h2 id="checkout-stock-count-title">Confirm physical stock</h2>
+              <span className="eyebrow">STOCK WARNING</span>
+              <h2 id="checkout-stock-count-title">
+                Are you sure this stock is physically available?
+              </h2>
               <p>
-                Count saleable units on the shelf before this sale. The count
-                must cover the full cart demand for this product.
+                Recorded stock is short for this sale. Confirm only if the
+                requested units are physically present and suitable for sale.
               </p>
             </div>
-            <div className="checkout-stock-count-product">
+            <div className="checkout-stock-count-product checkout-stock-warning-facts">
               <strong>{stockCountPrompt.productName}</strong>
-              <small>
-                {stockCountPrompt.sku} · per {stockCountPrompt.unit}
-              </small>
+              <span>
+                Recorded: {stockCountPrompt.recordedQuantity}{" "}
+                {stockCountPrompt.unit}
+                {" · "}In this sale: {stockCountPrompt.requestedQuantity}{" "}
+                {stockCountPrompt.unit}
+              </span>
+              <b>
+                Additional stock to record: +{stockCountPrompt.shortage}{" "}
+                {stockCountPrompt.unit}
+              </b>
             </div>
-            <div className="checkout-stock-count-facts">
-              <span>
-                Recorded saleable
-                <strong>{stockCountPrompt.recordedQuantity}</strong>
-              </span>
-              <span>
-                Total requested
-                <strong>{stockCountPrompt.requestedQuantity}</strong>
-              </span>
-              <span>
-                Shortage<strong>{stockCountPrompt.shortage}</strong>
-              </span>
-            </div>
-            {stockCountPrompt.tracksLots ? (
-              <div className="checkout-stock-lot-counts">
-                <p>
-                  Count each existing, valid lot that has extra units. Leave
-                  uncounted lots blank.
-                </p>
-                {stockCountPrompt.eligibleLots.length ? (
-                  stockCountPrompt.eligibleLots.map((lot) => (
-                    <Field
-                      key={lot.lotId}
-                      id={`stock-count-lot-${lot.lotId}`}
-                      label={`${lot.lotCode} · expires ${lot.expiryDate} · recorded ${lot.recordedQuantity}`}
-                    >
-                      <input
-                        id={`stock-count-lot-${lot.lotId}`}
-                        className="text-input"
-                        type="number"
-                        inputMode="numeric"
-                        min={lot.recordedQuantity + 1}
-                        max={MAX_LINE_QUANTITY}
-                        step={1}
-                        placeholder="Physical count for this lot"
-                        value={stockCountLotPhysical[lot.lotId] ?? ""}
-                        onChange={(event) =>
-                          setStockCountLotPhysical((current) => ({
-                            ...current,
-                            [lot.lotId]: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                  ))
-                ) : (
-                  <p className="checkout-policy-warning">
-                    No existing unexpired, non-quarantined lot is available to
-                    count. Ask the owner to reconcile the lot records first.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <Field
-                id="checkout-stock-physical-count"
-                label={`Verified physical count (${stockCountPrompt.unit})`}
+            <p className="checkout-stock-warning-note">
+              Confirming records only the {stockCountPrompt.shortage} unit
+              shortage with this sale. Expired and quarantined stock remains
+              unavailable.
+              {stockCountPrompt.tracksLots
+                ? " The correction will be assigned across eligible lots in expiry order."
+                : ""}
+            </p>
+            {stockCountPrompt.tracksLots &&
+              (stockCountPrompt.eligibleLots.length === 0 ||
+                (stockCountLotCorrectionCapacity ?? 0) <
+                  stockCountPrompt.shortage) && (
+                <div className="banner banner-error" role="alert">
+                  No eligible lot has enough room to record this correction. Ask
+                  the owner to reconcile the lot records first.
+                </div>
+              )}
+            <div className="checkout-quantity-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => setStockCountPrompt(null)}
+                disabled={saving}
               >
-                <input
-                  id="checkout-stock-physical-count"
-                  className="text-input"
-                  type="number"
-                  inputMode="numeric"
-                  min={stockCountPrompt.recordedQuantity + 1}
-                  max={MAX_LINE_QUANTITY}
-                  step={1}
-                  autoFocus
-                  value={stockCountPhysical}
-                  onChange={(event) =>
-                    setStockCountPhysical(event.target.value)
-                  }
-                  required
-                />
-              </Field>
-            )}
-            <div className="checkout-stock-count-result" aria-live="polite">
-              <span>
-                Correction
-                <strong>+{Math.max(0, stockCountDraftCorrection)}</strong>
-              </span>
-              <span>
-                Physical quantity<strong>{stockCountDraftPhysical}</strong>
-              </span>
-              <span>
-                Remaining after sale<strong>{stockCountDraftRemaining}</strong>
-              </span>
+                Cancel sale confirmation
+              </button>
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={() => void confirmStockCount()}
+                disabled={
+                  saving ||
+                  stockCountPrompt.shortage < 1 ||
+                  (stockCountPrompt.tracksLots &&
+                    (stockCountPrompt.eligibleLots.length === 0 ||
+                      (stockCountLotCorrectionCapacity ?? 0) <
+                        stockCountPrompt.shortage))
+                }
+              >
+                {saving ? "Recalculating..." : "Yes, stock is available"}
+              </button>
             </div>
-            <form
-              className="checkout-shift-modal-form checkout-stock-count-form"
-              onSubmit={(event) => void confirmStockCount(event)}
-            >
-              <Field id="checkout-stock-count-category" label="Reason category">
-                <select
-                  id="checkout-stock-count-category"
-                  className="text-input select-input"
-                  value={stockCountReasonCategory}
-                  onChange={(event) =>
-                    setStockCountReasonCategory(
-                      event.target.value as "COUNT_DISCREPANCY" | "OTHER",
-                    )
-                  }
-                >
-                  <option value="COUNT_DISCREPANCY">Count discrepancy</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              </Field>
-              <Field id="checkout-stock-count-reason" label="Short explanation">
-                <textarea
-                  id="checkout-stock-count-reason"
-                  className="text-input"
-                  rows={3}
-                  maxLength={500}
-                  value={stockCountReason}
-                  onChange={(event) => setStockCountReason(event.target.value)}
-                  placeholder="Example: Recounted shelf stock before sale."
-                  required
-                />
-              </Field>
-              <label className="inventory-checkbox checkout-stock-count-attestation">
-                <input
-                  type="checkbox"
-                  checked={stockCountAttested}
-                  onChange={(event) =>
-                    setStockCountAttested(event.target.checked)
-                  }
-                />
-                <span>
-                  I physically verified these units are available and suitable
-                  for sale.
-                </span>
-              </label>
-              <div className="checkout-quantity-actions">
-                <button
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() => setStockCountPrompt(null)}
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="button button-primary"
-                  type="submit"
-                  disabled={
-                    saving ||
-                    !stockCountAttested ||
-                    stockCountReason.trim().replace(/\s/g, "").length < 3 ||
-                    stockCountDraftCorrection < 1 ||
-                    stockCountDraftRemaining < 0 ||
-                    (stockCountPrompt.tracksLots &&
-                      stockCountPrompt.eligibleLots.length === 0)
-                  }
-                >
-                  {saving ? "Recalculating…" : "Confirm count and continue"}
-                </button>
-              </div>
-            </form>
+          </section>
+        </div>
+      )}
+      {pendingCartAdd && (
+        <div className="shift-modal-backdrop checkout-quantity-backdrop">
+          <section
+            className="checkout-shift-modal checkout-stock-count-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="checkout-cart-stock-warning-title"
+          >
+            <div className="checkout-stock-warning-icon" aria-hidden="true">
+              <AlertTriangle size={23} />
+            </div>
+            <div className="checkout-shift-modal-heading">
+              <span className="eyebrow">CART STOCK WARNING</span>
+              <h2 id="checkout-cart-stock-warning-title">
+                Are you sure you want to add this{" "}
+                {pendingCartAdd.kind === "bundle" ? "bundle" : "product"}?
+              </h2>
+              <p>
+                The cart would go above recorded stock. Continue only if the
+                units are physically present and suitable for sale.
+              </p>
+            </div>
+            <div className="checkout-stock-warning-list">
+              {pendingCartAdd.shortages.map((shortage) => (
+                <div key={shortage.productId}>
+                  <strong>{shortage.productName}</strong>
+                  <span>
+                    Recorded {shortage.recordedQuantity}; cart total will be{" "}
+                    {shortage.requestedQuantity} {shortage.unit}
+                  </span>
+                  <b>Unrecorded shortage: {shortage.shortage}</b>
+                </div>
+              ))}
+            </div>
+            <p className="checkout-stock-warning-note">
+              Checkout will ask you to confirm the physical stock before saving
+              the sale. Expired and quarantined stock cannot be used.
+            </p>
+            <div className="checkout-quantity-actions">
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={() => setPendingCartAdd(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="button button-primary checkout-stock-warning-confirm"
+                type="button"
+                onClick={confirmPendingCartAdd}
+              >
+                Yes, add to cart
+              </button>
+            </div>
           </section>
         </div>
       )}
@@ -6316,7 +6416,9 @@ export function CheckoutPage({
               </Field>
               <small className="field-hint">
                 {stockOverrideEnabled
-                  ? `Enter up to ${quantityDialogAvailable}. Stock count confirmation is requested during checkout when recorded stock is short.`
+                  ? "Enter up to " +
+                    quantityDialogAvailable +
+                    ". A warning appears before adding units above recorded stock. Checkout asks you to confirm that the units are physically available."
                   : `${quantityDialogAvailable} available to add. You can adjust the quantity in the cart.`}
               </small>
               <div className="checkout-quantity-actions">
