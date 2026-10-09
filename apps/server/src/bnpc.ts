@@ -69,6 +69,7 @@ export function resolveBnpcCheckoutContext(
   db: Database.Database,
   evidence: BnpcEvidence,
   idNumber: string,
+  businessDate?: string,
 ): BnpcCheckoutContext {
   const policy = readBnpcPolicy(db);
   if (!policy.enabled || !policy.storeEligibilityConfirmed) {
@@ -90,7 +91,9 @@ export function resolveBnpcCheckoutContext(
     const letterDate = new Date(
       `${evidence.authorizationLetterIssuedDate}T00:00:00.000Z`,
     );
-    const today = new Date(`${manilaCalendarDate()}T00:00:00.000Z`);
+    const today = new Date(
+      `${businessDate ?? manilaCalendarDate()}T00:00:00.000Z`,
+    );
     if (
       !Number.isFinite(letterDate.getTime()) ||
       letterDate.toISOString().slice(0, 10) !==
@@ -110,7 +113,7 @@ export function resolveBnpcCheckoutContext(
   }
 
   const holderKeyHmac = bnpcHolderKey(idNumber);
-  const weekStartDate = manilaWeekStart();
+  const weekStartDate = manilaWeekStart(businessDate);
   const local = db
     .prepare(
       `SELECT COALESCE(SUM(qualifying_purchase_delta_centavos), 0) AS purchase,

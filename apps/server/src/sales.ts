@@ -142,6 +142,7 @@ const bnpcEvidenceSchema = z
 const checkoutBaseSchema = z
   .object({
     benefitType: benefitSchema,
+    businessDate: z.iso.date().optional(),
     items: checkoutItemsSchema,
     bundleOffers: checkoutBundleOffersSchema.default([]),
     paymentMethod: paymentSchema.default("QR"),
@@ -156,6 +157,7 @@ const checkoutBaseSchema = z
 const saleRequestSchema = z
   .object({
     benefitType: benefitSchema,
+    businessDate: z.iso.date().optional(),
     items: checkoutItemsSchema,
     bundleOffers: checkoutBundleOffersSchema.default([]),
     paymentMethod: paymentSchema,
@@ -527,6 +529,7 @@ function bnpcContextForCheckout(
   benefitType: SaleBenefit,
   idNumber: string | undefined,
   evidence: BnpcEvidence | undefined,
+  businessDate?: string,
 ): BnpcCheckoutContext | undefined {
   if (!hasRequestedBnpc(items, bundleOffers)) return undefined;
   if (
@@ -539,7 +542,7 @@ function bnpcContextForCheckout(
     throw new SalesError(409, "bnpc_evidence_required");
   }
   try {
-    return resolveBnpcCheckoutContext(db, evidence, idNumber);
+    return resolveBnpcCheckoutContext(db, evidence, idNumber, businessDate);
   } catch (error) {
     if (error instanceof BnpcCheckoutError)
       throw new SalesError(409, error.code);
@@ -2365,6 +2368,15 @@ export function registerSalesRoutes(
   router.post("/sales/preview", requireAuth, csrf, (req, res) => {
     const parsed = checkoutBaseSchema.safeParse(req.body);
     if (!parsed.success) return validationFailure(res);
+    if (parsed.data.businessDate && req.user!.role !== "owner") {
+      return res.status(403).json({ error: "manual_date_owner_only" });
+    }
+    if (
+      parsed.data.businessDate &&
+      parsed.data.businessDate > manilaBusinessDate(new Date())
+    ) {
+      return res.status(400).json({ error: "invalid_business_date" });
+    }
     try {
       const policy = taxPolicy(db);
       const bnpcContext = bnpcContextForCheckout(
@@ -2374,6 +2386,7 @@ export function registerSalesRoutes(
         parsed.data.benefitType,
         parsed.data.customerIdNumber,
         parsed.data.bnpcChecks,
+        parsed.data.businessDate,
       );
       const result = calculateCart(
         db,
@@ -2402,6 +2415,15 @@ export function registerSalesRoutes(
   router.post("/sales", requireAuth, csrf, (req, res) => {
     const parsed = saleRequestSchema.safeParse(req.body);
     if (!parsed.success || !req.user) return validationFailure(res);
+    if (parsed.data.businessDate && req.user.role !== "owner") {
+      return res.status(403).json({ error: "manual_date_owner_only" });
+    }
+    if (
+      parsed.data.businessDate &&
+      parsed.data.businessDate > manilaBusinessDate(new Date())
+    ) {
+      return res.status(400).json({ error: "invalid_business_date" });
+    }
     const bnpcRequested = hasRequestedBnpc(
       parsed.data.items,
       parsed.data.bundleOffers,
@@ -2427,6 +2449,9 @@ export function registerSalesRoutes(
           paymentMethod: parsed.data.paymentMethod,
           items: parsed.data.items,
           bundleOffers: parsed.data.bundleOffers,
+          ...(parsed.data.businessDate
+            ? { businessDate: parsed.data.businessDate }
+            : {}),
           bnpcChecks: parsed.data.bnpcChecks ?? null,
           bnpcHolderKey: holderKeyForHash,
         }),
@@ -2453,7 +2478,15 @@ export function registerSalesRoutes(
         if (!policy.approved) {
           throw new SalesError(409, "tax_policy_not_approved");
         }
-        const currentShift = shiftForCashier(db, req.user!.id);
+        const currentShift = parsed.data.businessDate
+          ? (db
+              .prepare(
+                `SELECT id, cashier_user_id, opened_at, opening_cash_centavos,
+                        expected_cash_centavos
+                 FROM shifts WHERE closed_at IS NULL LIMIT 1`,
+              )
+              .get() as ReturnType<typeof shiftForCashier>)
+          : shiftForCashier(db, req.user!.id);
         if (!currentShift) throw new SalesError(409, "open_shift_required");
         const bnpcContext = bnpcContextForCheckout(
           db,
@@ -2462,6 +2495,7 @@ export function registerSalesRoutes(
           parsed.data.benefitType,
           parsed.data.customerIdNumber,
           parsed.data.bnpcChecks,
+          parsed.data.businessDate,
         );
         const preview = calculateCart(
           db,
@@ -2474,7 +2508,8 @@ export function registerSalesRoutes(
           bnpcContext,
         );
         const nowDate = new Date();
-        const businessDate = manilaBusinessDate(nowDate);
+        const businessDate =
+          parsed.data.businessDate ?? manilaBusinessDate(nowDate);
         const transactionId = nextTransactionId(db, businessDate);
         const saleId = randomUUID();
         const now = nowDate.toISOString();
@@ -2849,6 +2884,7 @@ export function registerSalesRoutes(
           entityId: saleId,
           details: {
             transactionId,
+            manualBusinessDate: parsed.data.businessDate ?? null,
             paymentMethod: parsed.data.paymentMethod,
             benefitType: parsed.data.benefitType,
             lineCount: preview.lines.length,

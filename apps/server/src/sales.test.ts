@@ -1090,6 +1090,78 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toBe(400);
   });
 
+  it("allows an owner to enter an outage sale for a past business date", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, { sku: "SYN-OFFLINE-SALE" });
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier, "50.00")).status).toBe(201);
+
+    const businessDate = manilaDayAfter(-1);
+    const previewCsrf = await csrfFor(owner);
+    const preview = await owner
+      .post("/api/sales/preview")
+      .set("x-csrf-token", previewCsrf)
+      .send({
+        benefitType: "REGULAR",
+        businessDate,
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+
+    const saleCsrf = await csrfFor(owner);
+    const saleResponse = await owner
+      .post("/api/sales")
+      .set("x-csrf-token", saleCsrf)
+      .send({
+        benefitType: "REGULAR",
+        businessDate,
+        paymentMethod: "CASH",
+        requestKey: randomUUID(),
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(saleResponse.status, JSON.stringify(saleResponse.body)).toBe(201);
+    expect(saleResponse.body.sale).toMatchObject({
+      businessDate,
+      transactionId: `MTX-${businessDate.replaceAll("-", "")}-000001`,
+      cashierEmail: "owner.sales@example.test",
+    });
+
+    const updatedProduct = await owner.get("/api/products");
+    expect(
+      updatedProduct.body.products.find(
+        (entry: { id: string }) => entry.id === product.id,
+      ).quantityOnHand,
+    ).toBe(product.quantityOnHand - 1);
+
+    const cashierPreviewCsrf = await csrfFor(cashier);
+    expect(
+      (
+        await cashier
+          .post("/api/sales/preview")
+          .set("x-csrf-token", cashierPreviewCsrf)
+          .send({
+            benefitType: "REGULAR",
+            businessDate,
+            items: [{ productId: product.id, quantity: 1 }],
+          })
+      ).status,
+    ).toBe(403);
+    const futureDateCsrf = await csrfFor(owner);
+    expect(
+      (
+        await owner
+          .post("/api/sales/preview")
+          .set("x-csrf-token", futureDateCsrf)
+          .send({
+            benefitType: "REGULAR",
+            businessDate: manilaDayAfter(1),
+            items: [{ productId: product.id, quantity: 1 }],
+          })
+      ).status,
+    ).toBe(400);
+  });
+
   it("copies one editable daily sales summary into the journal", async () => {
     const owner = await signIn("owner.sales@example.test", ownerPassword);
     await configureApprovedPolicy(owner);

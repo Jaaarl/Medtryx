@@ -133,6 +133,19 @@ const PRODUCTS_PER_PAGE = 10;
 const STOCK_PRODUCTS_PER_PAGE = 6;
 const LOTS_PER_PAGE = 6;
 
+function todayInManila(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function sortRows<T>(
   rows: T[],
   valueFor: (row: T) => string | number | null,
@@ -253,6 +266,10 @@ function errorMessage(error: unknown): string {
     tax_policy_not_approved:
       "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
     open_shift_required: "Open a cashier shift before finalizing a sale.",
+    manual_date_owner_only:
+      "Only an owner can record a sale with a custom business date.",
+    invalid_business_date:
+      "Choose a valid business date that is not in the future.",
     shift_already_open:
       "Only one cash register may be open at a time. Use emergency close if the previous cashier left a shift open.",
     product_not_senior_eligible:
@@ -3355,6 +3372,7 @@ type CheckoutPreview = {
 type SaleRecord = {
   id: string;
   transactionId: string;
+  businessDate: string;
   createdAt: string;
   paymentMethod: "CASH" | "QR";
   subtotal: string;
@@ -3417,7 +3435,9 @@ function ShiftElapsed({ openedAt }: { openedAt: string }) {
   );
 }
 
-export function CheckoutPage() {
+export function CheckoutPage({
+  manualEntry = false,
+}: { manualEntry?: boolean } = {}) {
   const [query, setQuery] = useState("");
   const [productToAdd, setProductToAdd] = useState<CatalogProduct | null>(null);
   const [bundleOfferToAdd, setBundleOfferToAdd] = useState<BundleOffer | null>(
@@ -3476,6 +3496,7 @@ export function CheckoutPage() {
   const [preview, setPreview] = useState<CheckoutPreview | null>(null);
   const [lotPickConfirmed, setLotPickConfirmed] = useState(false);
   const [requestKey, setRequestKey] = useState("");
+  const [businessDate, setBusinessDate] = useState(todayInManila);
   const [saleRecord, setSaleRecord] = useState<SaleRecord | null>(null);
   const [cartReceipt, setCartReceipt] = useState<SampleReceiptData | null>(
     null,
@@ -4041,6 +4062,7 @@ export function CheckoutPage() {
       const result = await api.post<CheckoutPreview>("/sales/preview", {
         benefitType: effectiveBenefitType,
         paymentMethod,
+        ...(manualEntry ? { businessDate } : {}),
         items: cart.map((line) => ({
           productId: line.product.id,
           quantity: line.quantity,
@@ -4072,7 +4094,7 @@ export function CheckoutPage() {
   }
 
   async function finalizeSale() {
-    if (!preview || !policy?.approved || !shift || !requestKey) return;
+    if (!preview || !policy?.approved || !checkoutShift || !requestKey) return;
     if (preview.paymentMethod === "CASH" && !cashReceivedIsValid) return;
     setSaving(true);
     setError("");
@@ -4084,6 +4106,7 @@ export function CheckoutPage() {
           benefitType: effectiveBenefitType,
           paymentMethod,
           requestKey,
+          ...(manualEntry ? { businessDate } : {}),
           items: cart.map((line) => ({
             productId: line.product.id,
             quantity: line.quantity,
@@ -4167,7 +4190,13 @@ export function CheckoutPage() {
       if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
       setProducts(catalogResult.products);
       setBundleOffers(bundleResult.bundles);
-      setNotice(result.replayed ? "Saved sale recovered." : "Sale saved.");
+      setNotice(
+        result.replayed
+          ? "Saved sale recovered."
+          : manualEntry
+            ? `Manual sale saved for ${businessDate}.`
+            : "Sale saved.",
+      );
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -4284,14 +4313,45 @@ export function CheckoutPage() {
   const quantityInputId = bundleOfferToAdd
     ? "checkout-bundle-quantity"
     : "checkout-product-quantity";
+  const checkoutShift = manualEntry ? (shift ?? registerShift) : shift;
 
   return (
     <section className="page-section inventory-page checkout-page">
       <PageHeading
-        eyebrow="CASHIER WORKSPACE"
-        title="Checkout"
-        description="Find an active catalog product, review its price and availability, then add it to the cart."
+        eyebrow={manualEntry ? "OWNER WORKSPACE" : "CASHIER WORKSPACE"}
+        title={manualEntry ? "Manual checkout" : "Checkout"}
+        description={
+          manualEntry
+            ? "Enter a sale from a system outage using its original Manila business date. Checkout still applies the approved tax settings and current stock rules."
+            : "Find an active catalog product, review its price and availability, then add it to the cart."
+        }
       />
+      {manualEntry && (
+        <section className="settings-main-card manual-checkout-date-card">
+          <Field id="manual-sale-business-date" label="Sale business date">
+            <input
+              id="manual-sale-business-date"
+              aria-label="Sale business date"
+              className="text-input"
+              type="date"
+              max={todayInManila()}
+              value={businessDate}
+              onChange={(event) => {
+                setBusinessDate(event.target.value);
+                setPreview(null);
+                setRequestKey("");
+                setSaleRecord(null);
+                setCartReceipt(null);
+              }}
+              required
+            />
+          </Field>
+          <small className="field-hint">
+            The selected date is saved on the sale for reporting. Inventory is
+            updated now when the sale is entered.
+          </small>
+        </section>
+      )}
       {error && (
         <div className="banner banner-error" role="alert">
           {error}
@@ -4557,7 +4617,13 @@ export function CheckoutPage() {
                 ? `Approved tax profile: ${policy.version}`
                 : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
-          {!operationsLoading && !shift && (
+          {manualEntry && registerShift && !shift && (
+            <small className="field-hint">
+              This entry will use the open register shift under{" "}
+              {registerShift.openedByEmail}.
+            </small>
+          )}
+          {!operationsLoading && !checkoutShift && (
             <div className="shift-modal-backdrop checkout-register-required-backdrop">
               <section
                 className="checkout-shift-modal"
@@ -5492,14 +5558,18 @@ export function CheckoutPage() {
                 disabled={
                   saving ||
                   !policy?.approved ||
-                  !shift ||
+                  !checkoutShift ||
                   !cashReceivedIsValid ||
                   !requestKey ||
                   (hasTrackedCart && !lotPickConfirmed)
                 }
                 onClick={requestSaleConfirmation}
               >
-                {saving ? "Saving…" : "Confirm sale"}
+                {saving
+                  ? "Saving…"
+                  : manualEntry
+                    ? "Save manual sale"
+                    : "Confirm sale"}
               </button>
               <button
                 className="button button-secondary checkout-receipt-preview-button"
@@ -5513,7 +5583,7 @@ export function CheckoutPage() {
                   Finalization is locked while the policy is provisional.
                 </small>
               )}
-              {!shift && (
+              {!checkoutShift && (
                 <small className="field-hint">
                   Open a cashier shift before confirming a sale.
                 </small>
@@ -5524,6 +5594,9 @@ export function CheckoutPage() {
             <div className="sale-saved-card" role="status">
               <strong>{saleRecord.label}</strong>
               <span>{saleRecord.transactionId}</span>
+              {manualEntry && (
+                <span>Business date: {saleRecord.businessDate}</span>
+              )}
               <span>
                 ₱{saleRecord.amountDue} ·{" "}
                 {saleRecord.paymentMethod === "QR" ? "QR declared" : "Cash"}
@@ -5591,7 +5664,11 @@ export function CheckoutPage() {
                     void finalizeSale();
                   }}
                 >
-                  {saving ? "Saving…" : "Confirm cash sale"}
+                  {saving
+                    ? "Saving…"
+                    : manualEntry
+                      ? "Save manual sale"
+                      : "Confirm cash sale"}
                 </button>
               </div>
             </section>

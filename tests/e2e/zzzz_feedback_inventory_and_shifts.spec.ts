@@ -417,6 +417,39 @@ test("daily sales, Journal lock, and report summary cover the current business d
   await expect(dailySalesRow).toContainText("30.00");
   await expect(dailySalesRow).not.toHaveClass(/journal-row-unedited/);
 
+  const manualSaleDate = manilaDayAfter(-1);
+  await ownerPage.goto("/manual-checkout");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Manual checkout" }),
+  ).toBeVisible();
+  await ownerPage.getByLabel("Sale business date").fill(manualSaleDate);
+  await ownerPage.getByLabel("Search catalog").fill(productName);
+  const manualCatalogRow = ownerPage
+    .locator(".catalog-result")
+    .filter({ hasText: productName });
+  await manualCatalogRow.getByRole("button", { name: "Add to cart" }).click();
+  await ownerPage.getByLabel("Quantity to add").fill("1");
+  await ownerPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add to cart" })
+    .click();
+  await ownerPage
+    .getByRole("button", { name: "Calculate line taxes and discounts" })
+    .click();
+  await ownerPage.getByRole("button", { name: "Save manual sale" }).click();
+  await ownerPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Save manual sale" })
+    .click();
+  await expect(
+    ownerPage.getByText(`Manual sale saved for ${manualSaleDate}.`),
+  ).toBeVisible();
+  await expect(
+    ownerPage
+      .locator(".sale-saved-card")
+      .getByText(`Business date: ${manualSaleDate}`),
+  ).toBeVisible();
+
   await cashierPage.goto("/daily-sales");
   await expect(
     cashierPage.getByRole("heading", { name: "Daily sales" }),
@@ -447,7 +480,7 @@ test("daily sales, Journal lock, and report summary cover the current business d
   const closeResponse = await postApi(
     cashierPage,
     `/api/shifts/${shift.id}/close`,
-    { actualCashCount: "30.00" },
+    { actualCashCount: "45.00" },
   );
   expect(closeResponse.status()).toBe(200);
   await cashierPage.close();

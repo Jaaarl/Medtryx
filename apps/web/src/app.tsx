@@ -15,6 +15,7 @@ import {
   ArrowRight,
   Boxes,
   BookOpen,
+  CalendarDays,
   ClipboardList,
   Clock,
   DatabaseBackup,
@@ -49,6 +50,12 @@ import { JournalPage } from "./journal-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
+  {
+    to: "/manual-checkout",
+    label: "Manual checkout",
+    icon: CalendarDays,
+    ownerOnly: true,
+  },
   {
     to: "/daily-sales",
     label: "Daily sales",
@@ -785,6 +792,10 @@ export function App() {
           <Route path="daily-sales" element={<DailySalesSummaryPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route element={<Guard ownerOnly />}>
+            <Route
+              path="manual-checkout"
+              element={<CheckoutPage manualEntry />}
+            />
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
             <Route path="bundles" element={<BundlesPage />} />
