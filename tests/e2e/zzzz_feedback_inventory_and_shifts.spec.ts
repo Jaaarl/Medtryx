@@ -336,7 +336,7 @@ test("cart quantity can be edited within available stock and above zero", async 
   await cashierPage.close();
 });
 
-test("daily sales shows totals and Journal locks the current business day", async ({
+test("daily sales, Journal lock, and report journal cover the current business day", async ({
   browser,
 }) => {
   const ownerContext = await browser.newContext();
@@ -401,6 +401,19 @@ test("daily sales shows totals and Journal locks the current business day", asyn
   await expect(
     ownerPage.locator(".daily-sales-journal-summary tbody tr"),
   ).toContainText("30.00");
+
+  await ownerPage.goto("/reports");
+  const reportJournal = ownerPage.locator(".report-low-stock").filter({
+    has: ownerPage.getByRole("heading", { name: "Daily sales journal" }),
+  });
+  await expect(
+    reportJournal.getByRole("columnheader", { name: "Date" }),
+  ).toBeVisible();
+  const reportJournalRow = reportJournal
+    .getByRole("row")
+    .filter({ hasText: savedSale.sale.transactionId });
+  await expect(reportJournalRow).toContainText(savedSale.sale.businessDate);
+  await expect(reportJournalRow).toHaveClass(/journal-row-unedited/);
 
   await cashierPage.goto("/daily-sales");
   await expect(
