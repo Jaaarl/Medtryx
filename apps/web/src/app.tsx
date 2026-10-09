@@ -47,6 +47,7 @@ import { BundlesPage } from "./bundles-page";
 import { ProductMovementPage } from "./product-movement-page";
 import { DailySalesSummaryPage } from "./daily-sales-summary";
 import { JournalPage } from "./journal-page";
+import { CheckoutOverridesPage } from "./checkout-overrides-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -777,6 +778,88 @@ function SettingsPage() {
       </div>
       <TaxPolicySettings />
       <BnpcPolicySettings />
+      <CheckoutInventorySettings />
+    </section>
+  );
+}
+
+function CheckoutInventorySettings() {
+  const [allowOverride, setAllowOverride] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .get<{ allowStockCountOverride: boolean }>("/settings/checkout-inventory")
+      .then((setting) => {
+        if (active) setAllowOverride(setting.allowStockCountOverride);
+      })
+      .catch(() => {
+        if (active) setError("Unable to load checkout inventory settings.");
+      })
+      .finally(() => {
+        if (active) setLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function save(value: boolean) {
+    setSaving(true);
+    setError("");
+    try {
+      const setting = await api.put<{ allowStockCountOverride: boolean }>(
+        "/settings/checkout-inventory",
+        { allowStockCountOverride: value },
+      );
+      setAllowOverride(setting.allowStockCountOverride);
+    } catch {
+      setError("Unable to save the checkout inventory setting.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="settings-main-card checkout-inventory-settings">
+      <div className="card-heading">
+        <div>
+          <h2>Checkout inventory</h2>
+          <p>
+            Allow cashiers to confirm a physical stock count when recorded
+            saleable stock is short. Corrections require a reason and are saved
+            with the completed sale. Expiry and quarantine restrictions remain
+            in force.
+          </p>
+        </div>
+      </div>
+      {error && (
+        <div className="banner banner-error" role="alert">
+          {error}
+        </div>
+      )}
+      <label className="inventory-checkbox checkout-inventory-setting-toggle">
+        <input
+          type="checkbox"
+          checked={allowOverride}
+          disabled={!loaded || saving}
+          onChange={(event) => void save(event.target.checked)}
+        />
+        <span>
+          <strong>Allow checkout stock count override</strong>
+          <small>
+            {allowOverride
+              ? "Enabled for live checkout. Manual checkout keeps its stock limits."
+              : "Off. Cashiers must stay within recorded stock."}
+          </small>
+        </span>
+      </label>
+      <Link className="button button-secondary" to="/stock/checkout-overrides">
+        Review checkout count overrides
+      </Link>
     </section>
   );
 }
@@ -798,6 +881,10 @@ export function App() {
             />
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
+            <Route
+              path="stock/checkout-overrides"
+              element={<CheckoutOverridesPage />}
+            />
             <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
             <Route path="journal" element={<JournalPage />} />

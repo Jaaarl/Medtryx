@@ -20,6 +20,10 @@ import {
 } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
 import {
+  checkoutInventoryPolicy,
+  type CheckoutInventoryPolicy,
+} from "./checkout-inventory.js";
+import {
   allocateFefo,
   getLotBalances,
   manilaCalendarDate,
@@ -101,6 +105,58 @@ const checkoutBundleOffersSchema = z
       .strict(),
   )
   .max(20);
+const checkoutCountOverrideSchema = z
+  .object({
+    productId: z.uuid(),
+    physicalQuantity: z.number().int().min(0).max(MAX_LINE_QUANTITY),
+    reasonCategory: z.enum(["COUNT_DISCREPANCY", "OTHER"]),
+    reason: z
+      .string()
+      .trim()
+      .min(3)
+      .max(500)
+      .refine((value) => value.replace(/\s/gu, "").length >= 3),
+    physicallyVerified: z.literal(true),
+    lots: z
+      .array(
+        z
+          .object({
+            lotId: z.uuid(),
+            physicalQuantity: z.number().int().min(0).max(MAX_LINE_QUANTITY),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
+  })
+  .strict();
+const checkoutCountOverridesSchema = z
+  .array(checkoutCountOverrideSchema)
+  .max(MAX_CART_LINES)
+  .superRefine((overrides, context) => {
+    const ids = new Set<string>();
+    for (const [index, entry] of overrides.entries()) {
+      if (ids.has(entry.productId)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "productId"],
+          message: "duplicate_stock_count_override",
+        });
+      }
+      ids.add(entry.productId);
+      const lotIds = new Set<string>();
+      for (const [lotIndex, lot] of (entry.lots ?? []).entries()) {
+        if (lotIds.has(lot.lotId)) {
+          context.addIssue({
+            code: "custom",
+            path: [index, "lots", lotIndex, "lotId"],
+            message: "duplicate_stock_count_override_lot",
+          });
+        }
+        lotIds.add(lot.lotId);
+      }
+    }
+  });
 
 const checkoutItemsSchema = z
   .array(checkoutItemSchema)
@@ -148,6 +204,12 @@ const checkoutBaseSchema = z
     paymentMethod: paymentSchema.default("QR"),
     customerIdNumber: z.string().trim().min(2).max(80).optional(),
     bnpcChecks: bnpcEvidenceSchema.optional(),
+    countOverrides: checkoutCountOverridesSchema.optional(),
+    overrideStockStateHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    overridePolicyVersion: z.number().int().positive().optional(),
   })
   .strict()
   .refine((value) => value.items.length > 0 || value.bundleOffers.length > 0, {
@@ -168,6 +230,12 @@ const saleRequestSchema = z
     customerIdNumber: z.string().trim().min(2).max(80).optional(),
     customerIdChecked: z.boolean().default(false),
     bnpcChecks: bnpcEvidenceSchema.optional(),
+    countOverrides: checkoutCountOverridesSchema.optional(),
+    overrideStockStateHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    overridePolicyVersion: z.number().int().positive().optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -373,6 +441,7 @@ class SalesError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly details: Record<string, unknown> = {},
   ) {
     super(code);
   }
@@ -408,6 +477,70 @@ function roundedInteger(value: Decimal): number {
     throw new SalesError(409, "inventory_value_overflow");
   }
   return result;
+}
+
+function checkoutOverrideCostBasis(
+  db: Database.Database,
+  product: {
+    id: string;
+    quantity_on_hand: number;
+    inventory_value_centavos: number;
+  },
+): {
+  costSourceType: "WEIGHTED_AVERAGE" | "OPENING" | "RECEIPT";
+  costSourceEventId: string | null;
+  costSourceSequence: number | null;
+  estimatedCost: boolean;
+  unitCostCentavos: number;
+} | null {
+  if (product.quantity_on_hand > 0) {
+    return {
+      costSourceType: "WEIGHTED_AVERAGE",
+      costSourceEventId: null,
+      costSourceSequence: null,
+      estimatedCost: false,
+      unitCostCentavos: roundedInteger(
+        new Decimal(product.inventory_value_centavos).div(
+          product.quantity_on_hand,
+        ),
+      ),
+    };
+  }
+  const source = db
+    .prepare(
+      `SELECT sequence, id, event_type, unit_cost_centavos
+       FROM stock_events
+       WHERE product_id = ? AND event_type IN ('OPENING', 'RECEIPT')
+         AND quantity_delta > 0 AND unit_cost_centavos IS NOT NULL
+         AND (unit_cost_centavos > 0 OR length(trim(coalesce(reason, ''))) > 0)
+       ORDER BY sequence DESC LIMIT 1`,
+    )
+    .get(product.id);
+  if (!source) return null;
+  const row = source as {
+    sequence: number;
+    id: string;
+    event_type: "OPENING" | "RECEIPT";
+    unit_cost_centavos: number;
+  };
+  return {
+    costSourceType: row.event_type,
+    costSourceEventId: row.id,
+    costSourceSequence: row.sequence,
+    estimatedCost: false,
+    unitCostCentavos: row.unit_cost_centavos,
+  };
+}
+
+function safeOverrideInventoryValue(
+  quantity: number,
+  unitCost: number,
+): number {
+  const value = BigInt(quantity) * BigInt(unitCost);
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new SalesError(409, "inventory_value_overflow");
+  }
+  return Number(value);
 }
 
 function configuredTaxApproval(
@@ -482,7 +615,7 @@ function validationFailure(res: Response): void {
 
 function handleSalesError(error: unknown, res: Response): boolean {
   if (error instanceof SalesError) {
-    res.status(error.status).json({ error: error.code });
+    res.status(error.status).json({ error: error.code, ...error.details });
     return true;
   }
   if (error instanceof TaxCalculationError) {
@@ -613,6 +746,8 @@ function calculateCart(
   requireLotConfirmation = false,
   bundleOffers: z.infer<typeof checkoutBundleOffersSchema> = [],
   bnpcContext?: BnpcCheckoutContext,
+  countOverrides: z.infer<typeof checkoutCountOverridesSchema> = [],
+  inventoryPolicy: CheckoutInventoryPolicy = checkoutInventoryPolicy(db),
 ) {
   const reservedLots = new Map<string, number>();
   const reservedUntracked = new Map<string, number>();
@@ -825,6 +960,301 @@ function calculateCart(
     });
   }
 
+  const demandByProduct = new Map<string, number>();
+  for (const { item } of expandedItems) {
+    const demand = (demandByProduct.get(item.productId) ?? 0) + item.quantity;
+    if (!Number.isSafeInteger(demand) || demand > MAX_LINE_QUANTITY) {
+      throw new SalesError(400, "checkout_quantity_overflow");
+    }
+    demandByProduct.set(item.productId, demand);
+  }
+  const suppliedOverrides = new Map(
+    countOverrides.map((entry) => [entry.productId, entry]),
+  );
+  if (
+    suppliedOverrides.size > 0 &&
+    (!inventoryPolicy.valid || !inventoryPolicy.allowStockCountOverride)
+  ) {
+    throw new SalesError(409, "stock_count_override_disabled");
+  }
+  const overridePlans = new Map<
+    string,
+    {
+      productId: string;
+      productName: string;
+      sku: string;
+      unit: string;
+      tracksLots: boolean;
+      recordedQuantity: number;
+      physicalQuantity: number;
+      correctionQuantity: number;
+      saleQuantity: number;
+      reasonCategory: "COUNT_DISCREPANCY" | "OTHER";
+      reason: string;
+      costSourceType: "WEIGHTED_AVERAGE" | "OPENING" | "RECEIPT";
+      costSourceEventId: string | null;
+      costSourceSequence: number | null;
+      estimatedCost: boolean;
+      unitCostCentavos: number;
+      inventoryValueDeltaCentavos: number;
+      lots: Array<{
+        lotId: string;
+        lotCode: string;
+        expiryDate: string;
+        recordedQuantity: number;
+        physicalQuantity: number;
+        correctionQuantity: number;
+        saleQuantity: number;
+      }>;
+    }
+  >();
+  const lotCorrections = new Map<string, number>();
+  const snapshotProducts: Array<Record<string, unknown>> = [];
+  for (const [productId, requestedQuantity] of demandByProduct) {
+    const product = db
+      .prepare(
+        `SELECT id, sku, name, unit, quantity_on_hand,
+                inventory_value_centavos, tracks_lots, is_active
+         FROM products WHERE id = ?`,
+      )
+      .get(productId) as
+      | {
+          id: string;
+          sku: string;
+          name: string;
+          unit: string;
+          quantity_on_hand: number;
+          inventory_value_centavos: number;
+          tracks_lots: number;
+          is_active: number;
+        }
+      | undefined;
+    if (!product || product.is_active !== 1) {
+      throw new SalesError(409, "product_unavailable");
+    }
+    const allLots =
+      product.tracks_lots === 1 ? getLotBalances(db, product.id, today) : [];
+    const recordedSaleableQuantity =
+      product.tracks_lots === 1
+        ? allLots.reduce((sum, lot) => sum + lot.saleableQuantity, 0)
+        : product.quantity_on_hand;
+    const evidence = suppliedOverrides.get(productId);
+    const shortage = Math.max(0, requestedQuantity - recordedSaleableQuantity);
+    const costBasis = evidence ? checkoutOverrideCostBasis(db, product) : null;
+    snapshotProducts.push({
+      productId,
+      requestedQuantity,
+      quantityOnHand: product.quantity_on_hand,
+      inventoryValueCentavos: product.inventory_value_centavos,
+      tracksLots: product.tracks_lots === 1,
+      lots: allLots.map((lot) => ({
+        id: lot.id,
+        lotCode: lot.lotCode,
+        expiryDate: lot.expiryDate,
+        quarantined: lot.quarantined,
+        quantity: lot.quantity,
+        saleableQuantity: lot.saleableQuantity,
+      })),
+      costBasis,
+      evidence: evidence ?? null,
+    });
+
+    if (shortage > 0 && inventoryPolicy.allowStockCountOverride) {
+      if (!evidence) {
+        throw new SalesError(409, "stock_count_confirmation_required", {
+          productId,
+          productName: product.name,
+          sku: product.sku,
+          unit: product.unit,
+          recordedQuantity: recordedSaleableQuantity,
+          requestedQuantity,
+          shortage,
+          tracksLots: product.tracks_lots === 1,
+          eligibleLots: allLots
+            .filter((lot) => !lot.quarantined && lot.expiryDate >= today)
+            .map((lot) => ({
+              lotId: lot.id,
+              lotCode: lot.lotCode,
+              expiryDate: lot.expiryDate,
+              recordedQuantity: lot.saleableQuantity,
+            })),
+        });
+      }
+      if (!inventoryPolicy.valid || !inventoryPolicy.allowStockCountOverride) {
+        throw new SalesError(409, "stock_count_override_disabled");
+      }
+      if (!costBasis) {
+        throw new SalesError(409, "stock_override_cost_basis_required", {
+          productId,
+          productName: product.name,
+          sku: product.sku,
+          unit: product.unit,
+        });
+      }
+      if (product.tracks_lots === 1) {
+        if (evidence.lots?.length === 0 || !evidence.lots) {
+          throw new SalesError(400, "stock_override_lot_count_required", {
+            productId,
+            eligibleLots: allLots
+              .filter((lot) => !lot.quarantined && lot.expiryDate >= today)
+              .map((lot) => ({
+                lotId: lot.id,
+                lotCode: lot.lotCode,
+                expiryDate: lot.expiryDate,
+                recordedQuantity: lot.saleableQuantity,
+              })),
+          });
+        }
+        const eligible = new Map(
+          allLots
+            .filter((lot) => !lot.quarantined && lot.expiryDate >= today)
+            .map((lot) => [lot.id, lot]),
+        );
+        const lotEntries = evidence.lots.map((entry) => {
+          const lot = eligible.get(entry.lotId);
+          if (!lot) throw new SalesError(409, "stock_override_lot_unavailable");
+          if (entry.physicalQuantity <= lot.saleableQuantity) {
+            throw new SalesError(
+              409,
+              "stock_override_requires_positive_correction",
+              {
+                productId,
+                lotId: lot.id,
+                recordedQuantity: lot.saleableQuantity,
+                physicalQuantity: entry.physicalQuantity,
+              },
+            );
+          }
+          const correctionQuantity =
+            entry.physicalQuantity - lot.saleableQuantity;
+          lotCorrections.set(lot.id, correctionQuantity);
+          return {
+            lotId: lot.id,
+            lotCode: lot.lotCode,
+            expiryDate: lot.expiryDate,
+            recordedQuantity: lot.saleableQuantity,
+            physicalQuantity: entry.physicalQuantity,
+            correctionQuantity,
+            saleQuantity: 0,
+          };
+        });
+        const correctionQuantity = lotEntries.reduce(
+          (sum, lot) => sum + lot.correctionQuantity,
+          0,
+        );
+        if (correctionQuantity < 1) {
+          throw new SalesError(
+            409,
+            "stock_override_requires_positive_correction",
+          );
+        }
+        if (
+          evidence.physicalQuantity !==
+          recordedSaleableQuantity + correctionQuantity
+        ) {
+          throw new SalesError(400, "stock_override_physical_count_mismatch");
+        }
+        if (recordedSaleableQuantity + correctionQuantity < requestedQuantity) {
+          throw new SalesError(409, "stock_count_below_required_demand", {
+            productId,
+            productName: product.name,
+            unit: product.unit,
+            recordedQuantity: recordedSaleableQuantity,
+            requestedQuantity,
+            physicalQuantity: recordedSaleableQuantity + correctionQuantity,
+          });
+        }
+        const inventoryValueDelta = safeOverrideInventoryValue(
+          correctionQuantity,
+          costBasis.unitCostCentavos,
+        );
+        overridePlans.set(productId, {
+          productId,
+          productName: product.name,
+          sku: product.sku,
+          unit: product.unit,
+          tracksLots: true,
+          recordedQuantity: recordedSaleableQuantity,
+          physicalQuantity: recordedSaleableQuantity + correctionQuantity,
+          correctionQuantity,
+          saleQuantity: requestedQuantity,
+          reasonCategory: evidence.reasonCategory,
+          reason: evidence.reason,
+          ...costBasis,
+          inventoryValueDeltaCentavos: inventoryValueDelta,
+          lots: lotEntries,
+        });
+      } else {
+        if ((evidence.lots?.length ?? 0) > 0) {
+          throw new SalesError(400, "stock_override_lots_not_supported");
+        }
+        if (evidence.physicalQuantity <= product.quantity_on_hand) {
+          throw new SalesError(
+            409,
+            "stock_override_requires_positive_correction",
+            {
+              productId,
+              recordedQuantity: product.quantity_on_hand,
+              physicalQuantity: evidence.physicalQuantity,
+            },
+          );
+        }
+        if (evidence.physicalQuantity < requestedQuantity) {
+          throw new SalesError(409, "stock_count_below_required_demand", {
+            productId,
+            productName: product.name,
+            unit: product.unit,
+            recordedQuantity: product.quantity_on_hand,
+            requestedQuantity,
+            physicalQuantity: evidence.physicalQuantity,
+          });
+        }
+        const correctionQuantity =
+          evidence.physicalQuantity - product.quantity_on_hand;
+        const inventoryValueDelta = safeOverrideInventoryValue(
+          correctionQuantity,
+          costBasis.unitCostCentavos,
+        );
+        overridePlans.set(productId, {
+          productId,
+          productName: product.name,
+          sku: product.sku,
+          unit: product.unit,
+          tracksLots: false,
+          recordedQuantity: product.quantity_on_hand,
+          physicalQuantity: evidence.physicalQuantity,
+          correctionQuantity,
+          saleQuantity: requestedQuantity,
+          reasonCategory: evidence.reasonCategory,
+          reason: evidence.reason,
+          ...costBasis,
+          inventoryValueDeltaCentavos: inventoryValueDelta,
+          lots: [],
+        });
+      }
+    } else if (evidence && shortage === 0) {
+      throw new SalesError(409, "stock_override_not_needed", { productId });
+    }
+  }
+  for (const productId of suppliedOverrides.keys()) {
+    if (!demandByProduct.has(productId)) {
+      throw new SalesError(400, "stock_override_product_not_in_cart");
+    }
+  }
+  const stockStateHash =
+    overridePlans.size > 0
+      ? createHash("sha256")
+          .update(
+            JSON.stringify({
+              policyVersion: inventoryPolicy.policyVersion,
+              products: snapshotProducts.sort((a, b) =>
+                String(a.productId).localeCompare(String(b.productId)),
+              ),
+            }),
+          )
+          .digest("hex")
+      : null;
+
   const lines = expandedItems.map(({ item, bundle }) => {
     const product = db
       .prepare(
@@ -841,13 +1271,23 @@ function calculateCart(
     }
     let lotAllocations: ReturnType<typeof allocateFefo> = [];
     if (product.tracks_lots === 1) {
-      lotAllocations = allocateFefo(
-        db,
-        product.id,
-        item.quantity,
-        reservedLots,
-        today,
-      );
+      const remaining = item.quantity;
+      let lotRemaining = remaining;
+      for (const lot of getLotBalances(db, product.id, today)) {
+        const available = Math.max(
+          0,
+          lot.saleableQuantity +
+            (lotCorrections.get(lot.id) ?? 0) -
+            (reservedLots.get(lot.id) ?? 0),
+        );
+        if (!available) continue;
+        const quantity = Math.min(lotRemaining, available);
+        lotAllocations.push({ lotId: lot.id, quantity });
+        reservedLots.set(lot.id, (reservedLots.get(lot.id) ?? 0) + quantity);
+        lotRemaining -= quantity;
+        if (lotRemaining === 0) break;
+      }
+      if (lotRemaining !== 0) lotAllocations = [];
       if (!lotAllocations.length)
         throw new SalesError(409, "insufficient_saleable_lot_stock");
       if (requireLotConfirmation) {
@@ -869,7 +1309,11 @@ function calculateCart(
       }
     } else {
       const alreadyReserved = reservedUntracked.get(product.id) ?? 0;
-      if (item.quantity + alreadyReserved > product.quantity_on_hand) {
+      const correction = overridePlans.get(product.id)?.correctionQuantity ?? 0;
+      if (
+        item.quantity + alreadyReserved >
+        product.quantity_on_hand + correction
+      ) {
         throw new SalesError(409, "insufficient_stock");
       }
       reservedUntracked.set(product.id, alreadyReserved + item.quantity);
@@ -1069,6 +1513,20 @@ function calculateCart(
     amountDueCentavos,
     bundlePromotionalDiscountCentavos,
     bundleOffers: bundleSnapshotDrafts,
+    stockStateHash,
+    overridePolicyVersion:
+      overridePlans.size > 0 ? inventoryPolicy.policyVersion : null,
+    overrides: [...overridePlans.values()].map((entry) => {
+      for (const allocation of lines
+        .filter((line) => line.product.id === entry.productId)
+        .flatMap((line) => line.lotAllocations)) {
+        const lot = entry.lots.find(
+          (candidate) => candidate.lotId === allocation.lotId,
+        );
+        if (lot) lot.saleQuantity += allocation.quantity;
+      }
+      return entry;
+    }),
     seniorDiscountCentavos: safeCentavoTotal(
       lines
         .filter((line) => line.benefitTreatment === "SENIOR_CITIZEN")
@@ -1095,6 +1553,28 @@ function presentCheckout(
     policyNotice: policy.approved
       ? null
       : "Provisional estimate only. Sale finalization is disabled until tax, rounding, and acquisition-cost policy approval is recorded.",
+    stockOverrideSnapshot: result.stockStateHash,
+    stockOverridePolicyVersion: result.overridePolicyVersion,
+    stockOverrides: result.overrides.map((entry) => ({
+      productId: entry.productId,
+      productName: entry.productName,
+      sku: entry.sku,
+      unit: entry.unit,
+      recordedQuantity: entry.recordedQuantity,
+      physicalQuantity: entry.physicalQuantity,
+      correctionQuantity: entry.correctionQuantity,
+      saleQuantity: entry.saleQuantity,
+      reasonCategory: entry.reasonCategory,
+      reason: entry.reason,
+      lots: entry.lots.map((lot) => ({
+        lotCode: lot.lotCode,
+        expiryDate: lot.expiryDate,
+        recordedQuantity: lot.recordedQuantity,
+        physicalQuantity: lot.physicalQuantity,
+        correctionQuantity: lot.correctionQuantity,
+        saleQuantity: lot.saleQuantity,
+      })),
+    })),
     lines: result.lines.map((line) => ({
       productId: line.product.id,
       name: line.product.name,
@@ -1248,6 +1728,9 @@ function createStockEvent(
     inventoryValueDeltaCentavos: number;
     actorUserId: string;
     createdAt: string;
+    eventType?: "SALE" | "ADJUSTMENT";
+    reference?: string | null;
+    reason?: string | null;
   },
 ): string {
   const id = randomUUID();
@@ -1255,13 +1738,16 @@ function createStockEvent(
     `INSERT INTO stock_events
       (id, product_id, event_type, quantity_delta, unit_cost_centavos,
        inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
-     VALUES (?, ?, 'SALE', ?, ?, ?, NULL, NULL, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     values.productId,
+    values.eventType ?? "SALE",
     values.quantityDelta,
     values.unitCostCentavos,
     values.inventoryValueDeltaCentavos,
+    values.reference ?? null,
+    values.reason ?? null,
     values.actorUserId,
     values.createdAt,
   );
@@ -2373,12 +2859,23 @@ export function registerSalesRoutes(
     }
     if (
       parsed.data.businessDate &&
+      ((parsed.data.countOverrides?.length ?? 0) > 0 ||
+        parsed.data.overrideStockStateHash !== undefined ||
+        parsed.data.overridePolicyVersion !== undefined)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "stock_override_live_checkout_only" });
+    }
+    if (
+      parsed.data.businessDate &&
       parsed.data.businessDate > manilaBusinessDate(new Date())
     ) {
       return res.status(400).json({ error: "invalid_business_date" });
     }
     try {
       const policy = taxPolicy(db);
+      const inventoryPolicy = checkoutInventoryPolicy(db);
       const bnpcContext = bnpcContextForCheckout(
         db,
         parsed.data.items,
@@ -2397,6 +2894,8 @@ export function registerSalesRoutes(
         false,
         parsed.data.bundleOffers,
         bnpcContext,
+        parsed.data.countOverrides ?? [],
+        inventoryPolicy,
       );
       res.json(
         presentCheckout(
@@ -2417,6 +2916,16 @@ export function registerSalesRoutes(
     if (!parsed.success || !req.user) return validationFailure(res);
     if (parsed.data.businessDate && req.user.role !== "owner") {
       return res.status(403).json({ error: "manual_date_owner_only" });
+    }
+    if (
+      parsed.data.businessDate &&
+      ((parsed.data.countOverrides?.length ?? 0) > 0 ||
+        parsed.data.overrideStockStateHash !== undefined ||
+        parsed.data.overridePolicyVersion !== undefined)
+    ) {
+      return res
+        .status(400)
+        .json({ error: "stock_override_live_checkout_only" });
     }
     if (
       parsed.data.businessDate &&
@@ -2449,6 +2958,17 @@ export function registerSalesRoutes(
           paymentMethod: parsed.data.paymentMethod,
           items: parsed.data.items,
           bundleOffers: parsed.data.bundleOffers,
+          ...((parsed.data.countOverrides?.length ?? 0) > 0 ||
+          parsed.data.overrideStockStateHash !== undefined ||
+          parsed.data.overridePolicyVersion !== undefined
+            ? {
+                countOverrides: parsed.data.countOverrides ?? [],
+                overrideStockStateHash:
+                  parsed.data.overrideStockStateHash ?? null,
+                overridePolicyVersion:
+                  parsed.data.overridePolicyVersion ?? null,
+              }
+            : {}),
           ...(parsed.data.businessDate
             ? { businessDate: parsed.data.businessDate }
             : {}),
@@ -2493,7 +3013,7 @@ export function registerSalesRoutes(
           parsed.data.bnpcChecks,
           parsed.data.businessDate,
         );
-        const preview = calculateCart(
+        let preview = calculateCart(
           db,
           parsed.data.benefitType,
           parsed.data.items,
@@ -2502,7 +3022,26 @@ export function registerSalesRoutes(
           true,
           parsed.data.bundleOffers,
           bnpcContext,
+          parsed.data.countOverrides ?? [],
+          checkoutInventoryPolicy(db),
         );
+        const inventoryPolicy = checkoutInventoryPolicy(db);
+        if (preview.overrides.length > 0) {
+          if (
+            !inventoryPolicy.valid ||
+            !inventoryPolicy.allowStockCountOverride ||
+            parsed.data.overridePolicyVersion !==
+              inventoryPolicy.policyVersion ||
+            parsed.data.overrideStockStateHash !== preview.stockStateHash
+          ) {
+            throw new SalesError(409, "stock_override_preview_stale");
+          }
+        } else if (
+          parsed.data.overrideStockStateHash !== undefined ||
+          parsed.data.overridePolicyVersion !== undefined
+        ) {
+          throw new SalesError(409, "stock_override_preview_stale");
+        }
         const nowDate = new Date();
         const businessDate =
           parsed.data.businessDate ?? manilaBusinessDate(nowDate);
@@ -2541,6 +3080,7 @@ export function registerSalesRoutes(
                 parsed.data.customerIdNumber!,
                 `${saleId}/id-number`,
               );
+        const simulatedStockPreview = preview;
 
         db.prepare(
           `INSERT INTO sales
@@ -2582,6 +3122,173 @@ export function registerSalesRoutes(
           preview.cashRoundingAdjustmentCentavos,
           preview.bnpcDiscountCentavos,
         );
+
+        if (simulatedStockPreview.overrides.length > 0) {
+          const insertOverride = db.prepare(
+            `INSERT INTO checkout_stock_override_records
+             (id, sale_id, cashier_user_id, product_id, stock_event_id,
+              recorded_quantity, physical_quantity, correction_quantity,
+              sale_quantity, reason_category, reason, cost_source_type,
+              cost_source_event_id, cost_source_sequence, estimated_cost,
+              unit_cost_centavos, inventory_value_delta_centavos,
+              stock_state_hash, policy_version, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          const insertOverrideLot = db.prepare(
+            `INSERT INTO checkout_stock_override_lots
+             (id, override_record_id, lot_id, lot_code_snapshot,
+              expiry_date_snapshot, recorded_quantity, physical_quantity,
+              correction_quantity, sale_quantity)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          );
+          for (const entry of simulatedStockPreview.overrides) {
+            const product = db
+              .prepare(
+                `SELECT quantity_on_hand, inventory_value_centavos
+                 FROM products WHERE id = ?`,
+              )
+              .get(entry.productId) as
+              | { quantity_on_hand: number; inventory_value_centavos: number }
+              | undefined;
+            if (!product) throw new SalesError(409, "product_unavailable");
+            const nextQuantity =
+              product.quantity_on_hand + entry.correctionQuantity;
+            const nextValue =
+              product.inventory_value_centavos +
+              entry.inventoryValueDeltaCentavos;
+            if (
+              !Number.isSafeInteger(nextQuantity) ||
+              !Number.isSafeInteger(nextValue) ||
+              nextQuantity < 0 ||
+              nextValue < 0
+            ) {
+              throw new SalesError(409, "inventory_value_overflow");
+            }
+            db.prepare(
+              `UPDATE products SET quantity_on_hand = ?, inventory_value_centavos = ?,
+                 updated_at = ? WHERE id = ?`,
+            ).run(nextQuantity, nextValue, now, entry.productId);
+            const reason = `${entry.reasonCategory}: ${entry.reason}`;
+            const stockEventId = createStockEvent(db, {
+              productId: entry.productId,
+              quantityDelta: entry.correctionQuantity,
+              unitCostCentavos: entry.unitCostCentavos,
+              inventoryValueDeltaCentavos: entry.inventoryValueDeltaCentavos,
+              actorUserId: req.user!.id,
+              createdAt: now,
+              eventType: "ADJUSTMENT",
+              reference: transactionId,
+              reason,
+            });
+            const movementLots = entry.tracksLots
+              ? entry.lots
+              : [
+                  {
+                    lotId: null,
+                    correctionQuantity: entry.correctionQuantity,
+                    lotCode: "",
+                    expiryDate: "",
+                  },
+                ];
+            for (const lot of movementLots) {
+              const correctionQuantity = lot.correctionQuantity;
+              writeLotMovement(db, {
+                productId: entry.productId,
+                lotId: lot.lotId,
+                type: "ADJUSTMENT",
+                stockEventId,
+                quantityDelta: correctionQuantity,
+                inventoryValueDeltaCentavos: safeOverrideInventoryValue(
+                  correctionQuantity,
+                  entry.unitCostCentavos,
+                ),
+                unitCostCentavos: entry.unitCostCentavos,
+                reason,
+                actorUserId: req.user!.id,
+                createdAt: now,
+              });
+            }
+            const overrideId = randomUUID();
+            insertOverride.run(
+              overrideId,
+              saleId,
+              req.user!.id,
+              entry.productId,
+              stockEventId,
+              entry.recordedQuantity,
+              entry.physicalQuantity,
+              entry.correctionQuantity,
+              entry.saleQuantity,
+              entry.reasonCategory,
+              entry.reason,
+              entry.costSourceType,
+              entry.costSourceEventId,
+              entry.costSourceSequence,
+              entry.estimatedCost ? 1 : 0,
+              entry.unitCostCentavos,
+              entry.inventoryValueDeltaCentavos,
+              simulatedStockPreview.stockStateHash,
+              inventoryPolicy.policyVersion,
+              now,
+            );
+            if (entry.tracksLots) {
+              for (const lot of entry.lots) {
+                insertOverrideLot.run(
+                  randomUUID(),
+                  overrideId,
+                  lot.lotId,
+                  lot.lotCode,
+                  lot.expiryDate,
+                  lot.recordedQuantity,
+                  lot.physicalQuantity,
+                  lot.correctionQuantity,
+                  lot.saleQuantity,
+                );
+              }
+            }
+            writeAuditEvent(db, {
+              actorUserId: req.user!.id,
+              action: "checkout.stock_count_override_applied",
+              entityType: "checkout_stock_override",
+              entityId: overrideId,
+              details: {
+                saleId,
+                transactionId,
+                productId: entry.productId,
+                stockEventId,
+                recordedQuantity: entry.recordedQuantity,
+                physicalQuantity: entry.physicalQuantity,
+                correctionQuantity: entry.correctionQuantity,
+                saleQuantity: entry.saleQuantity,
+                reasonCategory: entry.reasonCategory,
+                policyVersion: inventoryPolicy.policyVersion,
+              },
+            });
+          }
+          preview = calculateCart(
+            db,
+            parsed.data.benefitType,
+            parsed.data.items,
+            policy,
+            parsed.data.paymentMethod,
+            true,
+            parsed.data.bundleOffers,
+            bnpcContext,
+            [],
+            inventoryPolicy,
+          );
+          if (
+            preview.subtotalCentavos !==
+              simulatedStockPreview.subtotalCentavos ||
+            preview.vatCentavos !== simulatedStockPreview.vatCentavos ||
+            preview.vatRemovedCentavos !==
+              simulatedStockPreview.vatRemovedCentavos ||
+            preview.amountDueCentavos !==
+              simulatedStockPreview.amountDueCentavos
+          ) {
+            throw new SalesError(409, "stock_override_preview_stale");
+          }
+        }
 
         const bundleSnapshotIds = new Map<string, string>();
         const insertBundleSnapshot = db.prepare(

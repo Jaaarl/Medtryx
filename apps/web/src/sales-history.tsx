@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -200,6 +200,8 @@ function Field({
 }
 
 export function SalesHistoryPage() {
+  const [searchParams] = useSearchParams();
+  const requestedTransactionId = searchParams.get("transactionId") ?? "";
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [openShifts, setOpenShifts] = useState<OpenShift[]>([]);
   const [pendingVariances, setPendingVariances] = useState<PendingVariance[]>(
@@ -211,7 +213,7 @@ export function SalesHistoryPage() {
   const [varianceNotes, setVarianceNotes] = useState<Record<string, string>>(
     {},
   );
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(requestedTransactionId);
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [restock, setRestock] = useState<Record<string, boolean>>({});
   const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});

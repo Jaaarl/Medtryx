@@ -34,6 +34,7 @@ import { registerReversalRoutes } from "./reversals.js";
 import { registerReportRoutes } from "./reports.js";
 import { registerSalesRoutes } from "./sales.js";
 import { registerSalesJournalRoutes } from "./sales-journal.js";
+import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
 import { apiMaintenance } from "./maintenance.js";
 
 const loginSchema = z
@@ -410,6 +411,7 @@ export function createApp(
   registerAuthRoutes(app, db);
   const inventoryRouter = express.Router();
   registerInventoryRoutes(inventoryRouter, db);
+  registerCheckoutInventoryRoutes(inventoryRouter, db);
   registerBundleRoutes(inventoryRouter, db);
   registerBackupRoutes(inventoryRouter, db);
   app.use("/api", inventoryRouter);

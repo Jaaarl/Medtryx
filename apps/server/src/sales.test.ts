@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { decryptCustomerField } from "./customer-data.js";
 import { openDatabase } from "./db.js";
+import { lotLedgerIssues } from "./lot-stock.js";
 import {
   clearBnpcLedgerForTest,
   clearBundleLedgerForTest,
@@ -98,6 +99,18 @@ async function configureApprovedPolicy(
       costBasisDescription:
         "Synthetic unit acquisition cost including all test inputs",
     });
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+}
+
+async function setCheckoutStockOverride(
+  owner: Agent,
+  allowStockCountOverride: boolean,
+): Promise<void> {
+  const csrf = await csrfFor(owner);
+  const response = await owner
+    .put("/api/settings/checkout-inventory")
+    .set("x-csrf-token", csrf)
+    .send({ allowStockCountOverride });
   expect(response.status, JSON.stringify(response.body)).toBe(200);
 }
 
@@ -621,6 +634,708 @@ beforeEach(async () => {
 afterAll(() => {
   db.close();
   rmSync(dataDirectory, { recursive: true, force: true });
+});
+
+describe("checkout stock count overrides", () => {
+  it("defaults off, stays owner controlled, records an atomic count correction, and replays idempotently", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect(
+      (await cashier.get("/api/settings/checkout-inventory")).body,
+    ).toMatchObject({
+      allowStockCountOverride: false,
+      policyVersion: 1,
+    });
+    const cashierCsrf = await csrfFor(cashier);
+    expect(
+      await cashier
+        .put("/api/settings/checkout-inventory")
+        .set("x-csrf-token", cashierCsrf)
+        .send({ allowStockCountOverride: true }),
+    ).toMatchObject({ status: 403 });
+
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-001",
+      openingQuantity: 1,
+      openingUnitCost: "40.00",
+    });
+    await setCheckoutStockOverride(owner, true);
+    const setting = await cashier.get("/api/settings/checkout-inventory");
+    expect(setting.body.allowStockCountOverride).toBe(true);
+    expect(setting.body.policyVersion).toBe(2);
+    expect((await openShift(cashier)).status).toBe(201);
+
+    const saleBody = {
+      benefitType: "REGULAR",
+      paymentMethod: "CASH",
+      items: [{ productId: product.id, quantity: 2 }],
+    };
+    const csrf = await csrfFor(cashier);
+    const missingEvidence = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(saleBody);
+    expect(missingEvidence.status).toBe(409);
+    expect(missingEvidence.body).toMatchObject({
+      error: "stock_count_confirmation_required",
+      productId: product.id,
+      recordedQuantity: 1,
+      requestedQuantity: 2,
+      shortage: 1,
+      tracksLots: false,
+    });
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(product.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(1);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM stock_events WHERE product_id = ?",
+          )
+          .get(product.id) as { count: number }
+      ).count,
+    ).toBe(1);
+
+    const evidence = {
+      productId: product.id,
+      physicalQuantity: 2,
+      reasonCategory: "COUNT_DISCREPANCY",
+      reason: "Recounted shelf before sale.",
+      physicallyVerified: true,
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({ ...saleBody, countOverrides: [evidence] });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.stockOverrides).toMatchObject([
+      {
+        productId: product.id,
+        recordedQuantity: 1,
+        physicalQuantity: 2,
+        correctionQuantity: 1,
+        saleQuantity: 2,
+      },
+    ]);
+    expect(preview.body.stockOverrideSnapshot).toMatch(/^[a-f0-9]{64}$/u);
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(product.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(1);
+
+    const requestKey = randomUUID();
+    const saleBodyWithEvidence = {
+      ...saleBody,
+      requestKey,
+      countOverrides: [evidence],
+      overrideStockStateHash: preview.body.stockOverrideSnapshot,
+      overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+    };
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send(saleBodyWithEvidence);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(saved.body.sale.amountDue).toBe("224.00");
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+        )
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 0, inventory_value_centavos: 0 });
+    expect(
+      db
+        .prepare(
+          "SELECT event_type, quantity_delta FROM stock_events WHERE product_id = ? ORDER BY sequence",
+        )
+        .all(product.id),
+    ).toEqual([
+      { event_type: "OPENING", quantity_delta: 1 },
+      { event_type: "ADJUSTMENT", quantity_delta: 1 },
+      { event_type: "SALE", quantity_delta: -2 },
+    ]);
+    expect(lotLedgerIssues(db)).toEqual([]);
+
+    const retry = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send(saleBodyWithEvidence);
+    expect(retry.status).toBe(200);
+    expect(retry.body.replayed).toBe(true);
+    expect(retry.body.sale.id).toBe(saved.body.sale.id);
+    expect(await cashier.get("/api/checkout-stock-overrides")).toMatchObject({
+      status: 403,
+    });
+    const history = await owner.get("/api/checkout-stock-overrides");
+    expect(history.status).toBe(200);
+    expect(history.body.records).toMatchObject([
+      {
+        transactionId: saved.body.sale.transactionId,
+        correctionQuantity: 1,
+        saleQuantity: 2,
+        costSourceType: "WEIGHTED_AVERAGE",
+        reviewStatus: "UNREVIEWED",
+      },
+    ]);
+    expect(() =>
+      db
+        .prepare(
+          "UPDATE checkout_stock_override_records SET reason = 'changed' WHERE sale_id = ?",
+        )
+        .run(saved.body.sale.id),
+    ).toThrow(/immutable/u);
+    const ownerCsrf = await csrfFor(owner);
+    const review = await owner
+      .post(
+        `/api/checkout-stock-overrides/${history.body.records[0].id}/review`,
+      )
+      .set("x-csrf-token", ownerCsrf)
+      .send({ status: "REVIEWED", note: "Checked the shelf recount." });
+    expect(review.status).toBe(200);
+    expect(
+      (await owner.get("/api/checkout-stock-overrides.csv")).text,
+    ).toContain("Checked the shelf recount.");
+
+    const changedEvidence = {
+      ...saleBodyWithEvidence,
+      countOverrides: [{ ...evidence, physicalQuantity: 3 }],
+    };
+    const changedRetry = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send(changedEvidence);
+    expect(changedRetry.status).toBe(409);
+    expect(changedRetry.body.error).toBe("idempotency_key_reused");
+  });
+
+  it("requires a fresh count after stock changes, blocks pending overrides when disabled, and keeps normal sales available", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-STALE",
+      openingQuantity: 1,
+      openingUnitCost: "40.00",
+    });
+    await setCheckoutStockOverride(owner, true);
+    expect((await openShift(cashier)).status).toBe(201);
+
+    const saleBody = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 2 }],
+      countOverrides: [
+        {
+          productId: product.id,
+          physicalQuantity: 3,
+          reasonCategory: "COUNT_DISCREPANCY",
+          reason: "Recounted shelf before sale.",
+          physicallyVerified: true,
+        },
+      ],
+    };
+    const cashierCsrf = await csrfFor(cashier);
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", cashierCsrf)
+      .send(saleBody);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+
+    const ownerCsrf = await csrfFor(owner);
+    const ownerAdjustment = await owner
+      .post("/api/stock/adjustments")
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        productId: product.id,
+        quantityDelta: 1,
+        unitCost: "40.00",
+        reasonType: "COUNT_CORRECTION",
+        reason: "Owner recorded a recount during checkout.",
+      });
+    expect(ownerAdjustment.status, JSON.stringify(ownerAdjustment.body)).toBe(
+      201,
+    );
+
+    const requestKey = randomUUID();
+    const pendingSale = {
+      ...saleBody,
+      requestKey,
+      overrideStockStateHash: preview.body.stockOverrideSnapshot,
+      overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+    };
+    const stale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", cashierCsrf)
+      .send(pendingSale);
+    expect(stale.status).toBe(409);
+    expect(stale.body.error).toBe("stock_override_not_needed");
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(product.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(2);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM checkout_stock_override_records WHERE product_id = ?",
+          )
+          .get(product.id) as { count: number }
+      ).count,
+    ).toBe(0);
+
+    await setCheckoutStockOverride(owner, false);
+    const disabled = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", cashierCsrf)
+      .send(pendingSale);
+    expect(disabled.status).toBe(409);
+    expect(disabled.body.error).toBe("stock_count_override_disabled");
+
+    const ordinarySale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", cashierCsrf)
+      .send({
+        benefitType: "REGULAR",
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(ordinarySale.status, JSON.stringify(ordinarySale.body)).toBe(201);
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(product.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(1);
+    expect(lotLedgerIssues(db)).toEqual([]);
+  });
+
+  it("keeps the stock count correction when an owner reverses and restocks the sale", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-REVERSAL",
+      openingQuantity: 1,
+      openingUnitCost: "40.00",
+    });
+    await setCheckoutStockOverride(owner, true);
+    expect((await openShift(cashier)).status).toBe(201);
+    const cashierCsrf = await csrfFor(cashier);
+    const saleBody = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 2 }],
+      countOverrides: [
+        {
+          productId: product.id,
+          physicalQuantity: 2,
+          reasonCategory: "COUNT_DISCREPANCY",
+          reason: "Recounted shelf before sale.",
+          physicallyVerified: true,
+        },
+      ],
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", cashierCsrf)
+      .send(saleBody);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", cashierCsrf)
+      .send({
+        ...saleBody,
+        requestKey: randomUUID(),
+        overrideStockStateHash: preview.body.stockOverrideSnapshot,
+        overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+      });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    const saleLineId = saved.body.sale.lines[0]?.saleLineId as
+      | string
+      | undefined;
+    expect(saleLineId).toBeDefined();
+
+    const ownerCsrf = await csrfFor(owner);
+    const reversal = await owner
+      .post(`/api/sales/${saved.body.sale.transactionId}/reversals`)
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        ownerPassword,
+        reason: "Customer returned the complete sale.",
+        refundMethod: "QR",
+        lines: [{ saleLineId, restock: true }],
+      });
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+        )
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 2, inventory_value_centavos: 8_000 });
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT count(*) AS count FROM checkout_stock_override_records WHERE sale_id = ?",
+          )
+          .get(saved.body.sale.id) as { count: number }
+      ).count,
+    ).toBe(1);
+    expect(lotLedgerIssues(db)).toEqual([]);
+  });
+
+  it("uses the full verified surplus and blocks a zero-stock sale without a valid cost source", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-004",
+      openingQuantity: 1,
+      openingUnitCost: "10.00",
+    });
+    const noCostProduct = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-ZERO",
+      openingQuantity: 0,
+      openingUnitCost: undefined,
+    });
+    await setCheckoutStockOverride(owner, true);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const csrf = await csrfFor(cashier);
+    const saleBody = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 2 }],
+      countOverrides: [
+        {
+          productId: product.id,
+          physicalQuantity: 5,
+          reasonCategory: "OTHER",
+          reason: "Full shelf count found extra units.",
+          physicallyVerified: true,
+        },
+      ],
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(saleBody);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.stockOverrides[0]).toMatchObject({
+      recordedQuantity: 1,
+      physicalQuantity: 5,
+      correctionQuantity: 4,
+      saleQuantity: 2,
+    });
+    const requestKey = randomUUID();
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send({
+        ...saleBody,
+        requestKey,
+        overrideStockStateHash: preview.body.stockOverrideSnapshot,
+        overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+      });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+        )
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 3, inventory_value_centavos: 3_000 });
+    expect(lotLedgerIssues(db)).toEqual([]);
+
+    const zeroSale = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: noCostProduct.id, quantity: 1 }],
+      countOverrides: [
+        {
+          productId: noCostProduct.id,
+          physicalQuantity: 1,
+          reasonCategory: "COUNT_DISCREPANCY",
+          reason: "Found one unit on the shelf.",
+          physicallyVerified: true,
+        },
+      ],
+    };
+    const noCost = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(zeroSale);
+    expect(noCost.status).toBe(409);
+    expect(noCost.body.error).toBe("stock_override_cost_basis_required");
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(noCostProduct.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(0);
+  });
+
+  it("accepts an explicitly justified zero acquisition cost from an opening event", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-ZERO-COST",
+      openingQuantity: 1,
+      openingUnitCost: "0.00",
+      zeroCostReason: "Donated opening stock with no acquisition cost.",
+    });
+    await setCheckoutStockOverride(owner, true);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const priorSale = await postSale(cashier, {
+      productId: product.id,
+      quantity: 1,
+      paymentMethod: "QR",
+    });
+    expect(priorSale.status, JSON.stringify(priorSale.body)).toBe(201);
+    const csrf = await csrfFor(cashier);
+    const body = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 1 }],
+      countOverrides: [
+        {
+          productId: product.id,
+          physicalQuantity: 1,
+          reasonCategory: "COUNT_DISCREPANCY",
+          reason: "Found one donated unit during recount.",
+          physicallyVerified: true,
+        },
+      ],
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(body);
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send({
+        ...body,
+        requestKey: randomUUID(),
+        overrideStockStateHash: preview.body.stockOverrideSnapshot,
+        overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+      });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    const evidence = db
+      .prepare(
+        "SELECT cost_source_type, cost_source_event_id, unit_cost_centavos FROM checkout_stock_override_records WHERE sale_id = ?",
+      )
+      .get(saved.body.sale.id) as {
+      cost_source_type: string;
+      cost_source_event_id: string;
+      unit_cost_centavos: number;
+    };
+    expect(evidence).toMatchObject({
+      cost_source_type: "OPENING",
+      unit_cost_centavos: 0,
+    });
+    expect(
+      (
+        db
+          .prepare("SELECT event_type FROM stock_events WHERE id = ?")
+          .get(evidence.cost_source_event_id) as { event_type: string }
+      ).event_type,
+    ).toBe("OPENING");
+  });
+
+  it("corrects only counted valid lots and keeps expiry and quarantine limits", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, {
+      sku: "SYN-COUNT-OVERRIDE-LOT",
+      tracksLots: true,
+      openingQuantity: 1,
+      openingUnitCost: "10.00",
+      openingLotCode: "SYN-VALID-LOT",
+      openingExpiryDate: manilaDayAfter(50),
+    });
+    await setCheckoutStockOverride(owner, true);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const csrf = await csrfFor(cashier);
+    const saleBody = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 2 }],
+    };
+    const prompt = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(saleBody);
+    expect(prompt.status).toBe(409);
+    expect(prompt.body.eligibleLots).toMatchObject([
+      { lotCode: "SYN-VALID-LOT", recordedQuantity: 1 },
+    ]);
+    const lotId = prompt.body.eligibleLots[0].lotId as string;
+    const evidence = {
+      productId: product.id,
+      physicalQuantity: 2,
+      reasonCategory: "COUNT_DISCREPANCY",
+      reason: "Recounted this valid lot.",
+      physicallyVerified: true,
+      lots: [{ lotId, physicalQuantity: 2 }],
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({ ...saleBody, countOverrides: [evidence] });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.lines[0].assignedLots).toMatchObject([
+      { lotId, quantity: 2 },
+    ]);
+    const requestKey = randomUUID();
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send({
+        ...saleBody,
+        items: [
+          {
+            productId: product.id,
+            quantity: 2,
+            lotAllocations: [{ lotId, quantity: 2 }],
+            lotPickConfirmed: true,
+          },
+        ],
+        requestKey,
+        countOverrides: [evidence],
+        overrideStockStateHash: preview.body.stockOverrideSnapshot,
+        overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+      });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(lotLedgerIssues(db)).toEqual([]);
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_delta FROM lot_stock_movements WHERE lot_id = ? ORDER BY rowid",
+        )
+        .all(lotId),
+    ).toEqual([
+      { quantity_delta: 1 },
+      { quantity_delta: 1 },
+      { quantity_delta: -2 },
+    ]);
+  });
+
+  it("aggregates the same product across a direct line and expanded bundle demand", async () => {
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const component = await createProduct(owner, {
+      sku: "SYN-COUNT-BUNDLE-COMPONENT",
+      openingQuantity: 1,
+    });
+    const companion = await createProduct(owner, {
+      sku: "SYN-COUNT-BUNDLE-COMPANION",
+      openingQuantity: 4,
+    });
+    const ownerCsrf = await csrfFor(owner);
+    const createdBundle = await owner
+      .post("/api/bundles")
+      .set("x-csrf-token", ownerCsrf)
+      .send({
+        code: "SYN-COUNT-BUNDLE",
+        name: "Synthetic count bundle",
+        activeFrom: manilaDayAfter(0),
+        activeUntil: null,
+        maxQuantityPerSale: 2,
+        reductionType: "AMOUNT",
+        reductionValue: 100,
+        promotionalPrice: "223.00",
+        confirmFinalPrice: true,
+        components: [
+          { productId: component.id, quantity: 1 },
+          { productId: companion.id, quantity: 1 },
+        ],
+      });
+    expect(createdBundle.status, JSON.stringify(createdBundle.body)).toBe(201);
+    await setCheckoutStockOverride(owner, true);
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    expect((await openShift(cashier)).status).toBe(201);
+    const offer = {
+      offerKey: randomUUID(),
+      bundleVersionId: createdBundle.body.bundle.versionId as string,
+      quantity: 1,
+      components: [{ productId: component.id }, { productId: companion.id }],
+    };
+    const body = {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: component.id, quantity: 1 }],
+      bundleOffers: [offer],
+    };
+    const csrf = await csrfFor(cashier);
+    const required = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send(body);
+    expect(required.status).toBe(409);
+    expect(required.body).toMatchObject({
+      error: "stock_count_confirmation_required",
+      productId: component.id,
+      recordedQuantity: 1,
+      requestedQuantity: 2,
+      shortage: 1,
+    });
+    const evidence = {
+      productId: component.id,
+      physicalQuantity: 2,
+      reasonCategory: "COUNT_DISCREPANCY",
+      reason: "Counted stock for direct and bundle items.",
+      physicallyVerified: true,
+    };
+    const preview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", csrf)
+      .send({ ...body, countOverrides: [evidence] });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.stockOverrides[0]).toMatchObject({
+      productId: component.id,
+      correctionQuantity: 1,
+      saleQuantity: 2,
+    });
+    const saved = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send({
+        ...body,
+        requestKey: randomUUID(),
+        countOverrides: [evidence],
+        overrideStockStateHash: preview.body.stockOverrideSnapshot,
+        overridePolicyVersion: preview.body.stockOverridePolicyVersion,
+      });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(
+      (
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(component.id) as { quantity_on_hand: number }
+      ).quantity_on_hand,
+    ).toBe(0);
+    expect(lotLedgerIssues(db)).toEqual([]);
+  });
 });
 
 describe("checkout, sales, and cashier shifts", () => {

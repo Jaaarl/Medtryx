@@ -1,6 +1,24 @@
 import type Database from "better-sqlite3";
 
 const appendOnlyTriggers = [
+  `CREATE TRIGGER checkout_stock_override_records_immutable_update
+   BEFORE UPDATE ON checkout_stock_override_records
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override evidence is immutable'); END`,
+  `CREATE TRIGGER checkout_stock_override_records_immutable_delete
+   BEFORE DELETE ON checkout_stock_override_records
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override evidence is immutable'); END`,
+  `CREATE TRIGGER checkout_stock_override_lots_immutable_update
+   BEFORE UPDATE ON checkout_stock_override_lots
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override lot evidence is immutable'); END`,
+  `CREATE TRIGGER checkout_stock_override_lots_immutable_delete
+   BEFORE DELETE ON checkout_stock_override_lots
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override lot evidence is immutable'); END`,
+  `CREATE TRIGGER checkout_stock_override_reviews_immutable_update
+   BEFORE UPDATE ON checkout_stock_override_reviews
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override reviews are append only'); END`,
+  `CREATE TRIGGER checkout_stock_override_reviews_immutable_delete
+   BEFORE DELETE ON checkout_stock_override_reviews
+   BEGIN SELECT RAISE(ABORT, 'checkout stock override reviews are append only'); END`,
   `CREATE TRIGGER lot_stock_movements_no_update BEFORE UPDATE ON lot_stock_movements
    BEGIN SELECT RAISE(ABORT, 'lot_stock_movements_are_append_only'); END`,
   `CREATE TRIGGER lot_stock_movements_no_delete BEFORE DELETE ON lot_stock_movements
@@ -28,6 +46,12 @@ const appendOnlyTriggers = [
 export function clearLotLedgerForTest(db: Database.Database): void {
   db.transaction(() => {
     for (const name of [
+      "checkout_stock_override_records_immutable_update",
+      "checkout_stock_override_records_immutable_delete",
+      "checkout_stock_override_lots_immutable_update",
+      "checkout_stock_override_lots_immutable_delete",
+      "checkout_stock_override_reviews_immutable_update",
+      "checkout_stock_override_reviews_immutable_delete",
       "lot_stock_movements_no_update",
       "lot_stock_movements_no_delete",
       "lot_stock_movements_no_negative_balance",
@@ -41,7 +65,10 @@ export function clearLotLedgerForTest(db: Database.Database): void {
       db.exec(`DROP TRIGGER IF EXISTS ${name}`);
     }
     db.exec(
-      `DELETE FROM sale_line_lot_allocations;
+      `DELETE FROM checkout_stock_override_reviews;
+       DELETE FROM checkout_stock_override_lots;
+       DELETE FROM checkout_stock_override_records;
+       DELETE FROM sale_line_lot_allocations;
        DELETE FROM lot_stock_movements;
        DELETE FROM lot_reconciliations;
        DELETE FROM inventory_lots;`,
