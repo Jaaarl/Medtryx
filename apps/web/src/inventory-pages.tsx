@@ -2222,11 +2222,6 @@ export function StockPage() {
         title="Stock"
         description="Receive deliveries, correct counts, record write-offs, and trace every stock change."
       />
-      <div className="stock-override-history-link">
-        <a className="button button-secondary" href="#checkout-count-overrides">
-          Checkout count overrides
-        </a>
-      </div>
       {(error || notice) && (
         <div
           className={`banner ${error ? "banner-error" : "banner-success"}`}
