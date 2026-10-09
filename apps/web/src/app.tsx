@@ -45,7 +45,7 @@ import { BnpcPolicySettings } from "./bnpc-policy-settings";
 import { BundlesPage } from "./bundles-page";
 import { ProductMovementPage } from "./product-movement-page";
 import { DailySalesSummaryPage } from "./daily-sales-summary";
-import { LedgerPage } from "./ledger-page";
+import { JournalPage } from "./journal-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -55,7 +55,7 @@ const navigation = [
     icon: Activity,
     ownerOnly: false,
   },
-  { to: "/ledger", label: "Ledger", icon: BookOpen, ownerOnly: true },
+  { to: "/journal", label: "Journal", icon: BookOpen, ownerOnly: true },
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
@@ -789,7 +789,8 @@ export function App() {
             <Route path="stock" element={<StockPage />} />
             <Route path="bundles" element={<BundlesPage />} />
             <Route path="sales" element={<SalesHistoryPage />} />
-            <Route path="ledger" element={<LedgerPage />} />
+            <Route path="journal" element={<JournalPage />} />
+            <Route path="ledger" element={<Navigate to="/journal" replace />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="product-movement" element={<ProductMovementPage />} />
             <Route path="shifts" element={<ShiftHistoryPage />} />

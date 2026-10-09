@@ -388,9 +388,9 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
   ).toContainText("30.00");
 
-  await ownerPage.goto("/ledger");
+  await ownerPage.goto("/journal");
   await expect(
-    ownerPage.getByRole("heading", { name: "Ledger" }),
+    ownerPage.getByRole("heading", { name: "Journal" }),
   ).toBeVisible();
   const ledgerRow = ownerPage
     .getByRole("row")
@@ -434,7 +434,7 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   await expect(cashierPage.locator(".daily-sales-ledger-summary")).toHaveCount(
     0,
   );
-  await expect(cashierPage.getByRole("link", { name: "Ledger" })).toHaveCount(
+  await expect(cashierPage.getByRole("link", { name: "Journal" })).toHaveCount(
     0,
   );
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, Pencil, RefreshCw, X } from "lucide-react";
 import { api } from "./api";
 
-type LedgerEntry = {
+type JournalEntry = {
   sourceSaleId: string;
   month: string;
   date: string;
@@ -16,7 +16,7 @@ type LedgerEntry = {
   editedAt: string | null;
 };
 
-type LedgerDraft = Omit<LedgerEntry, "sourceSaleId" | "editedAt">;
+type JournalDraft = Omit<JournalEntry, "sourceSaleId" | "editedAt">;
 type MoneyField =
   | "seniorDiscount"
   | "nonVat"
@@ -37,7 +37,7 @@ function currentMonth(): string {
   return `${values.year}-${values.month}`;
 }
 
-function draftFor(entry: LedgerEntry): LedgerDraft {
+function draftFor(entry: JournalEntry): JournalDraft {
   return {
     month: entry.month,
     date: entry.date,
@@ -67,15 +67,15 @@ const moneyFields: Array<{ key: MoneyField; label: string }> = [
   { key: "netSales", label: "Net sales" },
 ];
 
-export function LedgerPage() {
+export function JournalPage() {
   const [periodType, setPeriodType] = useState<"month" | "year">("month");
   const [month, setMonth] = useState(currentMonth);
   const [year, setYear] = useState(currentMonth().slice(0, 4));
-  const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<LedgerDraft | null>(null);
+  const [draft, setDraft] = useState<JournalDraft | null>(null);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -88,7 +88,7 @@ export function LedgerPage() {
     let active = true;
     const query = new URLSearchParams({ startMonth, endMonth });
     void api
-      .get<{ entries: LedgerEntry[] }>(`/ledger/range?${query}`)
+      .get<{ entries: JournalEntry[] }>(`/ledger/range?${query}`)
       .then(({ entries: nextEntries }) => {
         if (!active) return;
         setEntries(nextEntries);
@@ -97,7 +97,7 @@ export function LedgerPage() {
       .catch(() => {
         if (!active) return;
         setEntries([]);
-        setError("Unable to load the ledger for this period. Try refreshing.");
+        setError("Unable to load the journal for this period. Try refreshing.");
       })
       .finally(() => {
         if (active) setLoadedKey(requestKey);
@@ -107,18 +107,18 @@ export function LedgerPage() {
     };
   }, [startMonth, endMonth, refreshKey, requestKey]);
 
-  function beginEdit(entry: LedgerEntry) {
+  function beginEdit(entry: JournalEntry) {
     setEditingId(entry.sourceSaleId);
     setDraft(draftFor(entry));
     setError("");
   }
 
-  async function saveEdit(entry: LedgerEntry) {
+  async function saveEdit(entry: JournalEntry) {
     if (!draft) return;
     setSavingId(entry.sourceSaleId);
     setError("");
     try {
-      const result = await api.patch<{ entry: LedgerEntry }>(
+      const result = await api.patch<{ entry: JournalEntry }>(
         `/ledger/${encodeURIComponent(entry.sourceSaleId)}`,
         draft,
       );
@@ -130,7 +130,7 @@ export function LedgerPage() {
       setEditingId(null);
       setDraft(null);
     } catch {
-      setError("Unable to save this ledger row. Check its values and retry.");
+      setError("Unable to save this journal row. Check its values and retry.");
     } finally {
       setSavingId(null);
     }
@@ -142,9 +142,9 @@ export function LedgerPage() {
     setError("");
   }
 
-  const isEditing = (entry: LedgerEntry) =>
+  const isEditing = (entry: JournalEntry) =>
     editingId === entry.sourceSaleId && draft !== null;
-  const draftValue = (entry: LedgerEntry) =>
+  const draftValue = (entry: JournalEntry) =>
     isEditing(entry) ? draft! : draftFor(entry);
 
   return (
@@ -152,10 +152,10 @@ export function LedgerPage() {
       <div className="page-heading">
         <div>
           <div className="eyebrow">OWNER BOOKKEEPING</div>
-          <h1>Ledger</h1>
+          <h1>Journal</h1>
           <p>
             Review copied sales by month or year. Changes here are saved only to
-            the ledger.
+            the journal.
           </p>
         </div>
         <div className="ledger-period-actions">
@@ -163,7 +163,7 @@ export function LedgerPage() {
             <span className="field-label">Period</span>
             <select
               className="text-input"
-              aria-label="Ledger period"
+              aria-label="Journal period"
               value={periodType}
               onChange={(event) => {
                 setEditingId(null);
@@ -182,7 +182,7 @@ export function LedgerPage() {
             {periodType === "month" ? (
               <input
                 className="text-input"
-                aria-label="Ledger month"
+                aria-label="Journal month"
                 type="month"
                 value={month}
                 onChange={(event) => {
@@ -194,7 +194,7 @@ export function LedgerPage() {
             ) : (
               <input
                 className="text-input"
-                aria-label="Ledger year"
+                aria-label="Journal year"
                 type="number"
                 min="1"
                 max="9998"
@@ -224,7 +224,7 @@ export function LedgerPage() {
           {error}
         </div>
       )}
-      {loading && <div className="table-loading">Loading ledger…</div>}
+      {loading && <div className="table-loading">Loading journal…</div>}
 
       {!loading && (
         <section className="settings-main-card report-low-stock ledger-card">
