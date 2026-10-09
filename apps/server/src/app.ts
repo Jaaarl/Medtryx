@@ -33,6 +33,7 @@ import { registerBackupRoutes } from "./backups.js";
 import { registerReversalRoutes } from "./reversals.js";
 import { registerReportRoutes } from "./reports.js";
 import { registerSalesRoutes } from "./sales.js";
+import { registerSalesLedgerRoutes } from "./sales-ledger.js";
 import { apiMaintenance } from "./maintenance.js";
 
 const loginSchema = z
@@ -416,6 +417,7 @@ export function createApp(
   // Register fixed sales paths such as /sales/recent before the parameterized
   // /sales/:transactionId detail route, which would otherwise consume them.
   registerReversalRoutes(salesRouter, db);
+  registerSalesLedgerRoutes(salesRouter, db);
   registerSalesRoutes(salesRouter, db);
   registerBnpcPolicyRoutes(salesRouter, db);
   registerReportRoutes(salesRouter, db);

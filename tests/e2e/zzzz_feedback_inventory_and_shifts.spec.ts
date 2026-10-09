@@ -373,6 +373,9 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     items: [{ productId: product.id, quantity: 2, benefitApplied: false }],
   });
   expect(saleResponse.status()).toBe(201);
+  const savedSale = (await saleResponse.json()) as {
+    sale: { transactionId: string };
+  };
 
   await ownerPage.goto("/daily-sales");
   await expect(
@@ -381,6 +384,28 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   await expect(
     ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
   ).toContainText(/MTX-\d{8}-\d{6}/);
+  await expect(
+    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+  ).toContainText("30.00");
+
+  await ownerPage.goto("/ledger");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Ledger" }),
+  ).toBeVisible();
+  const ledgerRow = ownerPage
+    .getByRole("row")
+    .filter({ hasText: savedSale.sale.transactionId });
+  await expect(ledgerRow).toHaveClass(/ledger-row-unedited/);
+  await ledgerRow.getByRole("button", { name: "Edit" }).click();
+  await ownerPage
+    .getByRole("spinbutton", {
+      name: `Gross sales for ${savedSale.sale.transactionId}`,
+    })
+    .fill("99.00");
+  await ownerPage.getByRole("button", { name: "Save" }).click();
+  await expect(ledgerRow).not.toHaveClass(/ledger-row-unedited/);
+  await expect(ledgerRow).toContainText("99.00");
+  await ownerPage.goto("/daily-sales");
   await expect(
     ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
   ).toContainText("30.00");
@@ -404,6 +429,9 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     cashierPage.getByText("Your shifts with sales on this date."),
   ).toBeVisible();
   await expect(cashierPage.locator(".daily-sales-ledger-summary")).toHaveCount(
+    0,
+  );
+  await expect(cashierPage.getByRole("link", { name: "Ledger" })).toHaveCount(
     0,
   );
 

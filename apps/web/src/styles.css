@@ -4466,3 +4466,53 @@ a {
     line-height: 1.5;
   }
 }
+
+.ledger-period-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.ledger-period-actions .report-date-field select,
+.ledger-period-actions .report-date-field input {
+  min-width: 140px;
+}
+.ledger-card {
+  overflow: hidden;
+}
+.ledger-table {
+  min-width: 1480px;
+}
+.ledger-table .ledger-row-unedited td {
+  color: #b34747;
+}
+.ledger-cell-input {
+  height: 32px;
+  min-width: 118px;
+  padding: 0 8px;
+}
+.ledger-money-input {
+  min-width: 104px;
+  width: 104px;
+}
+.ledger-row-actions {
+  display: grid;
+  gap: 5px;
+}
+.ledger-action-button {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  justify-content: center;
+  min-height: 29px;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .ledger-period-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
