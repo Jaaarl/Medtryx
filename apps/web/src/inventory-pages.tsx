@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowDownToLine,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   CirclePlus,
@@ -4334,28 +4335,36 @@ export function CheckoutPage({
       />
       {manualEntry && (
         <section className="settings-main-card manual-checkout-date-card">
-          <Field id="manual-sale-business-date" label="Sale business date">
-            <input
-              id="manual-sale-business-date"
-              aria-label="Sale business date"
-              className="text-input"
-              type="date"
-              max={todayInManila()}
-              value={businessDate}
-              onChange={(event) => {
-                setBusinessDate(event.target.value);
-                setPreview(null);
-                setRequestKey("");
-                setSaleRecord(null);
-                setCartReceipt(null);
-              }}
-              required
-            />
-          </Field>
-          <small className="field-hint">
-            The selected date is saved on the sale for reporting. Inventory is
-            updated now when the sale is entered.
-          </small>
+          <span className="manual-checkout-date-icon" aria-hidden="true">
+            <CalendarDays size={21} strokeWidth={1.8} />
+          </span>
+          <div className="manual-checkout-date-copy">
+            <span className="eyebrow">ORIGINAL SALE DATE</span>
+            <h2>When was the sale made?</h2>
+            <p>
+              Reports use this date. Inventory updates when you save the sale.
+            </p>
+          </div>
+          <div className="manual-checkout-date-control">
+            <Field id="manual-sale-business-date" label="Sale business date">
+              <input
+                id="manual-sale-business-date"
+                aria-label="Sale business date"
+                className="text-input manual-checkout-date-input"
+                type="date"
+                max={todayInManila()}
+                value={businessDate}
+                onChange={(event) => {
+                  setBusinessDate(event.target.value);
+                  setPreview(null);
+                  setRequestKey("");
+                  setSaleRecord(null);
+                  setCartReceipt(null);
+                }}
+                required
+              />
+            </Field>
+          </div>
         </section>
       )}
       {error && (
