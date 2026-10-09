@@ -429,6 +429,18 @@ test("daily sales, Journal lock, and report summary cover the current business d
   await expect(
     ownerPage.getByRole("heading", { name: "Recent transactions" }),
   ).toHaveCount(0);
+  await expect(
+    ownerPage.getByRole("button", { name: "Preview sample invoice" }),
+  ).toHaveCount(0);
+  await expect(ownerPage.getByLabel("Cash received from customer")).toHaveCount(
+    0,
+  );
+  await expect(ownerPage.getByText("Change for customer")).toHaveCount(0);
+  await expect(
+    ownerPage.getByText(
+      "The amount due is filled in automatically. Edit it to match the cash received.",
+    ),
+  ).toHaveCount(0);
   await ownerPage.getByLabel("Sale business date").fill(manualSaleDate);
   await ownerPage.getByLabel("Search catalog").fill(productName);
   const manualCatalogRow = ownerPage
@@ -444,13 +456,12 @@ test("daily sales, Journal lock, and report summary cover the current business d
     .getByRole("button", { name: "Calculate line taxes and discounts" })
     .click();
   await ownerPage.getByRole("button", { name: "Save manual sale" }).click();
-  await ownerPage
-    .getByRole("dialog")
-    .getByRole("button", { name: "Save manual sale" })
-    .click();
   await expect(
     ownerPage.getByText(`Manual sale saved for ${manualSaleDate}.`),
   ).toBeVisible();
+  await expect(
+    ownerPage.getByRole("heading", { name: "Sample sales invoice" }),
+  ).toHaveCount(0);
   await expect(
     ownerPage
       .locator(".sale-saved-card")

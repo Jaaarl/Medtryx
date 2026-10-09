@@ -4095,7 +4095,13 @@ export function CheckoutPage({
 
   async function finalizeSale() {
     if (!preview || !policy?.approved || !checkoutShift || !requestKey) return;
-    if (preview.paymentMethod === "CASH" && !cashReceivedIsValid) return;
+    if (
+      !manualEntry &&
+      preview.paymentMethod === "CASH" &&
+      !cashReceivedIsValid
+    ) {
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -4167,7 +4173,7 @@ export function CheckoutPage({
         },
       );
       setSaleRecord(result.sale);
-      setCartReceipt(sampleReceiptFromSale(result.sale));
+      if (!manualEntry) setCartReceipt(sampleReceiptFromSale(result.sale));
       setRecentSalesRefresh((value) => value + 1);
       setCart([]);
       setBundleCart([]);
@@ -4205,8 +4211,8 @@ export function CheckoutPage({
   }
 
   function requestSaleConfirmation() {
-    if (!preview || !cashReceivedIsValid) return;
-    if (preview.paymentMethod === "CASH") {
+    if (!preview || (!manualEntry && !cashReceivedIsValid)) return;
+    if (!manualEntry && preview.paymentMethod === "CASH") {
       setShowCashChangeModal(true);
       return;
     }
@@ -5480,7 +5486,7 @@ export function CheckoutPage({
                 </span>
                 <strong>₱{preview.totals.amountDue}</strong>
               </div>
-              {preview.paymentMethod === "CASH" && (
+              {!manualEntry && preview.paymentMethod === "CASH" && (
                 <div className="checkout-cash-tender">
                   <label className="field-label" htmlFor="cash-received-amount">
                     Cash received from customer
@@ -5553,7 +5559,7 @@ export function CheckoutPage({
                   saving ||
                   !policy?.approved ||
                   !checkoutShift ||
-                  !cashReceivedIsValid ||
+                  (!manualEntry && !cashReceivedIsValid) ||
                   !requestKey ||
                   (hasTrackedCart && !lotPickConfirmed)
                 }
@@ -5565,13 +5571,15 @@ export function CheckoutPage({
                     ? "Save manual sale"
                     : "Confirm sale"}
               </button>
-              <button
-                className="button button-secondary checkout-receipt-preview-button"
-                type="button"
-                onClick={() => setCartReceipt(makeCartReceipt())}
-              >
-                Preview sample invoice
-              </button>
+              {!manualEntry && (
+                <button
+                  className="button button-secondary checkout-receipt-preview-button"
+                  type="button"
+                  onClick={() => setCartReceipt(makeCartReceipt())}
+                >
+                  Preview sample invoice
+                </button>
+              )}
               {!policy?.approved && (
                 <small className="field-hint">
                   Finalization is locked while the policy is provisional.
@@ -5609,7 +5617,8 @@ export function CheckoutPage({
           )}
         </aside>
       </div>
-      {showCashChangeModal &&
+      {!manualEntry &&
+        showCashChangeModal &&
         preview?.paymentMethod === "CASH" &&
         customerChangeCents !== null &&
         customerChangeCents >= 0n && (
