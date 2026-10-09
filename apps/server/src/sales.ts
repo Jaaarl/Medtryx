@@ -2479,15 +2479,11 @@ export function registerSalesRoutes(
           throw new SalesError(409, "tax_policy_not_approved");
         }
         const currentShift = parsed.data.businessDate
-          ? (db
-              .prepare(
-                `SELECT id, cashier_user_id, opened_at, opening_cash_centavos,
-                        expected_cash_centavos
-                 FROM shifts WHERE closed_at IS NULL LIMIT 1`,
-              )
-              .get() as ReturnType<typeof shiftForCashier>)
+          ? null
           : shiftForCashier(db, req.user!.id);
-        if (!currentShift) throw new SalesError(409, "open_shift_required");
+        if (!currentShift && !parsed.data.businessDate) {
+          throw new SalesError(409, "open_shift_required");
+        }
         const bnpcContext = bnpcContextForCheckout(
           db,
           parsed.data.items,
@@ -2565,7 +2561,7 @@ export function registerSalesRoutes(
           parsed.data.requestKey,
           requestHash,
           req.user!.id,
-          currentShift.id,
+          currentShift?.id ?? null,
           parsed.data.benefitType,
           customerNameCiphertext,
           customerBirthdayCiphertext,
@@ -2867,7 +2863,7 @@ export function registerSalesRoutes(
           );
         }
 
-        if (parsed.data.paymentMethod === "CASH") {
+        if (parsed.data.paymentMethod === "CASH" && currentShift) {
           const expected =
             currentShift.expected_cash_centavos + preview.amountDueCentavos;
           if (!Number.isSafeInteger(expected)) {

@@ -422,6 +422,13 @@ test("daily sales, Journal lock, and report summary cover the current business d
   await expect(
     ownerPage.getByRole("heading", { name: "Manual checkout" }),
   ).toBeVisible();
+  await expect(ownerPage.getByText("REGISTER REQUIRED")).toHaveCount(0);
+  await expect(
+    ownerPage.getByRole("heading", { name: "Open a cashier shift" }),
+  ).toHaveCount(0);
+  await expect(
+    ownerPage.getByRole("heading", { name: "Recent transactions" }),
+  ).toHaveCount(0);
   await ownerPage.getByLabel("Sale business date").fill(manualSaleDate);
   await ownerPage.getByLabel("Search catalog").fill(productName);
   const manualCatalogRow = ownerPage
@@ -480,7 +487,7 @@ test("daily sales, Journal lock, and report summary cover the current business d
   const closeResponse = await postApi(
     cashierPage,
     `/api/shifts/${shift.id}/close`,
-    { actualCashCount: "45.00" },
+    { actualCashCount: "30.00" },
   );
   expect(closeResponse.status()).toBe(200);
   await cashierPage.close();

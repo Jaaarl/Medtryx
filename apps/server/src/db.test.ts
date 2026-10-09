@@ -5,6 +5,105 @@ import { describe, expect, it } from "vitest";
 import { migrateDatabase, repositoryRoot } from "./db.js";
 
 describe("database migrations", () => {
+  it("allows manual sales without shifts while preserving existing sale references", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      for (const name of readdirSync(migrationsDirectory)
+        .filter((entry) => /^\d+_[a-z0-9_-]+\.sql$/iu.test(entry))
+        .filter((entry) => Number(entry.slice(0, 4)) < 23)
+        .sort()) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+           (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('manual-migration-owner', 'manual-migration@example.test',
+           'synthetic-hash', 'owner', 1, ?, ?)`,
+      ).run(now, now);
+      db.prepare(
+        `INSERT INTO shifts
+           (id, cashier_user_id, opened_at, opening_cash_centavos,
+            expected_cash_centavos)
+         VALUES ('manual-migration-shift', 'manual-migration-owner', ?, 0, 0)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sales
+          (id, transaction_id, business_date, request_key, request_hash,
+           cashier_user_id, shift_id, benefit_type, customer_id_checked,
+           payment_method, subtotal_centavos, vat_centavos,
+           vat_removed_centavos, senior_discount_centavos,
+           pwd_discount_centavos, amount_due_centavos, tax_policy_version,
+           created_at)
+         VALUES ('manual-migration-sale', 'MTX-20261009-000001', '2026-10-09',
+           'migration-sale-key', 'migration-sale-hash',
+           'manual-migration-owner', 'manual-migration-shift', 'REGULAR', 0,
+           'CASH', 100, 0, 0, 0, 0, 100, 'LEGACY', ?)`,
+      ).run(now);
+      db.prepare(
+        `INSERT INTO sale_reversals
+          (id, reversal_transaction_id, sale_id, approved_by_user_id, reason,
+           refund_method, amount_centavos, cash_shift_id, created_at)
+         VALUES ('manual-migration-reversal', 'REV-20261009-000001',
+           'manual-migration-sale', 'manual-migration-owner',
+           'Synthetic migration fixture', 'QR', 100, NULL, ?)`,
+      ).run(now);
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            "SELECT shift_id FROM sales WHERE id = 'manual-migration-sale'",
+          )
+          .get(),
+      ).toEqual({ shift_id: "manual-migration-shift" });
+      expect(
+        db
+          .prepare(
+            "SELECT sale_id FROM sale_reversals WHERE id = 'manual-migration-reversal'",
+          )
+          .get(),
+      ).toEqual({ sale_id: "manual-migration-sale" });
+      expect(
+        (
+          db.pragma("table_info(sales)") as {
+            name: string;
+            notnull: number;
+          }[]
+        ).find((column) => column.name === "shift_id")?.notnull,
+      ).toBe(0);
+      db.prepare(
+        `INSERT INTO sales
+          (id, transaction_id, business_date, request_key, request_hash,
+           cashier_user_id, shift_id, benefit_type, customer_id_checked,
+           payment_method, subtotal_centavos, vat_centavos,
+           vat_removed_centavos, senior_discount_centavos,
+           pwd_discount_centavos, amount_due_centavos, tax_policy_version,
+           created_at)
+         VALUES ('manual-migration-no-shift', 'MTX-20261009-000002',
+           '2026-10-09', 'manual-no-shift-key', 'manual-no-shift-hash',
+           'manual-migration-owner', NULL, 'REGULAR', 0, 'CASH', 100, 0,
+           0, 0, 0, 100, 'LEGACY', ?)`,
+      ).run(now);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("rolls old copied sale rows into one journal day and keeps their edits", () => {
     const db = new Database(":memory:");
     try {

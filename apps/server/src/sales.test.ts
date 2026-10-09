@@ -1095,7 +1095,13 @@ describe("checkout, sales, and cashier shifts", () => {
     await configureApprovedPolicy(owner);
     const product = await createProduct(owner, { sku: "SYN-OFFLINE-SALE" });
     const cashier = await signIn("cashier.sales@example.test", cashierPassword);
-    expect((await openShift(cashier, "50.00")).status).toBe(201);
+    expect((await owner.get("/api/shifts/current")).body.shift).toBeNull();
+    const regularSaleWithoutShift = await postSale(owner, {
+      productId: product.id,
+      quantity: 1,
+    });
+    expect(regularSaleWithoutShift.status).toBe(409);
+    expect(regularSaleWithoutShift.body.error).toBe("open_shift_required");
 
     const businessDate = manilaDayAfter(-1);
     const previewCsrf = await csrfFor(owner);
@@ -1126,6 +1132,12 @@ describe("checkout, sales, and cashier shifts", () => {
       transactionId: `MTX-${businessDate.replaceAll("-", "")}-000001`,
       cashierEmail: "owner.sales@example.test",
     });
+    expect(
+      db
+        .prepare("SELECT shift_id FROM sales WHERE transaction_id = ?")
+        .get(saleResponse.body.sale.transactionId),
+    ).toEqual({ shift_id: null });
+    expect((await owner.get("/api/shifts/current")).body.shift).toBeNull();
 
     const updatedProduct = await owner.get("/api/products");
     expect(

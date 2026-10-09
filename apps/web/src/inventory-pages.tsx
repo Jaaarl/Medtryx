@@ -4313,7 +4313,7 @@ export function CheckoutPage({
   const quantityInputId = bundleOfferToAdd
     ? "checkout-bundle-quantity"
     : "checkout-product-quantity";
-  const checkoutShift = manualEntry ? (shift ?? registerShift) : shift;
+  const checkoutShift = manualEntry || shift;
 
   return (
     <section className="page-section inventory-page checkout-page">
@@ -4617,13 +4617,7 @@ export function CheckoutPage({
                 ? `Approved tax profile: ${policy.version}`
                 : "Provisional tax calculations only. Finalization stays locked until the owner records accountant-approved tax and cost-basis settings."}
           </div>
-          {manualEntry && registerShift && !shift && (
-            <small className="field-hint">
-              This entry will use the open register shift under{" "}
-              {registerShift.openedByEmail}.
-            </small>
-          )}
-          {!operationsLoading && !checkoutShift && (
+          {!manualEntry && !operationsLoading && !checkoutShift && (
             <div className="shift-modal-backdrop checkout-register-required-backdrop">
               <section
                 className="checkout-shift-modal"
@@ -5749,11 +5743,13 @@ export function CheckoutPage({
           </section>
         </div>
       )}
-      <RecentTransactions
-        refundShift={shift ?? registerShift}
-        refreshKey={recentSalesRefresh}
-        onUpdated={refreshShiftState}
-      />
+      {!manualEntry && (
+        <RecentTransactions
+          refundShift={shift ?? registerShift}
+          refreshKey={recentSalesRefresh}
+          onUpdated={refreshShiftState}
+        />
+      )}
       {cartReceipt && (
         <SampleReceiptModal
           receipt={cartReceipt}

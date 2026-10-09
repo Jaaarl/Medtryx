@@ -95,13 +95,34 @@ export function migrateDatabase(db: Database.Database): void {
   for (const name of migrations) {
     if (applied.has(name)) continue;
     const sql = readFileSync(resolve(migrationsDirectory, name), "utf8");
-    const apply = db.transaction(() => {
-      db.exec(sql);
-      db.prepare(
-        "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
-      ).run(name, new Date().toISOString());
-    });
-    apply();
+    const requiresForeignKeysOff = sql.includes(
+      "-- @requires-foreign-keys-off",
+    );
+    if (requiresForeignKeysOff) db.pragma("foreign_keys = OFF");
+    try {
+      const apply = db.transaction(() => {
+        db.exec(sql);
+        if (requiresForeignKeysOff) {
+          const violations = db.pragma("foreign_key_check") as {
+            table: string;
+            rowid: number | null;
+            parent: string;
+            fkid: number;
+          }[];
+          if (violations.length > 0) {
+            throw new Error(
+              `Migration ${name} leaves invalid foreign keys: ${JSON.stringify(violations)}`,
+            );
+          }
+        }
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      });
+      apply();
+    } finally {
+      if (requiresForeignKeysOff) db.pragma("foreign_keys = ON");
+    }
   }
 }
 
