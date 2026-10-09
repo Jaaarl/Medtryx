@@ -1933,10 +1933,71 @@ export function registerSalesRoutes(
       quantity: number;
       sales_centavos: number;
     }>;
+    const ownerSalesBreakdown =
+      req.user!.role === "owner"
+        ? (db
+            .prepare(
+              `SELECT
+                 (SELECT MIN(transaction_id) FROM sales
+                  WHERE business_date = ? ${cashierOnly}) AS first_invoice,
+                 (SELECT MAX(transaction_id) FROM sales
+                  WHERE business_date = ? ${cashierOnly}) AS last_invoice,
+                 (SELECT COALESCE(SUM(senior_discount_centavos), 0) FROM sales
+                  WHERE business_date = ? ${cashierOnly}) AS senior_discount_centavos,
+                 (SELECT COALESCE(SUM(sl.amount_due_centavos), 0)
+                  FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+                  WHERE s.business_date = ? ${cashierOnly}
+                    AND sl.tax_class_snapshot <> 'VATABLE') AS non_vat_centavos,
+                 (SELECT COALESCE(SUM(sl.tax_basis_centavos), 0)
+                  FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+                  WHERE s.business_date = ? ${cashierOnly}
+                    AND sl.tax_class_snapshot = 'VATABLE') AS vatable_centavos,
+                 (SELECT COALESCE(SUM(vat_centavos), 0) FROM sales
+                  WHERE business_date = ? ${cashierOnly}) AS total_vat_centavos,
+                 (SELECT COALESCE(SUM(sl.quantity * sl.unit_price_centavos), 0)
+                  FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+                  WHERE s.business_date = ? ${cashierOnly}) AS gross_sales_centavos,
+                 (SELECT COALESCE(SUM(sl.amount_due_centavos - sl.vat_centavos), 0)
+                  FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+                  WHERE s.business_date = ? ${cashierOnly}) AS net_sales_centavos`,
+            )
+            .get(...Array.from({ length: 8 }, () => date)) as {
+            first_invoice: string | null;
+            last_invoice: string | null;
+            senior_discount_centavos: number;
+            non_vat_centavos: number;
+            vatable_centavos: number;
+            total_vat_centavos: number;
+            gross_sales_centavos: number;
+            net_sales_centavos: number;
+          })
+        : undefined;
     res.json({
       summary: {
         businessDate: date,
         scope: req.user!.role === "owner" ? "STORE" : "CASHIER",
+        ...(ownerSalesBreakdown
+          ? {
+              salesBreakdown: {
+                month: date.slice(0, 7),
+                invoiceNumberRange:
+                  ownerSalesBreakdown.first_invoice === null
+                    ? "—"
+                    : ownerSalesBreakdown.first_invoice ===
+                        ownerSalesBreakdown.last_invoice
+                      ? ownerSalesBreakdown.first_invoice
+                      : `${ownerSalesBreakdown.first_invoice} – ${ownerSalesBreakdown.last_invoice}`,
+                seniorDiscount: money(
+                  ownerSalesBreakdown.senior_discount_centavos,
+                ),
+                nonVat: money(ownerSalesBreakdown.non_vat_centavos),
+                vatableSales: money(ownerSalesBreakdown.vatable_centavos),
+                totalVat: money(ownerSalesBreakdown.total_vat_centavos),
+                grossSales: money(ownerSalesBreakdown.gross_sales_centavos),
+                netSales: money(ownerSalesBreakdown.net_sales_centavos),
+              },
+            }
+          : {}),
         totals: {
           transactionCount: totals.transaction_count,
           sales: money(totals.sales_centavos),

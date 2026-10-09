@@ -374,6 +374,17 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   });
   expect(saleResponse.status()).toBe(201);
 
+  await ownerPage.goto("/daily-sales");
+  await expect(
+    ownerPage.getByRole("heading", { name: "Daily sales journal" }),
+  ).toBeVisible();
+  await expect(
+    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+  ).toContainText(/MTX-\d{8}-\d{6}/);
+  await expect(
+    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+  ).toContainText("30.00");
+
   await cashierPage.goto("/daily-sales");
   await expect(
     cashierPage.getByRole("heading", { name: "Daily sales" }),
@@ -392,6 +403,9 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   await expect(
     cashierPage.getByText("Your shifts with sales on this date."),
   ).toBeVisible();
+  await expect(cashierPage.locator(".daily-sales-ledger-summary")).toHaveCount(
+    0,
+  );
 
   const currentShift = await cashierPage.request.get("/api/shifts/current");
   const { shift } = (await currentShift.json()) as { shift: { id: string } };

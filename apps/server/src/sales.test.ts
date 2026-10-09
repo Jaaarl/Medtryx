@@ -1045,6 +1045,16 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(ownerSummary.body.summary).toMatchObject({
       scope: "STORE",
       businessDate: date,
+      salesBreakdown: {
+        month: date.slice(0, 7),
+        invoiceNumberRange: `MTX-${date.replaceAll("-", "")}-000001 – MTX-${date.replaceAll("-", "")}-000002`,
+        seniorDiscount: "0.00",
+        nonVat: "0.00",
+        vatableSales: "300.00",
+        totalVat: "36.00",
+        grossSales: "336.00",
+        netSales: "300.00",
+      },
       totals: {
         transactionCount: 2,
         sales: "336.00",

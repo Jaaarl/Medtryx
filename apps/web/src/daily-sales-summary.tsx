@@ -5,6 +5,16 @@ import { api } from "./api";
 type DailySalesSummary = {
   businessDate: string;
   scope: "STORE" | "CASHIER";
+  salesBreakdown?: {
+    month: string;
+    invoiceNumberRange: string;
+    seniorDiscount: string;
+    nonVat: string;
+    vatableSales: string;
+    totalVat: string;
+    grossSales: string;
+    netSales: string;
+  };
   totals: {
     transactionCount: number;
     sales: string;
@@ -143,6 +153,52 @@ export function DailySalesSummaryPage() {
               </strong>
             </div>
           </div>
+
+          {summary.scope === "STORE" && summary.salesBreakdown && (
+            <section className="settings-main-card report-low-stock daily-sales-ledger-summary">
+              <div className="card-heading">
+                <div>
+                  <h2>Daily sales journal</h2>
+                  <p>Owner accounting totals for {summary.businessDate}.</p>
+                </div>
+              </div>
+              <div className="inventory-table-wrap">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>MONTH</th>
+                      <th>INVOICE NUMBER RANGE</th>
+                      <th>SENIOR DISCOUNT</th>
+                      <th>NON-VAT SALES</th>
+                      <th>VATABLE SALES</th>
+                      <th>TOTAL VAT</th>
+                      <th>GROSS SALES</th>
+                      <th>NET SALES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        {new Date(
+                          `${summary.salesBreakdown.month}-01T00:00:00`,
+                        ).toLocaleDateString("en-PH", {
+                          month: "long",
+                          year: "numeric",
+                        })}
+                      </td>
+                      <td>{summary.salesBreakdown.invoiceNumberRange}</td>
+                      <td>₱{summary.salesBreakdown.seniorDiscount}</td>
+                      <td>₱{summary.salesBreakdown.nonVat}</td>
+                      <td>₱{summary.salesBreakdown.vatableSales}</td>
+                      <td>₱{summary.salesBreakdown.totalVat}</td>
+                      <td>₱{summary.salesBreakdown.grossSales}</td>
+                      <td>₱{summary.salesBreakdown.netSales}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">
