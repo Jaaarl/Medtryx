@@ -1282,6 +1282,32 @@ describe("checkout, sales, and cashier shifts", () => {
       },
     ]);
 
+    const dailySalesRange = await owner.get(
+      `/api/shifts/daily-sales-summary/range?startDate=${sale.businessDate}&endDate=${sale.businessDate}`,
+    );
+    expect(dailySalesRange.status).toBe(200);
+    expect(dailySalesRange.body.entries).toEqual([
+      {
+        businessDate: sale.businessDate,
+        month: sale.businessDate.slice(0, 7),
+        date: sale.businessDate,
+        invoiceNumberRange: `${invoiceNumbers[0]} \u2013 ${invoiceNumbers[1]}`,
+        seniorDiscount: "60.00",
+        nonVat: "0.00",
+        vatableSales: "300.00",
+        totalVat: "0.00",
+        grossSales: "336.00",
+        netSales: "240.00",
+      },
+    ]);
+    expect(
+      (
+        await cashier.get(
+          `/api/shifts/daily-sales-summary/range?startDate=${sale.businessDate}&endDate=${sale.businessDate}`,
+        )
+      ).status,
+    ).toBe(403);
+
     expect((await cashier.get(path)).status).toBe(403);
     expect(
       (

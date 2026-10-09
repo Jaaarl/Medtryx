@@ -2024,6 +2024,88 @@ export function registerSalesRoutes(
     });
   });
 
+  router.get(
+    "/shifts/daily-sales-summary/range",
+    requireAuth,
+    requireOwner,
+    (req, res) => {
+      const start = z.iso.date().safeParse(req.query.startDate);
+      const end = z.iso.date().safeParse(req.query.endDate);
+      if (!start.success || !end.success || start.data > end.data) {
+        res.status(400).json({ error: "invalid_report_range" });
+        return;
+      }
+
+      const rows = db
+        .prepare(
+          `SELECT sale_totals.business_date, sale_totals.first_invoice,
+                  sale_totals.last_invoice,
+                  sale_totals.senior_discount_centavos,
+                  sale_totals.total_vat_centavos,
+                  line_totals.non_vat_centavos,
+                  line_totals.vatable_sales_centavos,
+                  line_totals.gross_sales_centavos,
+                  line_totals.net_sales_centavos
+           FROM (
+             SELECT business_date, MIN(transaction_id) AS first_invoice,
+                    MAX(transaction_id) AS last_invoice,
+                    SUM(senior_discount_centavos) AS senior_discount_centavos,
+                    SUM(vat_centavos) AS total_vat_centavos
+             FROM sales
+             WHERE business_date >= ? AND business_date <= ?
+             GROUP BY business_date
+           ) AS sale_totals
+           JOIN (
+             SELECT s.business_date,
+                    COALESCE(SUM(CASE WHEN sl.tax_class_snapshot <> 'VATABLE'
+                                      THEN sl.amount_due_centavos ELSE 0 END), 0)
+                      AS non_vat_centavos,
+                    COALESCE(SUM(CASE WHEN sl.tax_class_snapshot = 'VATABLE'
+                                      THEN sl.tax_basis_centavos ELSE 0 END), 0)
+                      AS vatable_sales_centavos,
+                    COALESCE(SUM(sl.quantity * sl.unit_price_centavos), 0)
+                      AS gross_sales_centavos,
+                    COALESCE(SUM(sl.amount_due_centavos - sl.vat_centavos), 0)
+                      AS net_sales_centavos
+             FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
+             WHERE s.business_date >= ? AND s.business_date <= ?
+             GROUP BY s.business_date
+           ) AS line_totals
+             ON line_totals.business_date = sale_totals.business_date
+           ORDER BY sale_totals.business_date`,
+        )
+        .all(start.data, end.data, start.data, end.data) as Array<{
+        business_date: string;
+        first_invoice: string;
+        last_invoice: string;
+        senior_discount_centavos: number;
+        total_vat_centavos: number;
+        non_vat_centavos: number;
+        vatable_sales_centavos: number;
+        gross_sales_centavos: number;
+        net_sales_centavos: number;
+      }>;
+
+      res.json({
+        entries: rows.map((row) => ({
+          businessDate: row.business_date,
+          month: row.business_date.slice(0, 7),
+          date: row.business_date,
+          invoiceNumberRange:
+            row.first_invoice === row.last_invoice
+              ? row.first_invoice
+              : `${row.first_invoice} – ${row.last_invoice}`,
+          seniorDiscount: money(row.senior_discount_centavos),
+          nonVat: money(row.non_vat_centavos),
+          vatableSales: money(row.vatable_sales_centavos),
+          totalVat: money(row.total_vat_centavos),
+          grossSales: money(row.gross_sales_centavos),
+          netSales: money(row.net_sales_centavos),
+        })),
+      });
+    },
+  );
+
   router.get("/shifts/history", requireAuth, requireOwner, (req, res) => {
     const limit = z.coerce
       .number()

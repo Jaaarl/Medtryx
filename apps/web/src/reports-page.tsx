@@ -61,8 +61,8 @@ type BenefitTransaction = {
   products: Array<{ name: string; quantity: number }>;
 };
 
-type JournalEntry = {
-  sourceBusinessDate: string;
+type DailySalesEntry = {
+  businessDate: string;
   month: string;
   date: string;
   invoiceNumberRange: string;
@@ -72,7 +72,6 @@ type JournalEntry = {
   totalVat: string;
   grossSales: string;
   netSales: string;
-  editedAt: string | null;
 };
 
 function todayInManila(): string {
@@ -152,14 +151,6 @@ async function fetchReport(
   return result.report;
 }
 
-function nextMonth(month: string): string {
-  const year = Number(month.slice(0, 4));
-  const monthNumber = Number(month.slice(5, 7));
-  const nextYear = monthNumber === 12 ? year + 1 : year;
-  const nextMonthNumber = monthNumber === 12 ? 1 : monthNumber + 1;
-  return `${nextYear}-${String(nextMonthNumber).padStart(2, "0")}`;
-}
-
 function monthLabel(month: string): string {
   const year = Number(month.slice(0, 4));
   const monthNumber = Number(month.slice(5, 7));
@@ -170,34 +161,15 @@ function monthLabel(month: string): string {
   }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
 }
 
-async function fetchJournal(
+async function fetchDailySales(
   startDate: string,
   endDate: string,
-): Promise<JournalEntry[]> {
-  const firstMonth = startDate.slice(0, 7);
-  const lastMonth = endDate.slice(0, 7);
-  const entries: JournalEntry[] = [];
-  let batchStart = firstMonth;
-
-  while (batchStart <= lastMonth) {
-    let batchEnd = batchStart;
-    for (let count = 1; count < 12; count += 1) {
-      const candidate = nextMonth(batchEnd);
-      if (candidate > lastMonth) break;
-      batchEnd = candidate;
-    }
-    const query = new URLSearchParams({
-      startMonth: batchStart,
-      endMonth: batchEnd,
-    });
-    const result = await api.get<{ entries: JournalEntry[] }>(
-      `/journal/range?${query}`,
-    );
-    entries.push(...result.entries);
-    batchStart = nextMonth(batchEnd);
-  }
-
-  return entries;
+): Promise<DailySalesEntry[]> {
+  const query = new URLSearchParams({ startDate, endDate });
+  const result = await api.get<{ entries: DailySalesEntry[] }>(
+    `/shifts/daily-sales-summary/range?${query}`,
+  );
+  return result.entries;
 }
 
 export function ReportsPage() {
@@ -207,7 +179,9 @@ export function ReportsPage() {
   const [benefitTransactions, setBenefitTransactions] = useState<
     BenefitTransaction[]
   >([]);
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [dailySalesEntries, setDailySalesEntries] = useState<DailySalesEntry[]>(
+    [],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -217,21 +191,22 @@ export function ReportsPage() {
         startDate: selectedStart,
         endDate: selectedEnd,
       });
-      const [nextReport, nextBenefits, nextJournalEntries] = await Promise.all([
-        fetchReport(selectedStart, selectedEnd),
-        api.get<{ transactions: BenefitTransaction[] }>(
-          `/reports/beneficiaries/range?${query}`,
-        ),
-        fetchJournal(selectedStart, selectedEnd),
-      ]);
+      const [nextReport, nextBenefits, nextDailySalesEntries] =
+        await Promise.all([
+          fetchReport(selectedStart, selectedEnd),
+          api.get<{ transactions: BenefitTransaction[] }>(
+            `/reports/beneficiaries/range?${query}`,
+          ),
+          fetchDailySales(selectedStart, selectedEnd),
+        ]);
       setReport(nextReport);
       setBenefitTransactions(nextBenefits.transactions);
-      setJournalEntries(nextJournalEntries);
+      setDailySalesEntries(nextDailySalesEntries);
       setError("");
     } catch {
       setReport(null);
       setBenefitTransactions([]);
-      setJournalEntries([]);
+      setDailySalesEntries([]);
       setError("Unable to load the report. Check the date and try again.");
     } finally {
       setLoading(false);
@@ -246,13 +221,13 @@ export function ReportsPage() {
       api.get<{ transactions: BenefitTransaction[] }>(
         `/reports/beneficiaries/range?${query}`,
       ),
-      fetchJournal(startDate, endDate),
+      fetchDailySales(startDate, endDate),
     ])
-      .then(([nextReport, nextBenefits, nextJournalEntries]) => {
+      .then(([nextReport, nextBenefits, nextDailySalesEntries]) => {
         if (active) {
           setReport(nextReport);
           setBenefitTransactions(nextBenefits.transactions);
-          setJournalEntries(nextJournalEntries);
+          setDailySalesEntries(nextDailySalesEntries);
           setError("");
         }
       })
@@ -260,7 +235,7 @@ export function ReportsPage() {
         if (active) {
           setReport(null);
           setBenefitTransactions([]);
-          setJournalEntries([]);
+          setDailySalesEntries([]);
           setError("Unable to load the report. Check the date and try again.");
         }
       })
@@ -437,20 +412,19 @@ export function ReportsPage() {
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">
               <div>
-                <h2>Daily sales journal</h2>
+                <h2>Daily sales summary</h2>
                 <p>
-                  Copied daily sales summaries for each journal month in the
-                  selected date range. Edits here are made on the Journal page
-                  and do not change Daily Sales.
+                  Original Daily Sales totals for each business date in the
+                  selected range.
                 </p>
               </div>
               <span className="count-chip">
-                {journalEntries.length} days
+                {dailySalesEntries.length} days
               </span>
             </div>
-            {journalEntries.length ? (
+            {dailySalesEntries.length ? (
               <div className="inventory-table-wrap">
-                <table className="inventory-table journal-table">
+                <table className="inventory-table">
                   <thead>
                     <tr>
                       <th>Month</th>
@@ -465,13 +439,8 @@ export function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {journalEntries.map((entry) => (
-                      <tr
-                        className={
-                          entry.editedAt ? "" : "journal-row-unedited"
-                        }
-                        key={entry.sourceBusinessDate}
-                      >
+                    {dailySalesEntries.map((entry) => (
+                      <tr key={entry.businessDate}>
                         <td>{monthLabel(entry.month)}</td>
                         <td>{entry.date}</td>
                         <td>{entry.invoiceNumberRange}</td>
@@ -488,7 +457,7 @@ export function ReportsPage() {
               </div>
             ) : (
               <p className="report-empty">
-                No daily sales journal entries appear in the selected period.
+                No Daily Sales were recorded in the selected date range.
               </p>
             )}
           </section>
