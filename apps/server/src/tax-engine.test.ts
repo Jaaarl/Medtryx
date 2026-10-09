@@ -61,6 +61,35 @@ describe("line-level decimal tax calculations", () => {
     });
   });
 
+  it.each([true, false])(
+    "supports a 0% VATable line with vatInclusivePrices=%s",
+    (vatInclusivePrices) => {
+      const result = calculateTaxLine(
+        {
+          unitPriceCentavos: 10_000,
+          quantity: 1,
+          taxClass: "VATABLE",
+          isScEligible: true,
+          isPwdEligible: true,
+          benefit: "REGULAR",
+          benefitApplied: false,
+        },
+        {
+          ...proposedPolicy,
+          vatRateBasisPoints: 0,
+          vatInclusivePrices,
+        },
+      );
+
+      expect(result).toMatchObject({
+        grossCentavos: 10_000,
+        taxBasisCentavos: 10_000,
+        vatCentavos: 0,
+        amountDueCentavos: 10_000,
+      });
+    },
+  );
+
   it("removes included VAT before applying a selected eligible SC discount", () => {
     expect(
       calculateTaxLine(
