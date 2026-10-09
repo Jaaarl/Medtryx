@@ -36,6 +36,7 @@ import { registerSalesRoutes } from "./sales.js";
 import { registerSalesJournalRoutes } from "./sales-journal.js";
 import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
 import { apiMaintenance } from "./maintenance.js";
+import { registerAiReceiptRoutes } from "./receipt-workflow.js";
 
 const loginSchema = z
   .object({ email: z.email().max(254), password: z.string().min(1).max(128) })
@@ -392,7 +393,6 @@ export function createApp(
       crossOriginResourcePolicy: { policy: "same-origin" },
     }),
   );
-  app.use(express.json({ limit: "20kb", strict: true }));
   app.use(cookieParser());
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", environment: selectedEnvironment() });
@@ -408,6 +408,10 @@ export function createApp(
     }),
   );
   app.use("/api", apiMaintenance);
+  const receiptAiRouter = express.Router();
+  registerAiReceiptRoutes(receiptAiRouter, db);
+  app.use("/api/stock/receipts", receiptAiRouter);
+  app.use(express.json({ limit: "20kb", strict: true }));
   registerAuthRoutes(app, db);
   const inventoryRouter = express.Router();
   registerInventoryRoutes(inventoryRouter, db);
@@ -439,7 +443,17 @@ export function createApp(
       );
     }
   }
-  const errorHandler: ErrorRequestHandler = (_error, _req, res, _next) => {
+  const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+    if (error instanceof Error && "type" in error) {
+      if (error.type === "entity.too.large") {
+        res.status(413).json({ error: "request_too_large" });
+        return;
+      }
+      if (error.type === "entity.parse.failed") {
+        res.status(400).json({ error: "invalid_request" });
+        return;
+      }
+    }
     res.status(500).json({ error: "internal_server_error" });
   };
   app.use(errorHandler);

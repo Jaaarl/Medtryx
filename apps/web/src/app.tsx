@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Clock,
   DatabaseBackup,
+  FileUp,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -47,6 +48,7 @@ import { BundlesPage } from "./bundles-page";
 import { ProductMovementPage } from "./product-movement-page";
 import { DailySalesSummaryPage } from "./daily-sales-summary";
 import { JournalPage } from "./journal-page";
+import { ReceiptReceivingPage } from "./receipt-receiving-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -66,6 +68,12 @@ const navigation = [
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
+  {
+    to: "/receipt-receiving",
+    label: "Receipt receiving",
+    icon: FileUp,
+    ownerOnly: true,
+  },
   { to: "/bundles", label: "Bundles", icon: Tag, ownerOnly: true },
   {
     to: "/sales",
@@ -109,7 +117,9 @@ function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
-      return window.localStorage.getItem("medtryx-sidebar-collapsed") === "true";
+      return (
+        window.localStorage.getItem("medtryx-sidebar-collapsed") === "true"
+      );
     } catch {
       return false;
     }
@@ -157,11 +167,19 @@ function Layout() {
           <button
             className="icon-button sidebar-collapse-button"
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
-            aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-label={
+              sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
+            }
             aria-expanded={!sidebarCollapsed}
-            title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            title={
+              sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
+            }
           >
-            {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+            {sidebarCollapsed ? (
+              <PanelLeftOpen size={19} />
+            ) : (
+              <PanelLeftClose size={19} />
+            )}
           </button>
         </div>
         <nav className="main-nav" aria-label="Main navigation">
@@ -882,6 +900,10 @@ export function App() {
             />
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
+            <Route
+              path="receipt-receiving"
+              element={<ReceiptReceivingPage />}
+            />
             <Route
               path="stock/checkout-overrides"
               element={

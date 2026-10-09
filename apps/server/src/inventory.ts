@@ -39,7 +39,7 @@ const expiryDateSchema = z
   .refine(validCalendarDate, "invalid_expiry_date");
 const supplierSchema = z.string().trim().max(160).optional();
 
-const createProductSchema = z
+export const createProductSchema = z
   .object({
     sku: skuSchema.optional(),
     name: z.string().trim().min(1).max(160),
@@ -120,10 +120,10 @@ const createProductSchema = z
     }
   });
 
-type CreateProductInput = z.infer<typeof createProductSchema>;
+export type CreateProductInput = z.infer<typeof createProductSchema>;
 type CsvRow = { row: number; values: Record<string, string> };
 type CsvIssue = { row: number; message: string };
-type CsvParseResult =
+export type CsvParseResult =
   | { rows: CsvRow[]; issues: [] }
   | { rows: []; issues: CsvIssue[] };
 
@@ -181,7 +181,7 @@ const PRODUCT_UPDATE_CSV_ALLOWED_HEADERS = [
 ];
 const PRODUCT_UPDATE_CSV_REQUIRED_HEADERS = ["sku"];
 
-function parseCsvRows(
+export function parseCsvRows(
   source: unknown,
   allowedHeaders: string[],
   requiredHeaders: string[],
@@ -361,7 +361,7 @@ function productCsvCell(value: string | number | boolean | null): string {
   return `"${normalized.replaceAll('"', '""')}"`;
 }
 
-function productCsvValue(value: string): string {
+export function productCsvValue(value: string): string {
   return /^'[\s\u0000-\u001f]*[=+\-@]/u.test(value) ? value.slice(1) : value;
 }
 
@@ -399,7 +399,7 @@ const updateProductSchema = z
     }
   });
 
-const receiptSchema = z
+export const receiptSchema = z
   .object({
     productId: z.uuid(),
     quantity: z.number().int().min(1).max(MAX_QUANTITY),
@@ -420,7 +420,7 @@ const receiptSchema = z
       });
     }
   });
-type ReceiptInput = z.infer<typeof receiptSchema>;
+export type ReceiptInput = z.infer<typeof receiptSchema>;
 
 const STOCK_RECEIPT_CSV_HEADERS = [
   "sku",
@@ -799,7 +799,7 @@ function bodyValidation(res: Response): void {
   res.status(400).json({ error: "invalid_request" });
 }
 
-function handleInventoryError(error: unknown, res: Response): boolean {
+export function handleInventoryError(error: unknown, res: Response): boolean {
   if (error instanceof InventoryError) {
     res.status(error.status).json({ error: error.code });
     return true;
@@ -966,7 +966,7 @@ function addManilaDays(day: string, count: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function createProductRecord(
+export function createProductRecord(
   db: Database.Database,
   input: CreateProductInput,
   actorUserId: string,
@@ -1088,11 +1088,22 @@ function createProductRecord(
   return { id, sku, generatedSku: !input.sku };
 }
 
-function receiveStockRecord(
+export function receiveStockRecord(
   db: Database.Database,
   input: ReceiptInput,
   actorUserId: string,
   now: string,
+  receiptLine?: {
+    receiptId: string;
+    lineNumber: number;
+    originalDescription: string;
+    sourceQuantity: string;
+    sourceUnitCost: string;
+    sourceLineTotal: string;
+    sourceLot: string;
+    sourceExpiry: string;
+    conversionFactor: number | null;
+  },
 ): string {
   const costCents = parseMoney(input.unitCost);
   const valueDelta = roundedInteger(new Decimal(costCents).mul(input.quantity));
@@ -1158,6 +1169,34 @@ function receiveStockRecord(
     actorUserId,
     createdAt: now,
   });
+  if (receiptLine) {
+    db.prepare(
+      `INSERT INTO stock_receipt_lines
+         (id, receipt_id, line_number, product_id, stock_event_id,
+          inventory_lot_id, original_description, source_quantity,
+          source_unit_cost, source_line_total, source_lot, source_expiry,
+          received_quantity, received_unit_cost_centavos, conversion_factor,
+          created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      randomUUID(),
+      receiptLine.receiptId,
+      receiptLine.lineNumber,
+      product.id,
+      stockEventId,
+      lotId,
+      receiptLine.originalDescription,
+      receiptLine.sourceQuantity,
+      receiptLine.sourceUnitCost,
+      receiptLine.sourceLineTotal,
+      receiptLine.sourceLot,
+      receiptLine.sourceExpiry,
+      input.quantity,
+      costCents,
+      receiptLine.conversionFactor,
+      now,
+    );
+  }
   writeAuditEvent(db, {
     actorUserId,
     action: "stock.received",
