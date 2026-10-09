@@ -3,10 +3,10 @@ import { Check, Pencil, RefreshCw, X } from "lucide-react";
 import { api } from "./api";
 
 type JournalEntry = {
-  sourceSaleId: string;
+  sourceBusinessDate: string;
   month: string;
   date: string;
-  invoiceNumber: string;
+  invoiceNumberRange: string;
   seniorDiscount: string;
   nonVat: string;
   vatableSales: string;
@@ -16,7 +16,7 @@ type JournalEntry = {
   editedAt: string | null;
 };
 
-type JournalDraft = Omit<JournalEntry, "sourceSaleId" | "editedAt">;
+type JournalDraft = Omit<JournalEntry, "sourceBusinessDate" | "editedAt">;
 type MoneyField =
   | "seniorDiscount"
   | "nonVat"
@@ -41,7 +41,7 @@ function draftFor(entry: JournalEntry): JournalDraft {
   return {
     month: entry.month,
     date: entry.date,
-    invoiceNumber: entry.invoiceNumber,
+    invoiceNumberRange: entry.invoiceNumberRange,
     seniorDiscount: entry.seniorDiscount,
     nonVat: entry.nonVat,
     vatableSales: entry.vatableSales,
@@ -88,7 +88,7 @@ export function JournalPage() {
     let active = true;
     const query = new URLSearchParams({ startMonth, endMonth });
     void api
-      .get<{ entries: JournalEntry[] }>(`/ledger/range?${query}`)
+      .get<{ entries: JournalEntry[] }>(`/journal/range?${query}`)
       .then(({ entries: nextEntries }) => {
         if (!active) return;
         setEntries(nextEntries);
@@ -108,23 +108,25 @@ export function JournalPage() {
   }, [startMonth, endMonth, refreshKey, requestKey]);
 
   function beginEdit(entry: JournalEntry) {
-    setEditingId(entry.sourceSaleId);
+    setEditingId(entry.sourceBusinessDate);
     setDraft(draftFor(entry));
     setError("");
   }
 
   async function saveEdit(entry: JournalEntry) {
     if (!draft) return;
-    setSavingId(entry.sourceSaleId);
+    setSavingId(entry.sourceBusinessDate);
     setError("");
     try {
       const result = await api.patch<{ entry: JournalEntry }>(
-        `/ledger/${encodeURIComponent(entry.sourceSaleId)}`,
+        `/journal/${encodeURIComponent(entry.sourceBusinessDate)}`,
         draft,
       );
       setEntries((current) =>
         current.map((item) =>
-          item.sourceSaleId === entry.sourceSaleId ? result.entry : item,
+          item.sourceBusinessDate === entry.sourceBusinessDate
+            ? result.entry
+            : item,
         ),
       );
       setEditingId(null);
@@ -143,12 +145,12 @@ export function JournalPage() {
   }
 
   const isEditing = (entry: JournalEntry) =>
-    editingId === entry.sourceSaleId && draft !== null;
+    editingId === entry.sourceBusinessDate && draft !== null;
   const draftValue = (entry: JournalEntry) =>
     isEditing(entry) ? draft! : draftFor(entry);
 
   return (
-    <section className="page-section reports-page ledger-page">
+    <section className="page-section reports-page journal-page">
       <div className="page-heading">
         <div>
           <div className="eyebrow">OWNER BOOKKEEPING</div>
@@ -158,7 +160,7 @@ export function JournalPage() {
             the journal.
           </p>
         </div>
-        <div className="ledger-period-actions">
+        <div className="journal-period-actions">
           <label className="report-date-field">
             <span className="field-label">Period</span>
             <select
@@ -227,28 +229,29 @@ export function JournalPage() {
       {loading && <div className="table-loading">Loading journal…</div>}
 
       {!loading && (
-        <section className="settings-main-card report-low-stock ledger-card">
+        <section className="settings-main-card report-low-stock journal-card">
           <div className="card-heading">
             <div>
               <h2>
                 {periodType === "month" ? monthName(month) : year || "Year"}
               </h2>
               <p>
-                {entries.length} copied{" "}
-                {entries.length === 1 ? "sale" : "sales"}. Unreviewed rows are
-                red. Save a row after editing to mark it as reviewed.
+                {entries.length} daily{" "}
+                {entries.length === 1 ? "summary" : "summaries"}. Each row
+                copies one day of sales. Unedited rows are red; save an edit to
+                mark it as reviewed.
               </p>
             </div>
-            <span className="count-chip">{entries.length} entries</span>
+            <span className="count-chip">{entries.length} days</span>
           </div>
           {entries.length ? (
             <div className="inventory-table-wrap">
-              <table className="inventory-table ledger-table">
+              <table className="inventory-table journal-table">
                 <thead>
                   <tr>
                     <th>MONTH</th>
                     <th>DATE</th>
-                    <th>INVOICE NUMBER</th>
+                    <th>INVOICE NUMBER RANGE</th>
                     {moneyFields.map(({ key, label }) => (
                       <th key={key}>{label.toUpperCase()}</th>
                     ))}
@@ -261,14 +264,14 @@ export function JournalPage() {
                     const values = draftValue(entry);
                     return (
                       <tr
-                        className={entry.editedAt ? "" : "ledger-row-unedited"}
-                        key={entry.sourceSaleId}
+                        className={entry.editedAt ? "" : "journal-row-unedited"}
+                        key={entry.sourceBusinessDate}
                       >
                         <td>
                           {editing ? (
                             <input
-                              className="text-input ledger-cell-input"
-                              aria-label={`Month for ${entry.invoiceNumber}`}
+                              className="text-input journal-cell-input"
+                              aria-label={`Month for ${entry.invoiceNumberRange}`}
                               type="month"
                               value={values.month}
                               onChange={(event) =>
@@ -285,8 +288,8 @@ export function JournalPage() {
                         <td>
                           {editing ? (
                             <input
-                              className="text-input ledger-cell-input"
-                              aria-label={`Date for ${entry.invoiceNumber}`}
+                              className="text-input journal-cell-input"
+                              aria-label={`Date for ${entry.invoiceNumberRange}`}
                               type="date"
                               value={values.date}
                               onChange={(event) =>
@@ -303,28 +306,28 @@ export function JournalPage() {
                         <td>
                           {editing ? (
                             <input
-                              className="text-input ledger-cell-input"
-                              aria-label={`Invoice number for ${entry.invoiceNumber}`}
+                              className="text-input journal-cell-input"
+                              aria-label={`Invoice number range for ${entry.invoiceNumberRange}`}
                               type="text"
-                              maxLength={80}
-                              value={values.invoiceNumber}
+                              maxLength={200}
+                              value={values.invoiceNumberRange}
                               onChange={(event) =>
                                 setDraft({
                                   ...values,
-                                  invoiceNumber: event.target.value,
+                                  invoiceNumberRange: event.target.value,
                                 })
                               }
                             />
                           ) : (
-                            entry.invoiceNumber
+                            entry.invoiceNumberRange
                           )}
                         </td>
                         {moneyFields.map(({ key, label }) => (
                           <td key={key}>
                             {editing ? (
                               <input
-                                className="text-input ledger-cell-input ledger-money-input"
-                                aria-label={`${label} for ${entry.invoiceNumber}`}
+                                className="text-input journal-cell-input journal-money-input"
+                                aria-label={`${label} for ${entry.invoiceNumberRange}`}
                                 type="number"
                                 min="0"
                                 step="0.01"
@@ -343,27 +346,27 @@ export function JournalPage() {
                         ))}
                         <td>
                           {editing ? (
-                            <div className="ledger-row-actions">
+                            <div className="journal-row-actions">
                               <button
-                                className="button button-primary ledger-action-button"
+                                className="button button-primary journal-action-button"
                                 type="button"
                                 onClick={() => void saveEdit(entry)}
-                                disabled={savingId === entry.sourceSaleId}
+                                disabled={savingId === entry.sourceBusinessDate}
                               >
                                 <Check size={14} /> Save
                               </button>
                               <button
-                                className="button button-secondary ledger-action-button"
+                                className="button button-secondary journal-action-button"
                                 type="button"
                                 onClick={cancelEdit}
-                                disabled={savingId === entry.sourceSaleId}
+                                disabled={savingId === entry.sourceBusinessDate}
                               >
                                 <X size={14} /> Cancel
                               </button>
                             </div>
                           ) : (
                             <button
-                              className="button button-secondary ledger-action-button"
+                              className="button button-secondary journal-action-button"
                               type="button"
                               onClick={() => beginEdit(entry)}
                             >

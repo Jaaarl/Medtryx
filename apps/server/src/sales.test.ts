@@ -38,7 +38,7 @@ async function seedUsers(): Promise<void> {
   clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
   db.exec(
-    "DELETE FROM daily_sales_ledger; DELETE FROM sale_reversal_lines; DELETE FROM cash_movements; DELETE FROM sale_reversals; DELETE FROM reversal_sequences; DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
+    "DELETE FROM daily_sales_journal; DELETE FROM daily_sales_ledger; DELETE FROM sale_reversal_lines; DELETE FROM cash_movements; DELETE FROM sale_reversals; DELETE FROM reversal_sequences; DELETE FROM sale_lines; DELETE FROM sales; DELETE FROM shifts; DELETE FROM stock_events; DELETE FROM products; DELETE FROM product_sku_sequence; DELETE FROM sale_sequences; DELETE FROM settings; DELETE FROM audit_events; DELETE FROM sessions; DELETE FROM users;",
   );
   const now = new Date().toISOString();
   ownerId = randomUUID();
@@ -1090,10 +1090,10 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toBe(400);
   });
 
-  it("keeps editable ledger rows separate from their saved sales", async () => {
+  it("copies one editable daily sales summary into the journal", async () => {
     const owner = await signIn("owner.sales@example.test", ownerPassword);
     await configureApprovedPolicy(owner);
-    const product = await createProduct(owner, { sku: "SYN-SALES-LEDGER" });
+    const product = await createProduct(owner, { sku: "SYN-SALES-JOURNAL" });
     const cashier = await signIn("cashier.sales@example.test", cashierPassword);
     const opened = await openShift(cashier, "50.00");
     expect(opened.status).toBe(201);
@@ -1104,10 +1104,10 @@ describe("checkout, sales, and cashier shifts", () => {
       paymentMethod: "QR",
       benefitType: "SENIOR_CITIZEN",
       benefitApplied: true,
-      customerName: "SYNTHETIC LEDGER CUSTOMER",
+      customerName: "SYNTHETIC JOURNAL CUSTOMER",
       customerBirthday: "1970-01-01",
       customerIdType: "Synthetic ID",
-      customerIdNumber: "SYN-LEDGER-ID",
+      customerIdNumber: "SYN-JOURNAL-ID",
       customerIdChecked: true,
     });
     expect(saleResponse.status).toBe(201);
@@ -1117,14 +1117,14 @@ describe("checkout, sales, and cashier shifts", () => {
       businessDate: string;
     };
     const month = sale.businessDate.slice(0, 7);
-    const path = `/api/ledger/range?startMonth=${month}&endMonth=${month}`;
+    const path = `/api/journal/range?startMonth=${month}&endMonth=${month}`;
     const copied = await owner.get(path);
     expect(copied.status).toBe(200);
     expect(copied.body.entries).toHaveLength(1);
-    const originalEntry = copied.body.entries[0] as {
-      sourceSaleId: string;
+    const firstEntry = copied.body.entries[0] as {
+      sourceBusinessDate: string;
       date: string;
-      invoiceNumber: string;
+      invoiceNumberRange: string;
       seniorDiscount: string;
       nonVat: string;
       vatableSales: string;
@@ -1133,11 +1133,11 @@ describe("checkout, sales, and cashier shifts", () => {
       netSales: string;
       editedAt: string | null;
     };
-    expect(originalEntry).toMatchObject({
-      sourceSaleId: sale.id,
+    expect(firstEntry).toMatchObject({
+      sourceBusinessDate: sale.businessDate,
       month,
       date: sale.businessDate,
-      invoiceNumber: sale.transactionId,
+      invoiceNumberRange: sale.transactionId,
       seniorDiscount: "20.00",
       nonVat: "0.00",
       vatableSales: "100.00",
@@ -1147,81 +1147,132 @@ describe("checkout, sales, and cashier shifts", () => {
       editedAt: null,
     });
 
+    const secondProduct = await createProduct(owner, {
+      sku: "SYN-SALES-JOURNAL-SECOND",
+    });
+    const secondSaleCsrf = await csrfFor(cashier);
+    const secondSaleResponse = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", secondSaleCsrf)
+      .send({
+        benefitType: "SENIOR_CITIZEN",
+        paymentMethod: "CASH",
+        requestKey: randomUUID(),
+        customerName: "SYNTHETIC SECOND JOURNAL CUSTOMER",
+        customerBirthday: "1970-01-01",
+        customerIdType: "Synthetic ID",
+        customerIdNumber: "SYN-SECOND-JOURNAL-ID",
+        customerIdChecked: true,
+        items: [
+          { productId: product.id, quantity: 1, benefitApplied: true },
+          { productId: secondProduct.id, quantity: 1, benefitApplied: true },
+        ],
+      });
+    expect(
+      secondSaleResponse.status,
+      JSON.stringify(secondSaleResponse.body),
+    ).toBe(201);
+    const secondSale = secondSaleResponse.body.sale as {
+      id: string;
+      transactionId: string;
+      businessDate: string;
+    };
+    const refreshedCopy = await owner.get(path);
+    expect(refreshedCopy.body.entries).toHaveLength(1);
+    const originalEntry = refreshedCopy.body.entries[0] as typeof firstEntry;
+    const invoiceNumbers = [
+      sale.transactionId,
+      secondSale.transactionId,
+    ].sort();
+    expect(originalEntry).toMatchObject({
+      sourceBusinessDate: sale.businessDate,
+      date: sale.businessDate,
+      invoiceNumberRange: `${invoiceNumbers[0]} – ${invoiceNumbers[1]}`,
+      seniorDiscount: "60.00",
+      nonVat: "0.00",
+      vatableSales: "300.00",
+      totalVat: "0.00",
+      grossSales: "336.00",
+      netSales: "240.00",
+      editedAt: null,
+    });
+
     const patchResponse = await owner
-      .patch(`/api/ledger/${originalEntry.sourceSaleId}`)
+      .patch(`/api/journal/${originalEntry.sourceBusinessDate}`)
       .set("x-csrf-token", await csrfFor(owner))
       .send({
         month,
         date: manilaDayAfter(-1),
-        invoiceNumber: "LEDGER-ONLY-CORRECTION",
+        invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
         seniorDiscount: "19.50",
         nonVat: "4.25",
-        vatableSales: "101.00",
+        vatableSales: "201.00",
         totalVat: "1.00",
-        grossSales: "111.00",
-        netSales: "79.00",
+        grossSales: "223.00",
+        netSales: "179.00",
       });
     expect(patchResponse.status).toBe(200);
     expect(patchResponse.body.entry).toMatchObject({
-      invoiceNumber: "LEDGER-ONLY-CORRECTION",
+      invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
       seniorDiscount: "19.50",
       nonVat: "4.25",
-      vatableSales: "101.00",
+      vatableSales: "201.00",
       totalVat: "1.00",
-      grossSales: "111.00",
-      netSales: "79.00",
+      grossSales: "223.00",
+      netSales: "179.00",
     });
     expect(patchResponse.body.entry.editedAt).toEqual(expect.any(String));
 
-    const sourceSale = db
+    const sourceSales = db
       .prepare(
         `SELECT transaction_id, amount_due_centavos, senior_discount_centavos,
                 business_date
-         FROM sales WHERE id = ?`,
+         FROM sales WHERE id IN (?, ?) ORDER BY transaction_id`,
       )
-      .get(sale.id) as {
+      .all(sale.id, secondSale.id) as Array<{
       transaction_id: string;
       amount_due_centavos: number;
       senior_discount_centavos: number;
       business_date: string;
-    };
-    expect(sourceSale).toEqual({
-      transaction_id: sale.transactionId,
-      amount_due_centavos: 8_000,
-      senior_discount_centavos: 2_000,
-      business_date: sale.businessDate,
-    });
+    }>;
+    expect(sourceSales).toEqual([
+      {
+        transaction_id: sale.transactionId,
+        amount_due_centavos: 8_000,
+        senior_discount_centavos: 2_000,
+        business_date: sale.businessDate,
+      },
+      {
+        transaction_id: secondSale.transactionId,
+        amount_due_centavos: 16_000,
+        senior_discount_centavos: 4_000,
+        business_date: sale.businessDate,
+      },
+    ]);
 
-    const secondSale = await postSale(cashier, {
-      productId: product.id,
-      quantity: 1,
-      paymentMethod: "CASH",
-    });
-    expect(secondSale.status).toBe(201);
-    const refreshedLedger = await owner.get(path);
-    expect(refreshedLedger.body.entries).toHaveLength(2);
-    expect(
-      refreshedLedger.body.entries.find(
-        (entry: { sourceSaleId: string }) => entry.sourceSaleId === sale.id,
-      ),
-    ).toMatchObject({
+    const refreshedJournal = await owner.get(path);
+    expect(refreshedJournal.body.entries).toHaveLength(1);
+    expect(refreshedJournal.body.entries[0]).toMatchObject({
       date: manilaDayAfter(-1),
-      invoiceNumber: "LEDGER-ONLY-CORRECTION",
-      grossSales: "111.00",
+      invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
+      grossSales: "223.00",
       editedAt: expect.any(String),
     });
     expect((await cashier.get(path)).status).toBe(403);
     expect(
       (
         await cashier
-          .patch(`/api/ledger/${sale.id}`)
+          .patch(`/api/journal/${sale.businessDate}`)
           .set("x-csrf-token", await csrfFor(cashier))
           .send({})
       ).status,
     ).toBe(403);
     expect(
-      (await owner.get("/api/ledger/range?startMonth=2026-13&endMonth=2026-13"))
-        .status,
+      (
+        await owner.get(
+          "/api/journal/range?startMonth=2026-13&endMonth=2026-13",
+        )
+      ).status,
     ).toBe(400);
   });
 

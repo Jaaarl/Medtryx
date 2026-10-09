@@ -155,7 +155,7 @@ export function DailySalesSummaryPage() {
           </div>
 
           {summary.scope === "STORE" && summary.salesBreakdown && (
-            <section className="settings-main-card report-low-stock daily-sales-ledger-summary">
+            <section className="settings-main-card report-low-stock daily-sales-journal-summary">
               <div className="card-heading">
                 <div>
                   <h2>Daily sales journal</h2>

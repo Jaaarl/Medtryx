@@ -5,6 +5,104 @@ import { describe, expect, it } from "vitest";
 import { migrateDatabase, repositoryRoot } from "./db.js";
 
 describe("database migrations", () => {
+  it("rolls old copied sale rows into one journal day and keeps their edits", () => {
+    const db = new Database(":memory:");
+    try {
+      db.pragma("foreign_keys = ON");
+      db.exec(
+        "CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+      );
+      const migrationsDirectory = resolve(
+        repositoryRoot,
+        "database/migrations",
+      );
+      const priorMigrations = readdirSync(migrationsDirectory)
+        .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/iu.test(name))
+        .filter((name) => Number(name.slice(0, 4)) < 22)
+        .sort();
+      for (const name of priorMigrations) {
+        db.exec(readFileSync(resolve(migrationsDirectory, name), "utf8"));
+        db.prepare(
+          "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        ).run(name, new Date().toISOString());
+      }
+
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO users
+           (id, email, password_hash, role, is_active, created_at, updated_at)
+         VALUES ('journal-owner', 'journal-owner@example.test', 'synthetic-hash', 'owner', 1, ?, ?)`,
+      ).run(now, now);
+      const insertLegacyCopy = db.prepare(
+        `INSERT INTO daily_sales_ledger
+           (source_sale_id, source_business_date, business_month,
+            invoice_number, senior_discount_centavos, non_vat_centavos,
+            vatable_sales_centavos, total_vat_centavos,
+            gross_sales_centavos, net_sales_centavos, edited_at,
+            edited_by_user_id)
+         VALUES (?, '2026-10-09', '2026-10', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insertLegacyCopy.run(
+        "legacy-journal-sale-1",
+        "MTX-20261009-000001",
+        100,
+        0,
+        10_000,
+        1_200,
+        11_200,
+        10_000,
+        null,
+        null,
+      );
+      insertLegacyCopy.run(
+        "legacy-journal-sale-2",
+        "MTX-20261009-000002",
+        200,
+        500,
+        20_000,
+        2_400,
+        22_400,
+        20_000,
+        "2026-10-09T12:00:00.000Z",
+        "journal-owner",
+      );
+
+      migrateDatabase(db);
+
+      expect(
+        db
+          .prepare(
+            `SELECT source_business_date, business_month, journal_date,
+                    invoice_number_range, senior_discount_centavos,
+                    non_vat_centavos, vatable_sales_centavos,
+                    total_vat_centavos, gross_sales_centavos,
+                    net_sales_centavos, edited_at, edited_by_user_id
+             FROM daily_sales_journal`,
+          )
+          .get(),
+      ).toEqual({
+        source_business_date: "2026-10-09",
+        business_month: "2026-10",
+        journal_date: "2026-10-09",
+        invoice_number_range: "MTX-20261009-000001 – MTX-20261009-000002",
+        senior_discount_centavos: 300,
+        non_vat_centavos: 500,
+        vatable_sales_centavos: 30_000,
+        total_vat_centavos: 3_600,
+        gross_sales_centavos: 33_600,
+        net_sales_centavos: 30_000,
+        edited_at: "2026-10-09T12:00:00.000Z",
+        edited_by_user_id: "journal-owner",
+      });
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM daily_sales_ledger").get(),
+      ).toEqual({ count: 2 });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("preserves existing payment corrections while allowing the reverse direction", () => {
     const db = new Database(":memory:");
     try {

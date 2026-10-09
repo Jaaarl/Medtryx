@@ -382,21 +382,21 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     ownerPage.getByRole("heading", { name: "Daily sales journal" }),
   ).toBeVisible();
   await expect(
-    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+    ownerPage.locator(".daily-sales-journal-summary tbody tr"),
   ).toContainText(/MTX-\d{8}-\d{6}/);
   await expect(
-    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+    ownerPage.locator(".daily-sales-journal-summary tbody tr"),
   ).toContainText("30.00");
 
   await ownerPage.goto("/journal");
   await expect(
     ownerPage.getByRole("heading", { name: "Journal" }),
   ).toBeVisible();
-  const ledgerRow = ownerPage
+  const journalRow = ownerPage
     .getByRole("row")
     .filter({ hasText: savedSale.sale.transactionId });
-  await expect(ledgerRow).toHaveClass(/ledger-row-unedited/);
-  await ledgerRow.getByRole("button", { name: "Edit" }).click();
+  await expect(journalRow).toHaveClass(/journal-row-unedited/);
+  await journalRow.getByRole("button", { name: "Edit" }).click();
   await ownerPage
     .getByLabel(`Date for ${savedSale.sale.transactionId}`)
     .fill(manilaDayAfter(-1));
@@ -406,11 +406,11 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     })
     .fill("99.00");
   await ownerPage.getByRole("button", { name: "Save" }).click();
-  await expect(ledgerRow).not.toHaveClass(/ledger-row-unedited/);
-  await expect(ledgerRow).toContainText("99.00");
+  await expect(journalRow).not.toHaveClass(/journal-row-unedited/);
+  await expect(journalRow).toContainText("99.00");
   await ownerPage.goto("/daily-sales");
   await expect(
-    ownerPage.locator(".daily-sales-ledger-summary tbody tr"),
+    ownerPage.locator(".daily-sales-journal-summary tbody tr"),
   ).toContainText("30.00");
 
   await cashierPage.goto("/daily-sales");
@@ -431,7 +431,7 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   await expect(
     cashierPage.getByText("Your shifts with sales on this date."),
   ).toBeVisible();
-  await expect(cashierPage.locator(".daily-sales-ledger-summary")).toHaveCount(
+  await expect(cashierPage.locator(".daily-sales-journal-summary")).toHaveCount(
     0,
   );
   await expect(cashierPage.getByRole("link", { name: "Journal" })).toHaveCount(
