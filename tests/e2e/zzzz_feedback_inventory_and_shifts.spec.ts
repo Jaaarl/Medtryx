@@ -374,7 +374,7 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
   });
   expect(saleResponse.status()).toBe(201);
   const savedSale = (await saleResponse.json()) as {
-    sale: { transactionId: string };
+    sale: { transactionId: string; businessDate: string };
   };
 
   await ownerPage.goto("/daily-sales");
@@ -397,6 +397,9 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     .filter({ hasText: savedSale.sale.transactionId });
   await expect(ledgerRow).toHaveClass(/ledger-row-unedited/);
   await ledgerRow.getByRole("button", { name: "Edit" }).click();
+  await ownerPage
+    .getByLabel(`Date for ${savedSale.sale.transactionId}`)
+    .fill(manilaDayAfter(-1));
   await ownerPage
     .getByRole("spinbutton", {
       name: `Gross sales for ${savedSale.sale.transactionId}`,

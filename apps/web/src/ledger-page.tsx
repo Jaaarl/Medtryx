@@ -5,6 +5,7 @@ import { api } from "./api";
 type LedgerEntry = {
   sourceSaleId: string;
   month: string;
+  date: string;
   invoiceNumber: string;
   seniorDiscount: string;
   nonVat: string;
@@ -39,6 +40,7 @@ function currentMonth(): string {
 function draftFor(entry: LedgerEntry): LedgerDraft {
   return {
     month: entry.month,
+    date: entry.date,
     invoiceNumber: entry.invoiceNumber,
     seniorDiscount: entry.seniorDiscount,
     nonVat: entry.nonVat,
@@ -245,6 +247,7 @@ export function LedgerPage() {
                 <thead>
                   <tr>
                     <th>MONTH</th>
+                    <th>DATE</th>
                     <th>INVOICE NUMBER</th>
                     {moneyFields.map(({ key, label }) => (
                       <th key={key}>{label.toUpperCase()}</th>
@@ -277,6 +280,24 @@ export function LedgerPage() {
                             />
                           ) : (
                             monthName(entry.month)
+                          )}
+                        </td>
+                        <td>
+                          {editing ? (
+                            <input
+                              className="text-input ledger-cell-input"
+                              aria-label={`Date for ${entry.invoiceNumber}`}
+                              type="date"
+                              value={values.date}
+                              onChange={(event) =>
+                                setDraft({
+                                  ...values,
+                                  date: event.target.value,
+                                })
+                              }
+                            />
+                          ) : (
+                            entry.date
                           )}
                         </td>
                         <td>

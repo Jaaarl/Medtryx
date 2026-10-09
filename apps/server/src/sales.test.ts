@@ -1123,6 +1123,7 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(copied.body.entries).toHaveLength(1);
     const originalEntry = copied.body.entries[0] as {
       sourceSaleId: string;
+      date: string;
       invoiceNumber: string;
       seniorDiscount: string;
       nonVat: string;
@@ -1135,6 +1136,7 @@ describe("checkout, sales, and cashier shifts", () => {
     expect(originalEntry).toMatchObject({
       sourceSaleId: sale.id,
       month,
+      date: sale.businessDate,
       invoiceNumber: sale.transactionId,
       seniorDiscount: "20.00",
       nonVat: "0.00",
@@ -1150,6 +1152,7 @@ describe("checkout, sales, and cashier shifts", () => {
       .set("x-csrf-token", await csrfFor(owner))
       .send({
         month,
+        date: manilaDayAfter(-1),
         invoiceNumber: "LEDGER-ONLY-CORRECTION",
         seniorDiscount: "19.50",
         nonVat: "4.25",
@@ -1172,18 +1175,21 @@ describe("checkout, sales, and cashier shifts", () => {
 
     const sourceSale = db
       .prepare(
-        `SELECT transaction_id, amount_due_centavos, senior_discount_centavos
+        `SELECT transaction_id, amount_due_centavos, senior_discount_centavos,
+                business_date
          FROM sales WHERE id = ?`,
       )
       .get(sale.id) as {
       transaction_id: string;
       amount_due_centavos: number;
       senior_discount_centavos: number;
+      business_date: string;
     };
     expect(sourceSale).toEqual({
       transaction_id: sale.transactionId,
       amount_due_centavos: 8_000,
       senior_discount_centavos: 2_000,
+      business_date: sale.businessDate,
     });
 
     const secondSale = await postSale(cashier, {
@@ -1199,6 +1205,7 @@ describe("checkout, sales, and cashier shifts", () => {
         (entry: { sourceSaleId: string }) => entry.sourceSaleId === sale.id,
       ),
     ).toMatchObject({
+      date: manilaDayAfter(-1),
       invoiceNumber: "LEDGER-ONLY-CORRECTION",
       grossSales: "111.00",
       editedAt: expect.any(String),

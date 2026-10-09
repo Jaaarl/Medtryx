@@ -9,6 +9,7 @@ const moneySchema = z.string().regex(/^\d{1,10}(?:\.\d{1,2})?$/);
 const ledgerEntrySchema = z
   .object({
     month: monthSchema,
+    date: z.iso.date(),
     invoiceNumber: z.string().trim().min(1).max(80),
     seniorDiscount: moneySchema,
     nonVat: moneySchema,
@@ -22,6 +23,7 @@ const ledgerEntrySchema = z
 type LedgerRow = {
   source_sale_id: string;
   business_month: string;
+  ledger_date: string;
   invoice_number: string;
   senior_discount_centavos: number;
   non_vat_centavos: number;
@@ -53,6 +55,7 @@ function present(row: LedgerRow) {
   return {
     sourceSaleId: row.source_sale_id,
     month: row.business_month,
+    date: row.ledger_date,
     invoiceNumber: row.invoice_number,
     seniorDiscount: money(row.senior_discount_centavos),
     nonVat: money(row.non_vat_centavos),
@@ -89,11 +92,11 @@ export function registerSalesLedgerRoutes(
 
     const insertCopies = db.prepare(
       `INSERT OR IGNORE INTO daily_sales_ledger
-           (source_sale_id, source_business_date, business_month,
+           (source_sale_id, source_business_date, business_month, ledger_date,
             invoice_number, senior_discount_centavos, non_vat_centavos,
             vatable_sales_centavos, total_vat_centavos,
             gross_sales_centavos, net_sales_centavos)
-         SELECT s.id, s.business_date, substr(s.business_date, 1, 7),
+         SELECT s.id, s.business_date, substr(s.business_date, 1, 7), s.business_date,
                 s.transaction_id, s.senior_discount_centavos,
                 COALESCE(SUM(CASE WHEN sl.tax_class_snapshot <> 'VATABLE'
                                   THEN sl.amount_due_centavos ELSE 0 END), 0),
@@ -112,7 +115,7 @@ export function registerSalesLedgerRoutes(
 
     const rows = db
       .prepare(
-        `SELECT source_sale_id, business_month, invoice_number,
+        `SELECT source_sale_id, business_month, ledger_date, invoice_number,
                   senior_discount_centavos, non_vat_centavos,
                   vatable_sales_centavos, total_vat_centavos,
                   gross_sales_centavos, net_sales_centavos, edited_at
@@ -141,7 +144,7 @@ export function registerSalesLedgerRoutes(
         const result = db
           .prepare(
             `UPDATE daily_sales_ledger
-             SET business_month = ?, invoice_number = ?,
+             SET business_month = ?, ledger_date = ?, invoice_number = ?,
                  senior_discount_centavos = ?, non_vat_centavos = ?,
                  vatable_sales_centavos = ?, total_vat_centavos = ?,
                  gross_sales_centavos = ?, net_sales_centavos = ?,
@@ -150,6 +153,7 @@ export function registerSalesLedgerRoutes(
           )
           .run(
             value.month,
+            value.date,
             value.invoiceNumber,
             parseMoney(value.seniorDiscount),
             parseMoney(value.nonVat),
@@ -182,7 +186,7 @@ export function registerSalesLedgerRoutes(
 
       const row = db
         .prepare(
-          `SELECT source_sale_id, business_month, invoice_number,
+          `SELECT source_sale_id, business_month, ledger_date, invoice_number,
                   senior_discount_centavos, non_vat_centavos,
                   vatable_sales_centavos, total_vat_centavos,
                   gross_sales_centavos, net_sales_centavos, edited_at
