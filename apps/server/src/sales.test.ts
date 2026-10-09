@@ -1139,6 +1139,75 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toEqual({ shift_id: null });
     expect((await owner.get("/api/shifts/current")).body.shift).toBeNull();
 
+    const dailySales = await owner.get(
+      `/api/shifts/daily-sales-summary?date=${businessDate}`,
+    );
+    expect(dailySales.status).toBe(200);
+    expect(dailySales.body.summary).toMatchObject({
+      scope: "STORE",
+      totals: {
+        transactionCount: 1,
+        sales: "112.00",
+        cashSales: "112.00",
+        qrSales: "0.00",
+      },
+      salesBreakdown: {
+        invoiceNumberRange: `MTX-${businessDate.replaceAll("-", "")}-000001`,
+        seniorDiscount: "0.00",
+        nonVat: "0.00",
+        vatableSales: "100.00",
+        totalVat: "12.00",
+        grossSales: "112.00",
+        netSales: "100.00",
+      },
+      shifts: [],
+      products: [{ sku: "SYN-OFFLINE-SALE", quantity: 1, sales: "112.00" }],
+    });
+
+    const dailySalesRange = await owner.get(
+      `/api/shifts/daily-sales-summary/range?startDate=${businessDate}&endDate=${businessDate}`,
+    );
+    expect(dailySalesRange.status).toBe(200);
+    expect(dailySalesRange.body.entries).toMatchObject([
+      {
+        businessDate,
+        invoiceNumberRange: `MTX-${businessDate.replaceAll("-", "")}-000001`,
+        seniorDiscount: "0.00",
+        nonVat: "0.00",
+        vatableSales: "100.00",
+        totalVat: "12.00",
+        grossSales: "112.00",
+        netSales: "100.00",
+      },
+    ]);
+
+    const report = await owner.get(`/api/reports/daily?date=${businessDate}`);
+    expect(report.status).toBe(200);
+    expect(report.body.report.metrics).toMatchObject({
+      grossSales: "112.00",
+      netSalesExcludingVat: "100.00",
+      vatableSalesBase: "100.00",
+      vatOutput: "12.00",
+      cashSales: "112.00",
+      qrSales: "0.00",
+    });
+
+    const month = businessDate.slice(0, 7);
+    const journal = await owner.get(
+      `/api/journal/range?startMonth=${month}&endMonth=${month}`,
+    );
+    expect(journal.status).toBe(200);
+    expect(journal.body.entries).toContainEqual(
+      expect.objectContaining({
+        sourceBusinessDate: businessDate,
+        invoiceNumberRange: `MTX-${businessDate.replaceAll("-", "")}-000001`,
+        vatableSales: "100.00",
+        totalVat: "12.00",
+        grossSales: "112.00",
+        netSales: "100.00",
+      }),
+    );
+
     const updatedProduct = await owner.get("/api/products");
     expect(
       updatedProduct.body.products.find(
