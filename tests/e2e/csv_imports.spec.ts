@@ -148,16 +148,8 @@ test("owner exports and updates product data from the catalog page", async ({
   expect(download.suggestedFilename()).toBe("products.csv");
   const exportedCsv = await readFile((await download.path())!, "utf8");
   expect(exportedCsv).toContain("quantityonhand");
-  const exportLines = exportedCsv.trim().split(/\r?\n/u);
-  const productLine = exportLines.find((line) =>
-    line.startsWith('"SYN-CSV-UPDATE-E2E"'),
-  );
-  expect(productLine).toBeDefined();
-  if (!productLine) throw new Error("Exported product row was not found.");
-  const editedProductLine = productLine
-    .replace('"Synthetic E2E CSV Product"', '"Updated E2E CSV Product"')
-    .replace('"10.00"', '"12.50"');
-  const editedCsv = `${exportLines[0]}\r\n${editedProductLine}`;
+  const editedCsv =
+    'sku,description,sellingprice\r\n"SYN-CSV-UPDATE-E2E","Updated E2E CSV Product","12.50"';
   await page.getByLabel("Product update CSV file").setInputFiles({
     name: "products.csv",
     mimeType: "text/csv",

@@ -701,10 +701,11 @@ function ProductCsvUpdatePanel({
         <div>
           <h2>Update products from CSV</h2>
           <p>
-            Export the catalog, edit product details, then upload the CSV. Every
-            row is checked before changes are saved. Stock quantities, costs,
-            and gross-profit estimates are read-only; use Stock to record
-            inventory changes.
+            Include the SKU and only the product detail columns you want to
+            update. Use name or description for the product name. Omitted
+            columns keep their current values. Every row is checked before
+            changes are saved. Stock quantities, costs, and gross-profit
+            estimates are read-only; use Stock to record inventory changes.
           </p>
         </div>
       </div>

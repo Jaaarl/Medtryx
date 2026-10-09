@@ -271,6 +271,53 @@ describe("owner catalog and stock operations", () => {
     ).toEqual({ action: "product.updated" });
   });
 
+  it("updates only the fields present in a partial product CSV", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-PARTIAL",
+    });
+    expect(created.status).toBe(201);
+
+    const token = await csrfFor(owner);
+    const updated = await owner
+      .post("/api/products/update-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send("sku,description\nSYN-CSV-PARTIAL,Updated from a partial CSV");
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body.updatedCount).toBe(1);
+
+    const product = await owner.get("/api/products?q=SYN-CSV-PARTIAL");
+    expect(product.body.products[0]).toMatchObject({
+      name: "Updated from a partial CSV",
+      sellingPrice: "70.00",
+      productType: "BRANDED",
+      quantityOnHand: 10,
+      latestAcquisitionCost: "40.00",
+      inventoryValue: "400.00",
+    });
+  });
+
+  it("accepts a product CSV with only the SKU column", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-SKU-ONLY",
+    });
+    expect(created.status).toBe(201);
+
+    const token = await csrfFor(owner);
+    const updated = await owner
+      .post("/api/products/update-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send("sku\nSYN-CSV-SKU-ONLY");
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200);
+    expect(updated.body.updatedCount).toBe(1);
+
+    const product = await owner.get("/api/products?q=SYN-CSV-SKU-ONLY");
+    expect(product.body.products[0].name).toBe("Synthetic Paracetamol Tablet");
+  });
+
   it("validates every product update row before saving any changes", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const created = await createOpeningProduct(owner, {
