@@ -336,7 +336,7 @@ test("cart quantity can be edited within available stock and above zero", async 
   await cashierPage.close();
 });
 
-test("daily sales shows the shift totals and products sold to a cashier", async ({
+test("daily sales shows totals and Journal locks the current business day", async ({
   browser,
 }) => {
   const ownerContext = await browser.newContext();
@@ -396,18 +396,7 @@ test("daily sales shows the shift totals and products sold to a cashier", async 
     .getByRole("row")
     .filter({ hasText: savedSale.sale.transactionId });
   await expect(journalRow).toHaveClass(/journal-row-unedited/);
-  await journalRow.getByRole("button", { name: "Edit" }).click();
-  await ownerPage
-    .getByLabel(`Date for ${savedSale.sale.transactionId}`)
-    .fill(manilaDayAfter(-1));
-  await ownerPage
-    .getByRole("spinbutton", {
-      name: `Gross sales for ${savedSale.sale.transactionId}`,
-    })
-    .fill("99.00");
-  await ownerPage.getByRole("button", { name: "Save" }).click();
-  await expect(journalRow).not.toHaveClass(/journal-row-unedited/);
-  await expect(journalRow).toContainText("99.00");
+  await expect(journalRow.getByRole("button", { name: "Edit" })).toBeDisabled();
   await ownerPage.goto("/daily-sales");
   await expect(
     ownerPage.locator(".daily-sales-journal-summary tbody tr"),

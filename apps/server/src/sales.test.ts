@@ -1197,22 +1197,41 @@ describe("checkout, sales, and cashier shifts", () => {
       editedAt: null,
     });
 
-    const patchResponse = await owner
+    const journalEdit = {
+      month,
+      date: manilaDayAfter(-1),
+      invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
+      seniorDiscount: "19.50",
+      nonVat: "4.25",
+      vatableSales: "201.00",
+      totalVat: "1.00",
+      grossSales: "223.00",
+      netSales: "179.00",
+    };
+    const sameDayEdit = await owner
       .patch(`/api/journal/${originalEntry.sourceBusinessDate}`)
       .set("x-csrf-token", await csrfFor(owner))
-      .send({
-        month,
-        date: manilaDayAfter(-1),
-        invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
-        seniorDiscount: "19.50",
-        nonVat: "4.25",
-        vatableSales: "201.00",
-        totalVat: "1.00",
-        grossSales: "223.00",
-        netSales: "179.00",
-      });
+      .send(journalEdit);
+    expect(sameDayEdit.status).toBe(409);
+    expect(sameDayEdit.body.error).toBe("journal_day_not_closed");
+
+    const pastSourceDate = manilaDayAfter(-1);
+    db.prepare(
+      `UPDATE daily_sales_journal
+       SET source_business_date = ?, business_month = ?
+       WHERE source_business_date = ?`,
+    ).run(pastSourceDate, pastSourceDate.slice(0, 7), sale.businessDate);
+    journalEdit.month = pastSourceDate.slice(0, 7);
+    journalEdit.date = manilaDayAfter(-2);
+    const patchResponse = await owner
+      .patch(`/api/journal/${pastSourceDate}`)
+      .set("x-csrf-token", await csrfFor(owner))
+      .send(journalEdit);
     expect(patchResponse.status).toBe(200);
     expect(patchResponse.body.entry).toMatchObject({
+      sourceBusinessDate: pastSourceDate,
+      month: pastSourceDate.slice(0, 7),
+      date: manilaDayAfter(-2),
       invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
       seniorDiscount: "19.50",
       nonVat: "4.25",
@@ -1222,6 +1241,19 @@ describe("checkout, sales, and cashier shifts", () => {
       netSales: "179.00",
     });
     expect(patchResponse.body.entry.editedAt).toEqual(expect.any(String));
+
+    expect(
+      db
+        .prepare(
+          `SELECT invoice_number_range, gross_sales_centavos, edited_at
+           FROM daily_sales_journal WHERE source_business_date = ?`,
+        )
+        .get(pastSourceDate),
+    ).toEqual({
+      invoice_number_range: "JOURNAL-ONLY-CORRECTION",
+      gross_sales_centavos: 22_300,
+      edited_at: expect.any(String),
+    });
 
     const sourceSales = db
       .prepare(
@@ -1250,19 +1282,11 @@ describe("checkout, sales, and cashier shifts", () => {
       },
     ]);
 
-    const refreshedJournal = await owner.get(path);
-    expect(refreshedJournal.body.entries).toHaveLength(1);
-    expect(refreshedJournal.body.entries[0]).toMatchObject({
-      date: manilaDayAfter(-1),
-      invoiceNumberRange: "JOURNAL-ONLY-CORRECTION",
-      grossSales: "223.00",
-      editedAt: expect.any(String),
-    });
     expect((await cashier.get(path)).status).toBe(403);
     expect(
       (
         await cashier
-          .patch(`/api/journal/${sale.businessDate}`)
+          .patch(`/api/journal/${pastSourceDate}`)
           .set("x-csrf-token", await csrfFor(cashier))
           .send({})
       ).status,

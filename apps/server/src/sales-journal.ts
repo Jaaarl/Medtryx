@@ -3,6 +3,7 @@ import type { Router } from "express";
 import { z } from "zod";
 import { requireAuthentication, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
+import { manilaCalendarDate } from "./lot-stock.js";
 
 const monthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
 const moneySchema = z.string().regex(/^\d{1,10}(?:\.\d{1,2})?$/);
@@ -183,6 +184,10 @@ export function registerSalesJournalRoutes(
       const parsed = journalEntrySchema.safeParse(req.body);
       if (!sourceBusinessDate.success || !parsed.success) {
         res.status(400).json({ error: "invalid_journal_entry" });
+        return;
+      }
+      if (sourceBusinessDate.data >= manilaCalendarDate()) {
+        res.status(409).json({ error: "journal_day_not_closed" });
         return;
       }
       const value = parsed.data;

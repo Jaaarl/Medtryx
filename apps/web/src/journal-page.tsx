@@ -37,6 +37,19 @@ function currentMonth(): string {
   return `${values.year}-${values.month}`;
 }
 
+function manilaBusinessDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function draftFor(entry: JournalEntry): JournalDraft {
   return {
     month: entry.month,
@@ -71,6 +84,8 @@ export function JournalPage() {
   const [periodType, setPeriodType] = useState<"month" | "year">("month");
   const [month, setMonth] = useState(currentMonth);
   const [year, setYear] = useState(currentMonth().slice(0, 4));
+  const [todayBusinessDate, setTodayBusinessDate] =
+    useState(manilaBusinessDate);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -83,6 +98,13 @@ export function JournalPage() {
   const endMonth = periodType === "month" ? month : `${year}-12`;
   const requestKey = `${startMonth}:${endMonth}:${refreshKey}`;
   const loading = loadedKey !== requestKey;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTodayBusinessDate(manilaBusinessDate());
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -156,8 +178,9 @@ export function JournalPage() {
           <div className="eyebrow">OWNER BOOKKEEPING</div>
           <h1>Journal</h1>
           <p>
-            Review copied sales by month or year. Changes here are saved only to
-            the journal.
+            Review copied sales by month or year. A day becomes editable after
+            it ends in Philippines time. Changes here are saved only to the
+            journal.
           </p>
         </div>
         <div className="journal-period-actions">
@@ -262,6 +285,8 @@ export function JournalPage() {
                   {entries.map((entry) => {
                     const editing = isEditing(entry);
                     const values = draftValue(entry);
+                    const canEdit =
+                      entry.sourceBusinessDate < todayBusinessDate;
                     return (
                       <tr
                         className={entry.editedAt ? "" : "journal-row-unedited"}
@@ -369,6 +394,12 @@ export function JournalPage() {
                               className="button button-secondary journal-action-button"
                               type="button"
                               onClick={() => beginEdit(entry)}
+                              disabled={!canEdit}
+                              title={
+                                canEdit
+                                  ? undefined
+                                  : "Available after this business day ends in Philippines time."
+                              }
                             >
                               <Pencil size={14} /> Edit
                             </button>
