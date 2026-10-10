@@ -574,3 +574,43 @@ test("owner can page through older shift history", async ({ page }) => {
     page.getByRole("button", { name: "Load older shifts" }),
   ).toHaveCount(0);
 });
+
+test("owner can save BNPC eligibility before assigning a category", async ({
+  page,
+}) => {
+  await signIn(page, "owner@example.test", "SyntheticOwnerPassword-48!");
+  await page.goto("/products");
+
+  const productName = "Synthetic Unclassified BNPC Product";
+  await page.getByLabel("Product name").fill(productName);
+  await page.getByLabel("Generic", { exact: true }).check();
+  await page.getByLabel(/Selling price/).fill("12.00");
+  await page.getByLabel("BNPC 5% discount eligible").check();
+  await expect(page.getByLabel("Covered goods category")).not.toHaveAttribute(
+    "required",
+    "",
+  );
+  await page.getByRole("button", { name: "Create product" }).click();
+  await expect(page.getByRole("status")).toContainText("Product created");
+
+  const response = await page.request.get(
+    `/api/products?q=${encodeURIComponent(productName)}`,
+  );
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as {
+    products: Array<{
+      sku: string;
+      name: string;
+      isBnpcEligible: boolean;
+      bnpcCategory: string | null;
+    }>;
+  };
+  const product = body.products.find((item) => item.name === productName);
+  expect(product).toMatchObject({ isBnpcEligible: true, bnpcCategory: null });
+  if (!product) throw new Error("Unclassified product was not returned.");
+
+  await page.getByLabel("Search products").fill(product.sku);
+  await expect(
+    page.getByRole("row").filter({ hasText: productName }),
+  ).toContainText("BNPC category missing");
+});

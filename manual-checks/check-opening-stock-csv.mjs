@@ -265,7 +265,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   if (bnpcCategory && !BNPC_CATEGORIES.has(bnpcCategory)) {
     error("bnpcCategory", "must be BASIC_NECESSITY or PRIME_COMMODITY.");
   } else if (bnpcEligible && !bnpcCategory) {
-    error("bnpcCategory", "is required when bnpcEligible is TRUE.");
+    warning(
+      "bnpcCategory",
+      "is blank. The product can be imported, but BNPC discounts stay unavailable until a category is assigned.",
+    );
   }
 
   const tracksLots = ["true", "yes", "1"].includes(

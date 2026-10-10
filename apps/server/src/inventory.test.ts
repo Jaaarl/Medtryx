@@ -120,8 +120,8 @@ describe("owner catalog and stock operations", () => {
   it("imports new products with opening lot stock and validates the full CSV before saving", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const headers =
-      "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity,openingUnitCost,openingLotCode,openingExpiryDate";
-    const validRow = `SYN-CSV-NEW-001,\"Synthetic, CSV medicine\",tablet,70.00,VATABLE,BRANDED,TRUE,12,40.00,SYN-CSV-LOT-01,${manilaDayAfter(30)}`;
+      "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity,openingUnitCost,openingLotCode,openingExpiryDate,bnpcEligible,bnpcCategory";
+    const validRow = `SYN-CSV-NEW-001,\"Synthetic, CSV medicine\",tablet,70.00,VATABLE,BRANDED,TRUE,12,40.00,SYN-CSV-LOT-01,${manilaDayAfter(30)},TRUE,`;
     const importToken = await csrfFor(owner);
     const imported = await owner
       .post("/api/products/import-csv")
@@ -139,6 +139,8 @@ describe("owner catalog and stock operations", () => {
       sku: "SYN-CSV-NEW-001",
       name: "Synthetic, CSV medicine",
       tracksLots: true,
+      isBnpcEligible: true,
+      bnpcCategory: null,
       quantityOnHand: 12,
       saleableQuantity: 12,
       weightedAverageUnitCost: "40.00",
@@ -161,7 +163,7 @@ describe("owner catalog and stock operations", () => {
       .set("Content-Type", "text/csv")
       .set("x-csrf-token", invalidToken)
       .send(
-        `${headers}\n${`SYN-CSV-NEW-002,Valid row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-02,${manilaDayAfter(30)}`}\n${`SYN-CSV-NEW-003,Expired row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-03,${manilaDayAfter(-1)}`}`,
+        `${headers}\n${`SYN-CSV-NEW-002,Valid row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-02,${manilaDayAfter(30)},FALSE,`}\n${`SYN-CSV-NEW-003,Expired row,tablet,50.00,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-03,${manilaDayAfter(-1)},FALSE,`}`,
       );
     expect(invalidBatch.status).toBe(400);
     expect(invalidBatch.body.error).toBe("csv_import_invalid");
@@ -175,6 +177,46 @@ describe("owner catalog and stock operations", () => {
         )
         .get(),
     ).toEqual({ count: 1 });
+  });
+
+  it("allows an eligible product to have a null BNPC category", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner, {
+      sku: "SYN-BNPC-NULL-CATEGORY",
+      bnpcEligible: true,
+      bnpcCategory: null,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.product).toMatchObject({
+      isBnpcEligible: true,
+      bnpcCategory: null,
+    });
+
+    const classifyToken = await csrfFor(owner);
+    const classified = await owner
+      .patch(`/api/products/${created.body.product.id as string}`)
+      .set("x-csrf-token", classifyToken)
+      .send({ bnpcEligible: true, bnpcCategory: "BASIC_NECESSITY" });
+    expect(classified.status, JSON.stringify(classified.body)).toBe(200);
+    expect(classified.body.product.bnpcCategory).toBe("BASIC_NECESSITY");
+
+    const clearToken = await csrfFor(owner);
+    const cleared = await owner
+      .patch(`/api/products/${created.body.product.id as string}`)
+      .set("x-csrf-token", clearToken)
+      .send({ bnpcEligible: true, bnpcCategory: null });
+    expect(cleared.status, JSON.stringify(cleared.body)).toBe(200);
+    expect(cleared.body.product).toMatchObject({
+      isBnpcEligible: true,
+      bnpcCategory: null,
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT bnpc_eligible, bnpc_category FROM products WHERE id = ?",
+        )
+        .get(created.body.product.id as string),
+    ).toEqual({ bnpc_eligible: 1, bnpc_category: null });
   });
 
   it("exports a formula-safe CSV for editing existing product records", async () => {

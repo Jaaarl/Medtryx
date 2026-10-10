@@ -52,7 +52,7 @@ export const createProductSchema = z
     isScEligible: z.boolean(),
     isPwdEligible: z.boolean(),
     bnpcEligible: z.boolean().default(false),
-    bnpcCategory: bnpcCategorySchema.optional(),
+    bnpcCategory: bnpcCategorySchema.nullable().optional(),
     openingQuantity: z.number().int().min(0).max(MAX_QUANTITY).default(0),
     openingUnitCost: moneySchema.optional(),
     reorderLevel: z
@@ -110,13 +110,6 @@ export const createProductSchema = z
           message: "expired_lot_not_allowed",
         });
       }
-    }
-    if (value.bnpcEligible && !value.bnpcCategory) {
-      context.addIssue({
-        code: "custom",
-        path: ["bnpcCategory"],
-        message: "bnpc_classification_review_required",
-      });
     }
   });
 
@@ -388,16 +381,7 @@ const updateProductSchema = z
     active: z.boolean().optional(),
   })
   .strict()
-  .refine((value) => Object.keys(value).length > 0, "empty_update")
-  .superRefine((value, context) => {
-    if (value.bnpcEligible === true && !value.bnpcCategory) {
-      context.addIssue({
-        code: "custom",
-        path: ["bnpcCategory"],
-        message: "bnpc_classification_review_required",
-      });
-    }
-  });
+  .refine((value) => Object.keys(value).length > 0, "empty_update");
 
 export const receiptSchema = z
   .object({
@@ -1030,7 +1014,7 @@ export function createProductRecord(
       `UPDATE products SET bnpc_eligible = 1, bnpc_category = ?,
          bnpc_prescription_required = 0, bnpc_reviewed_at = ?,
          bnpc_reviewed_by_user_id = ? WHERE id = ?`,
-    ).run(input.bnpcCategory!, now, actorUserId, id);
+    ).run(input.bnpcCategory ?? null, now, actorUserId, id);
   }
   if (input.openingQuantity > 0 && openingCostCents !== null) {
     const stockEventId = writeStockEvent(db, {
@@ -1079,7 +1063,7 @@ export function createProductRecord(
       isScEligible: input.isScEligible,
       isPwdEligible: input.isPwdEligible,
       isBnpcEligible: input.bnpcEligible,
-      bnpcCategory: input.bnpcEligible ? input.bnpcCategory : null,
+      bnpcCategory: input.bnpcEligible ? (input.bnpcCategory ?? null) : null,
       openingQuantity: input.openingQuantity,
       openingReference: input.openingReference || null,
       taxClass: input.taxClass,
@@ -1824,7 +1808,7 @@ export function registerInventoryRoutes(
             `UPDATE products SET bnpc_eligible = 1, bnpc_category = ?,
                bnpc_prescription_required = 0, bnpc_reviewed_at = ?,
                bnpc_reviewed_by_user_id = ? WHERE id = ?`,
-          ).run(parsed.data.bnpcCategory!, now, req.user!.id, id);
+          ).run(parsed.data.bnpcCategory ?? null, now, req.user!.id, id);
         }
         if (parsed.data.openingQuantity > 0 && openingCostCents !== null) {
           const stockEventId = writeStockEvent(db, {
@@ -1877,7 +1861,7 @@ export function registerInventoryRoutes(
             isPwdEligible: parsed.data.isPwdEligible,
             isBnpcEligible: parsed.data.bnpcEligible,
             bnpcCategory: parsed.data.bnpcEligible
-              ? parsed.data.bnpcCategory
+              ? (parsed.data.bnpcCategory ?? null)
               : null,
             openingQuantity: parsed.data.openingQuantity,
             openingReference: parsed.data.openingReference || null,
@@ -3103,11 +3087,10 @@ function applyProductUpdate(
   const nextPwdEligible = input.isPwdEligible ?? current.pwd_eligible === 1;
   const nextBnpcEligible = input.bnpcEligible ?? current.bnpc_eligible === 1;
   const nextBnpcCategory = nextBnpcEligible
-    ? (input.bnpcCategory ?? current.bnpc_category)
+    ? input.bnpcCategory === undefined
+      ? current.bnpc_category
+      : input.bnpcCategory
     : null;
-  if (nextBnpcEligible && !nextBnpcCategory) {
-    throw new InventoryError(400, "bnpc_classification_review_required");
-  }
   const bnpcClassificationChanged =
     nextBnpcEligible !== (current.bnpc_eligible === 1) ||
     nextBnpcCategory !== current.bnpc_category;

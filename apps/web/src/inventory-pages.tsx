@@ -80,6 +80,13 @@ type CatalogProduct = Pick<
   }>;
 };
 
+function isBnpcDiscountAvailable(product: {
+  isBnpcEligible: boolean;
+  bnpcCategory: Product["bnpcCategory"];
+}): boolean {
+  return product.isBnpcEligible && product.bnpcCategory !== null;
+}
+
 type InventoryLot = {
   id: string;
   productId: string;
@@ -281,7 +288,7 @@ function errorMessage(error: unknown): string {
     product_not_pwd_eligible:
       "This product is not marked eligible for a PWD benefit.",
     bnpc_classification_review_required:
-      "Choose Basic Necessity or Prime Commodity for this BNPC-eligible product.",
+      "Assign a covered-goods category before applying a BNPC discount.",
     insufficient_stock:
       "The requested change exceeds available stock. Refresh and review the cart.",
     stock_count_below_required_demand:
@@ -541,7 +548,7 @@ function explainProductCsvIssue(message: string): {
     invalid_expiry_date:
       "Use a real date in YYYY-MM-DD format (for example, 2029-02-28).",
     bnpc_classification_review_required:
-      "Choose a BNPC category when BNPC eligibility is enabled.",
+      "Assign a covered-goods category before applying a BNPC discount.",
     opening_cost_required:
       "Enter a unit cost when opening quantity is above zero.",
     selling_price_must_be_positive: "Enter a selling price greater than zero.",
@@ -1202,7 +1209,7 @@ export function ProductsPage() {
       bnpcEligible: form.isBnpcEligible,
       ...(form.isBnpcEligible
         ? {
-            bnpcCategory: form.bnpcCategory || undefined,
+            bnpcCategory: form.bnpcCategory || null,
           }
         : {}),
       tracksLots: form.tracksLots,
@@ -1421,7 +1428,9 @@ export function ProductsPage() {
                             ? ` · ${product.barcode}`
                             : ""} ·{" "}
                           {product.isBnpcEligible
-                            ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
+                            ? product.bnpcCategory
+                              ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
+                              : "BNPC category missing"
                             : "BNPC ineligible"}
                           {product.unit}
                         </small>
@@ -1672,7 +1681,6 @@ export function ProductsPage() {
                   <select
                     id="product-bnpc-category"
                     className="text-input select-input"
-                    required
                     value={form.bnpcCategory}
                     onChange={(event) =>
                       setForm({
@@ -1690,7 +1698,9 @@ export function ProductsPage() {
                 </Field>
                 <small className="field-hint">
                   The official list has two covered-goods sections. Both get 5%;
-                  choose the section that lists this product.
+                  choose the section that lists this product. Leave it blank
+                  while unclassified; BNPC discounts stay unavailable until a
+                  category is assigned.
                 </small>
               </div>
             )}
@@ -5667,10 +5677,10 @@ export function CheckoutPage({
                 )}
               {bnpcPolicy?.enabled &&
                 benefitType !== "REGULAR" &&
-                (cart.some((line) => line.product.isBnpcEligible) ||
+                (cart.some((line) => isBnpcDiscountAvailable(line.product)) ||
                   bundleCart.some((bundleLine) =>
-                    bundleLine.offer.components.some(
-                      (component) => component.isBnpcEligible,
+                    bundleLine.offer.components.some((component) =>
+                      isBnpcDiscountAvailable(component),
                     ),
                   )) && (
                   <div className="checkout-benefit-lines">
@@ -5683,7 +5693,7 @@ export function CheckoutPage({
                       exemption.
                     </small>
                     {cart
-                      .filter((line) => line.product.isBnpcEligible)
+                      .filter((line) => isBnpcDiscountAvailable(line.product))
                       .map((line) => (
                         <label
                           className="inventory-checkbox"
@@ -5692,7 +5702,7 @@ export function CheckoutPage({
                           <input
                             type="checkbox"
                             checked={line.benefitTreatment === "BNPC"}
-                            disabled={!line.product.isBnpcEligible}
+                            disabled={!isBnpcDiscountAvailable(line.product)}
                             onChange={(event) =>
                               setBenefitForLine(
                                 line.product.id,
@@ -5702,7 +5712,7 @@ export function CheckoutPage({
                           />
                           <span>
                             {line.product.name} · BNPC 5%{" "}
-                            {line.product.isBnpcEligible
+                            {isBnpcDiscountAvailable(line.product)
                               ? "eligible"
                               : "not eligible"}
                           </span>
@@ -5710,7 +5720,9 @@ export function CheckoutPage({
                       ))}
                     {bundleCart.flatMap((bundleLine) =>
                       bundleLine.offer.components
-                        .filter((component) => component.isBnpcEligible)
+                        .filter((component) =>
+                          isBnpcDiscountAvailable(component),
+                        )
                         .map((component) => (
                           <label
                             className="inventory-checkbox"
@@ -5723,7 +5735,7 @@ export function CheckoutPage({
                                   component.productId
                                 ] === "BNPC"
                               }
-                              disabled={!component.isBnpcEligible}
+                              disabled={!isBnpcDiscountAvailable(component)}
                               onChange={(event) =>
                                 setBundleBenefit(
                                   bundleLine.offerKey,
@@ -5735,7 +5747,7 @@ export function CheckoutPage({
                             <span>
                               {bundleLine.offer.name} · {component.name} · BNPC
                               5%{" "}
-                              {component.isBnpcEligible
+                              {isBnpcDiscountAvailable(component)
                                 ? "eligible"
                                 : "not eligible"}
                             </span>

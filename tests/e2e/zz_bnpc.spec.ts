@@ -55,9 +55,15 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
   expect(productResponse.status()).toBe(201);
 
   await ownerPage.goto("/settings");
+  const bnpcPolicyCard = ownerPage.locator(".tax-policy-card").filter({
+    has: ownerPage.getByRole("heading", { name: "BNPC 5% benefit policy" }),
+  });
   await expect(
-    ownerPage.getByRole("heading", { name: "BNPC 5% benefit policy" }),
+    bnpcPolicyCard.getByRole("heading", { name: "BNPC 5% benefit policy" }),
   ).toBeVisible();
+  await expect(bnpcPolicyCard.locator(".tax-policy-state")).not.toContainText(
+    "Loading BNPC policy",
+  );
   await ownerPage
     .getByLabel("I verified this establishment is covered by this policy.")
     .check();
@@ -94,7 +100,16 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
   await cashierPage.getByRole("button", { name: "Open shift" }).click();
   await expect(cashierPage.getByText("Cashier shift opened.")).toBeVisible();
   await cashierPage.getByLabel("Search catalog").fill("SYN-BNPC-E2E-001");
-  await cashierPage.getByRole("button", { name: "Add to cart" }).click();
+  const coveredProduct = cashierPage
+    .locator(".catalog-result")
+    .filter({ hasText: "SYN-BNPC-E2E-001" });
+  await expect(coveredProduct).toHaveCount(1);
+  await coveredProduct.getByRole("button", { name: "Add to cart" }).click();
+  const addDialog = cashierPage.getByRole("dialog", {
+    name: "Add item to cart",
+  });
+  await addDialog.getByLabel("Quantity to add").fill("1");
+  await addDialog.getByRole("button", { name: "Add to cart" }).click();
   await cashierPage.getByLabel("Sale benefit").selectOption("PWD");
   await cashierPage
     .getByLabel("Synthetic BNPC E2E product · BNPC 5% eligible")
@@ -115,11 +130,15 @@ test("owner approval and cashier BNPC checkout preserve normal VAT", async ({
   await cashierPage
     .getByRole("button", { name: "Calculate line taxes and discounts" })
     .click();
-  await expect(cashierPage.getByText("BNPC discount ₱5.60")).toBeVisible();
+  await expect(cashierPage.getByText(/BNPC discount.*5\.60/u)).toBeVisible();
   await expect(
-    cashierPage.getByText(/Tax basis ₱95.00 · VAT ₱11.40/u),
+    cashierPage.getByText(/Tax basis.*95\.00.*VAT.*11\.40/u),
   ).toBeVisible();
   await cashierPage.getByRole("button", { name: "Confirm sale" }).click();
+  await cashierPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Confirm cash sale" })
+    .click();
   await expect(cashierPage.getByText("Sale saved.")).toBeVisible();
   await cashierContext.close();
 });

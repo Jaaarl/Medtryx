@@ -312,6 +312,14 @@ describe("BNPC checkout", () => {
       isScEligible: false,
       isPwdEligible: false,
     });
+    const unclassified = await createProduct(owner, {
+      sku: "SYN-BNPC-UNCLASSIFIED",
+      name: "Synthetic unclassified item",
+      bnpcEligible: true,
+      bnpcCategory: null,
+      isScEligible: false,
+      isPwdEligible: false,
+    });
     const regular = await createProduct(owner, {
       sku: "SYN-BNPC-REGULAR",
       name: "Synthetic ineligible item",
@@ -353,6 +361,22 @@ describe("BNPC checkout", () => {
       });
     expect(invalidProduct.status).toBe(409);
     expect(invalidProduct.body.error).toBe("product_not_bnpc_eligible");
+
+    const unclassifiedProduct = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", noBookletToken)
+      .send({
+        ...saleBody,
+        items: [
+          {
+            productId: unclassified.id,
+            quantity: 1,
+            benefitTreatment: "BNPC",
+          },
+        ],
+      });
+    expect(unclassifiedProduct.status).toBe(409);
+    expect(unclassifiedProduct.body.error).toBe("product_not_bnpc_eligible");
 
     const preview = await cashier
       .post("/api/sales/preview")
