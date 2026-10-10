@@ -102,6 +102,49 @@ test("owner imports new products with opening stock, lots, and expiry from CSV",
   );
 });
 
+test("owner sees grouped product CSV errors with expandable row details", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill("owner@example.test");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("SyntheticOwnerPassword-48!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/checkout$/);
+  await page.goto("/products");
+
+  const rows = Array.from(
+    { length: 120 },
+    (_, index) =>
+      `SYN-CSV-INVALID-${index + 1},Invalid date product ${index + 1},tablet,1,VATABLE,GENERIC,FALSE,0,1/31/2029`,
+  );
+  const csv = [
+    "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity,openingExpiryDate",
+    ...rows,
+  ].join("\r\n");
+  await page.getByLabel("New products CSV file").setInputFiles({
+    name: "invalid-products.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+  await page.getByRole("button", { name: "Import products" }).click();
+
+  const error = page.getByRole("alert");
+  await expect(error).toContainText("CSV not imported");
+  await expect(error).toContainText(
+    "No products were imported. Found 120 issues across 120 CSV rows.",
+  );
+  await expect(error).toContainText("Expiry date:");
+  await expect(error).toContainText("2029-02-28");
+  const details = error.locator("details");
+  await expect(details.locator("ol")).toBeHidden();
+  await details.getByText("View all 120 row errors").click();
+  await expect(details.locator("ol")).toContainText(
+    "Row 2: Expiry date: Use a real date in YYYY-MM-DD format",
+  );
+});
+
 test("owner exports and updates product data from the catalog page", async ({
   page,
 }) => {

@@ -490,25 +490,136 @@ function useProducts() {
   return { products, setProducts, loading, error, setError, refresh };
 }
 
+type ProductCsvIssue = { row: number | string; message: string };
+
+function productCsvRowErrors(error: unknown): ProductCsvIssue[] {
+  if (!(error instanceof ApiError) || error.code !== "csv_import_invalid")
+    return [];
+  const rowErrors = error.responseBody?.rowErrors;
+  if (!Array.isArray(rowErrors)) return [];
+  return rowErrors.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const row = "row" in item ? item.row : "?";
+    const message = "message" in item ? item.message : "Invalid row.";
+    if (typeof message !== "string") return [];
+    return [{ row: typeof row === "number" ? row : String(row), message }];
+  });
+}
+
+const PRODUCT_CSV_FIELD_LABELS: Record<string, string> = {
+  sku: "SKU",
+  name: "Product name",
+  barcode: "Barcode",
+  unit: "Unit",
+  sellingPrice: "Selling price",
+  taxClass: "Tax class",
+  productType: "Product type",
+  isScEligible: "Senior citizen eligibility",
+  isPwdEligible: "PWD eligibility",
+  bnpcEligible: "BNPC eligibility",
+  bnpcCategory: "BNPC category",
+  tracksLots: "Lot tracking",
+  openingQuantity: "Opening quantity",
+  openingUnitCost: "Opening unit cost",
+  reorderLevel: "Reorder level",
+  openingReference: "Opening reference",
+  openingLotCode: "Opening lot code",
+  openingExpiryDate: "Expiry date",
+  openingSupplier: "Opening supplier",
+  zeroCostReason: "Zero cost reason",
+};
+
+function explainProductCsvIssue(message: string): {
+  category: string;
+  detail: string;
+} {
+  const fieldSeparator = message.indexOf(": ");
+  const field = fieldSeparator < 0 ? "" : message.slice(0, fieldSeparator);
+  const fieldLabel = PRODUCT_CSV_FIELD_LABELS[field];
+  const rawDetail = fieldLabel ? message.slice(fieldSeparator + 2) : message;
+  const knownDetails: Record<string, string> = {
+    invalid_expiry_date:
+      "Use a real date in YYYY-MM-DD format (for example, 2029-02-28).",
+    bnpc_classification_review_required:
+      "Choose a BNPC category when BNPC eligibility is enabled.",
+    opening_cost_required:
+      "Enter a unit cost when opening quantity is above zero.",
+    selling_price_must_be_positive: "Enter a selling price greater than zero.",
+    zero_cost_requires_reason:
+      "Add a reason when the opening unit cost is zero.",
+    expired_lot_not_allowed:
+      "Use an expiry date that is today or later for tracked opening stock.",
+    opening_lot_required:
+      "Enter both a lot code and expiry date for tracked opening stock.",
+  };
+  const detail =
+    knownDetails[rawDetail] ??
+    (field === "sellingPrice" && rawDetail === "Invalid input"
+      ? "Enter a positive amount with no more than two decimal places."
+      : field === "openingUnitCost" && rawDetail === "Invalid input"
+        ? "Enter a cost with no more than two decimal places."
+        : rawDetail.replaceAll("_", " "));
+  return {
+    category: fieldLabel ?? "CSV format",
+    detail,
+  };
+}
+
+function ProductCsvImportErrors({ issues }: { issues: ProductCsvIssue[] }) {
+  const grouped = new Map<
+    string,
+    { category: string; detail: string; rows: Set<number | string> }
+  >();
+  for (const issue of issues) {
+    const explanation = explainProductCsvIssue(issue.message);
+    const key = `${explanation.category}\0${explanation.detail}`;
+    const group = grouped.get(key) ?? {
+      ...explanation,
+      rows: new Set<number | string>(),
+    };
+    group.rows.add(issue.row);
+    grouped.set(key, group);
+  }
+  const affectedRows = new Set(issues.map((issue) => issue.row)).size;
+
+  return (
+    <div className="banner banner-error csv-import-error" role="alert">
+      <strong>CSV not imported</strong>
+      <p>
+        No products were imported. Found {issues.length} issue
+        {issues.length === 1 ? "" : "s"} across {affectedRows} CSV row
+        {affectedRows === 1 ? "" : "s"}. Fix them and upload the file again.
+      </p>
+      <ul className="csv-import-error-summary">
+        {[...grouped.values()].map((group) => (
+          <li key={`${group.category}-${group.detail}`}>
+            <strong>{group.category}:</strong> {group.detail} ({group.rows.size}{" "}
+            {group.rows.size === 1 ? "row" : "rows"})
+          </li>
+        ))}
+      </ul>
+      <details className="csv-import-error-details">
+        <summary>View all {issues.length} row errors</summary>
+        <ol>
+          {issues.map((issue, index) => {
+            const explanation = explainProductCsvIssue(issue.message);
+            return (
+              <li key={`${issue.row}-${index}`}>
+                Row {issue.row}: {explanation.category}: {explanation.detail}
+              </li>
+            );
+          })}
+        </ol>
+      </details>
+    </div>
+  );
+}
+
 function productCsvErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The CSV import could not be completed. No products were imported.";
-  if (error.code === "csv_import_invalid") {
-    const rowErrors = error.responseBody?.rowErrors;
-    if (Array.isArray(rowErrors)) {
-      const details = rowErrors
-        .map((item) => {
-          if (typeof item !== "object" || item === null) return "";
-          const row = "row" in item ? item.row : "?";
-          const message = "message" in item ? item.message : "Invalid row.";
-          return `Row ${String(row)}: ${String(message)}`;
-        })
-        .filter(Boolean)
-        .join(" ");
-      if (details) return `No products were imported. ${details}`;
-    }
+  if (error.code === "csv_import_invalid")
     return "The CSV headers or rows are invalid. No products were imported.";
-  }
   if (error.code === "sku_already_exists")
     return "A SKU already exists. No products were imported.";
   if (error.code === "barcode_already_exists")
@@ -527,17 +638,19 @@ function ProductCsvImportPanel({
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [rowErrors, setRowErrors] = useState<ProductCsvIssue[]>([]);
   const [notice, setNotice] = useState("");
 
   async function importCsv(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) return;
+    setError("");
+    setRowErrors([]);
     if (file.size > 200_000) {
       setError("Choose a CSV file that is 200 KB or smaller.");
       return;
     }
     setSaving(true);
-    setError("");
     setNotice("");
     try {
       const result = await api.postCsv<{ createdCount: number }>(
@@ -553,7 +666,9 @@ function ProductCsvImportPanel({
         setError("Products imported, but the catalog could not be refreshed.");
       });
     } catch (caught) {
-      setError(productCsvErrorMessage(caught));
+      const issues = productCsvRowErrors(caught);
+      if (issues.length) setRowErrors(issues);
+      else setError(productCsvErrorMessage(caught));
     } finally {
       setSaving(false);
     }
@@ -588,11 +703,13 @@ function ProductCsvImportPanel({
           </a>
         </div>
       </div>
-      {error && (
+      {rowErrors.length ? (
+        <ProductCsvImportErrors issues={rowErrors} />
+      ) : error ? (
         <div className="banner banner-error" role="alert">
           {error}
         </div>
-      )}
+      ) : null}
       {notice && (
         <div className="banner banner-success" role="status">
           {notice}
@@ -611,7 +728,11 @@ function ProductCsvImportPanel({
             accept=".csv,text/csv"
             required
             disabled={saving}
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null);
+              setError("");
+              setRowErrors([]);
+            }}
           />
         </Field>
         <button
