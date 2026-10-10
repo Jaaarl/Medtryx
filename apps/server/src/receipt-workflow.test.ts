@@ -64,6 +64,13 @@ function editDraftCsv(csv: string, fields: Record<string, string>): string {
   return records.map((record) => record.map(csvCell).join(",")).join("\r\n");
 }
 
+function firstDraftRow(csv: string): Record<string, string> {
+  const records = csv.split(/\r?\n/u).map(parseCsvRow);
+  return Object.fromEntries(
+    records[0]!.map((header, index) => [header, records[1]![index] ?? ""]),
+  );
+}
+
 async function signIn(): Promise<void> {
   owner = request.agent(app);
   const csrf = await owner.get("/api/auth/csrf");
@@ -212,7 +219,7 @@ afterEach(() => {
 });
 
 describe("AI-assisted receipt receiving", () => {
-  it("creates a CSV draft, requires a selected product, and receives approved per-tablet stock with immutable receipt evidence", async () => {
+  it("preselects an exact match and receives approved per-tablet stock with immutable receipt evidence", async () => {
     const product = await createProduct();
     mockMixRoute({ productId: product.id });
     const draft = await owner
@@ -231,21 +238,19 @@ describe("AI-assisted receipt receiving", () => {
     expect(draft.status).toBe(200);
     expect(draft.body.lineCount).toBe(1);
     expect(draft.body.csv).toContain("PREDOQUE-10 Prednisone 10mg tablet");
-    const unselectedCsv = editDraftCsv(draft.body.csv as string, {
+    expect(firstDraftRow(draft.body.csv as string)).toMatchObject({
+      matchstatus: "EXACT_MATCH",
+      suggestedproductid: product.id,
+      suggestedproductname: "Synthetic PREDOQUE-10 Prednisone tablet",
+      suggestedproductsku: product.sku,
+      selectedproductid: product.id,
+      sku: product.sku,
+      unit: "tablet",
+      trackslots: "TRUE",
       conversionapproved: "FALSE",
     });
-    const withoutSelection = await owner
-      .post("/api/stock/receipts/ai-review")
-      .set("x-csrf-token", csrfToken)
-      .set("content-type", "text/csv")
-      .send(unselectedCsv);
-    expect(withoutSelection.status).toBe(400);
-    expect(withoutSelection.body.rowErrors[0].message).toContain(
-      "Confirm a product",
-    );
 
     const reviewedCsv = editDraftCsv(draft.body.csv as string, {
-      selectedproductid: product.id,
       conversionapproved: "TRUE",
     });
     const reviewed = await owner
@@ -333,6 +338,53 @@ describe("AI-assisted receipt receiving", () => {
       db.prepare("SELECT COUNT(*) AS count FROM stock_receipts").get(),
     ).toEqual({ count: 1 });
     expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("shows a possible match SKU without preselecting it until the owner confirms", async () => {
+    const product = await createProduct();
+    mockMixRoute({ status: "POSSIBLE_MATCH", productId: product.id });
+    const draft = await owner
+      .post("/api/stock/receipts/ai-draft")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        files: [
+          {
+            name: "receipt.pdf",
+            mimeType: "application/pdf",
+            dataBase64: pdfBase64,
+          },
+        ],
+      });
+
+    expect(draft.status).toBe(200);
+    expect(firstDraftRow(draft.body.csv as string)).toMatchObject({
+      matchstatus: "POSSIBLE_MATCH",
+      suggestedproductid: product.id,
+      suggestedproductsku: product.sku,
+      selectedproductid: "",
+      sku: "",
+    });
+
+    const unconfirmed = await owner
+      .post("/api/stock/receipts/ai-review")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(draft.body.csv as string);
+    expect(unconfirmed.status).toBe(400);
+    expect(unconfirmed.body.rowErrors[0].message).toContain(
+      "Confirm a product",
+    );
+
+    const confirmedCsv = editDraftCsv(draft.body.csv as string, {
+      selectedproductid: product.id,
+    });
+    const confirmed = await owner
+      .post("/api/stock/receipts/ai-review")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(confirmedCsv);
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body.existingProducts).toBe(1);
   });
 
   it("blocks a package conversion for a birth-control product and leaves the stock ledger unchanged", async () => {

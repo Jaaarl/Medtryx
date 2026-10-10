@@ -379,8 +379,8 @@ export function ReceiptReceivingPage() {
                 <h2>Review the CSV</h2>
                 <p>
                   Check original text, product suggestions, quantities, lots,
-                  expiry dates, and conversion approvals. Select matches
-                  yourself.
+                  expiry dates, and conversion approvals. Exact matches are
+                  preselected; choose a product for each possible match.
                 </p>
               </div>
               {review && <Check size={18} aria-label="Complete" />}

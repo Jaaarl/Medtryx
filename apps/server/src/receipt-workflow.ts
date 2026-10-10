@@ -43,6 +43,7 @@ const csvHeaders = [
   "matchstatus",
   "suggestedproductid",
   "suggestedproductname",
+  "suggestedproductsku",
   "selectedproductid",
   "sku",
   "unit",
@@ -935,7 +936,7 @@ async function makeDraftCsv(
   });
   const duplicates = await callDeepSeekJson(
     apiKey,
-    `Compare every receipt row against only the listed SQLite catalog candidates. Label each row EXACT_MATCH only when the same product is clearly identified; POSSIBLE_MATCH for similarity or uncertainty; otherwise NEW_PRODUCT. When a candidate is relevant, return its exact listed id as suggestedProductId. Do not choose a product absent from that row's candidates. These are suggestions only; a human will select the final product. Return {"items":[{"row":1,"status":"POSSIBLE_MATCH","suggestedProductId":null}]} for every row. Rows and candidates: ${JSON.stringify(itemsForMatching)}`,
+    `Compare every receipt row against only the listed SQLite catalog candidates. Label a row EXACT_MATCH only when the same product is clearly identified; use POSSIBLE_MATCH for similarity or uncertainty; otherwise use NEW_PRODUCT. When a candidate is relevant, return its exact listed id as suggestedProductId. Never choose a product absent from that row's candidates. The application preselects only valid active EXACT_MATCH candidates; possible matches remain suggestions for the owner to select. Return {"items":[{"row":1,"status":"POSSIBLE_MATCH","suggestedProductId":null}]} for every row. Rows and candidates: ${JSON.stringify(itemsForMatching)}`,
     duplicateSchema,
   );
   if (duplicates.items.length !== sourceLines.length)
@@ -961,6 +962,10 @@ async function makeDraftCsv(
       validCandidates.has(duplicate.suggestedProductId)
         ? productById.get(duplicate.suggestedProductId)
         : undefined;
+    const preselectedProduct =
+      duplicate.status === "EXACT_MATCH" && suggestedProduct?.is_active === 1
+        ? suggestedProduct
+        : undefined;
     const quantity = normalizedQuantity(prepared.quantity);
     const unitCost = normalizedMoney(prepared.unitCost);
     return [
@@ -981,9 +986,10 @@ async function makeDraftCsv(
       duplicate.status,
       suggestedProduct?.id ?? "",
       suggestedProduct?.name ?? "",
-      "",
-      "",
-      "",
+      suggestedProduct?.sku ?? "",
+      preselectedProduct?.id ?? "",
+      preselectedProduct?.sku ?? "",
+      preselectedProduct?.unit ?? "",
       "",
       "",
       "",
@@ -991,14 +997,12 @@ async function makeDraftCsv(
       "FALSE",
       "FALSE",
       "",
-      "FALSE",
+      preselectedProduct?.tracks_lots === 1 ? "TRUE" : "FALSE",
       prepared.conversionRecommended ? "TRUE" : "FALSE",
       prepared.unitsPerPackage ?? "",
       prepared.conversionConfidence,
       prepared.conversionReason,
-      prepared.conversionRecommended || prepared.unitsPerPackage !== null
-        ? ""
-        : "FALSE",
+      "FALSE",
       "",
     ]
       .map(csvCell)
