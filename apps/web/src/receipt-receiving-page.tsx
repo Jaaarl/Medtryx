@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import {
   ArrowDownToLine,
@@ -9,8 +9,11 @@ import {
   Upload,
 } from "lucide-react";
 import { ApiError, api } from "./api";
+import { parseReceiptCsv, serializeReceiptCsv } from "./receipt-csv";
+import type { ReceiptCsvRow } from "./receipt-csv";
 
-type PreparedReceipt = { csv: string; lineCount: number; filename: string };
+type PreparedReceipt = { lineCount: number; filename: string };
+type AiDraftResponse = PreparedReceipt & { csv: string };
 type ReviewLine = {
   row: number;
   name: string;
@@ -34,20 +37,27 @@ type ImportResult = {
 };
 type RowIssue = { row: number; message: string };
 type ReceiptTask = "prepare" | "review" | "import";
+type ProductOption = {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  tracksLots: boolean;
+};
 
 const receiptProgressSteps: Record<ReceiptTask, string[]> = {
   prepare: [
     "Prepare selected pages for upload",
     "AI extracts receipt lines and matches catalog products",
-    "Build the editable review CSV",
+    "Build an editable receipt draft",
   ],
   review: [
-    "Read the edited CSV",
+    "Send the edited receipt for validation",
     "Check products, quantities, conversions, lots, and expiry dates",
     "Prepare the receipt preview",
   ],
   import: [
-    "CSV passed review",
+    "Receipt passed review",
     "Recheck the CSV and record stock and lot movements",
     "Save receipt history and show the result",
   ],
@@ -145,6 +155,87 @@ function downloadCsv(csv: string, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function ReceiptField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  step,
+  min,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "text" | "number" | "date";
+  placeholder?: string;
+  step?: string;
+  min?: string;
+}) {
+  return (
+    <label className="receipt-edit-field">
+      <span>{label}</span>
+      <input
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        step={step}
+        min={min}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </label>
+  );
+}
+
+function ReceiptSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="receipt-edit-field">
+      <span>{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ReceiptCheck({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="receipt-edit-check">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 function errorText(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The receipt could not be processed. Please try again.";
@@ -163,7 +254,7 @@ function errorText(error: unknown): string {
       "This receipt has too many line items for one review file. Split it into smaller receipts.",
     receipt_upload_invalid: "Choose up to 20 PDF or image files.",
     receipt_review_invalid:
-      "The edited CSV has validation errors. Review the row messages below.",
+      "Some receipt fields need attention. Review the line messages below.",
     duplicate_new_product_definition:
       "Rows for the same new product have different POS details. Make their product fields match, or use separate SKUs.",
     receipt_already_imported:
@@ -194,6 +285,8 @@ export function ReceiptReceivingPage() {
   const reviewInput = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [prepared, setPrepared] = useState<PreparedReceipt | null>(null);
+  const [draftHeaders, setDraftHeaders] = useState<string[]>([]);
+  const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>([]);
   const [reviewCsv, setReviewCsv] = useState("");
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [issues, setIssues] = useState<RowIssue[]>([]);
@@ -203,6 +296,114 @@ export function ReceiptReceivingPage() {
     null,
   );
   const [progressStep, setProgressStep] = useState(0);
+  const [productChooserRow, setProductChooserRow] = useState<number | null>(
+    null,
+  );
+  const [productSearch, setProductSearch] = useState("");
+  const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
+  const [searchingProducts, setSearchingProducts] = useState(false);
+  const [productSearchError, setProductSearchError] = useState("");
+
+  useEffect(() => {
+    if (productChooserRow === null) return;
+    const query = productSearch.trim();
+    if (query.length < 2) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setSearchingProducts(true);
+      setProductSearchError("");
+      api
+        .get<{ products: ProductOption[] }>(
+          `/catalog?q=${encodeURIComponent(query)}`,
+        )
+        .then((response) => {
+          if (!cancelled) setProductOptions(response.products);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setProductOptions([]);
+            setProductSearchError("Unable to search the product catalog.");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setSearchingProducts(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [productChooserRow, productSearch]);
+
+  function clearReviewState() {
+    setReview(null);
+    setReviewCsv("");
+    setIssues([]);
+    setError("");
+  }
+
+  function updateRow(index: number, changes: Record<string, string>) {
+    setDraftRows((rows) =>
+      rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...changes } : row,
+      ),
+    );
+    clearReviewState();
+  }
+
+  function openProductChooser(index: number) {
+    const row = draftRows[index];
+    setProductChooserRow(index);
+    setProductSearch(
+      row?.suggestedproductsku ||
+        row?.suggestedproductname ||
+        row?.rearrangedname ||
+        "",
+    );
+    setProductOptions([]);
+    setProductSearchError("");
+    setSearchingProducts(false);
+  }
+
+  function closeProductChooser() {
+    setProductChooserRow(null);
+    setProductOptions([]);
+    setSearchingProducts(false);
+  }
+
+  function changeProductSearch(value: string) {
+    setProductSearch(value);
+    setProductOptions([]);
+    setProductSearchError("");
+    setSearchingProducts(false);
+    if (value.trim().length < 2) {
+      return;
+    }
+  }
+
+  function chooseProduct(index: number, product: ProductOption) {
+    updateRow(index, {
+      matchstatus: "EXACT_MATCH",
+      selectedproductid: product.id,
+      rearrangedname: product.name,
+      sku: product.sku,
+      unit: product.unit,
+      trackslots: product.tracksLots ? "TRUE" : "FALSE",
+    });
+    closeProductChooser();
+  }
+
+  function loadCsvIntoEditor(csv: string, filename: string) {
+    const document = parseReceiptCsv(csv);
+    setDraftHeaders(document.headers);
+    setDraftRows(document.rows);
+    setPrepared({ lineCount: document.rows.length, filename });
+    setReview(null);
+    setReviewCsv("");
+    setIssues([]);
+    setImported(null);
+    setError("");
+  }
 
   function chooseReceiptFiles(event: ChangeEvent<HTMLInputElement>) {
     const chosen = Array.from(event.currentTarget.files ?? []);
@@ -213,6 +414,8 @@ export function ReceiptReceivingPage() {
       ),
     );
     setPrepared(null);
+    setDraftHeaders([]);
+    setDraftRows([]);
     setReview(null);
     setReviewCsv("");
     setImported(null);
@@ -247,13 +450,12 @@ export function ReceiptReceivingPage() {
         })),
       );
       setProgressStep(1);
-      const response = await api.post<PreparedReceipt>(
+      const response = await api.post<AiDraftResponse>(
         "/stock/receipts/ai-draft",
         { files: uploadFiles },
       );
       setProgressStep(2);
-      setPrepared(response);
-      downloadCsv(response.csv, response.filename);
+      loadCsvIntoEditor(response.csv, response.filename);
     } catch (requestError) {
       setError(errorText(requestError));
     } finally {
@@ -262,25 +464,37 @@ export function ReceiptReceivingPage() {
     }
   }
 
-  async function reviewEditedCsv(event: ChangeEvent<HTMLInputElement>) {
+  async function loadEditedCsv(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     if (!file) return;
-    setError("");
-    setIssues([]);
-    setReview(null);
-    setImported(null);
-    setBusy("review");
-    setProgressStep(0);
     try {
       const csv = await file.text();
-      setReviewCsv(csv);
+      loadCsvIntoEditor(csv, file.name);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : errorText(requestError),
+      );
+    }
+  }
+
+  async function validateDraft() {
+    if (!draftHeaders.length || !draftRows.length || busy) return;
+    const csv = serializeReceiptCsv(draftHeaders, draftRows);
+    setBusy("review");
+    setProgressStep(0);
+    setError("");
+    setIssues([]);
+    try {
       setProgressStep(1);
       const response = await api.postCsv<ReviewResult>(
         "/stock/receipts/ai-review",
         csv,
       );
       setProgressStep(2);
+      setReviewCsv(csv);
       setReview(response);
     } catch (requestError) {
       setError(errorText(requestError));
@@ -289,6 +503,44 @@ export function ReceiptReceivingPage() {
       setBusy(null);
       setProgressStep(0);
     }
+  }
+
+  function addReceiptLine() {
+    const firstRow = draftRows[0];
+    if (!firstRow) return;
+    const newRow = {
+      ...Object.fromEntries(draftHeaders.map((header) => [header, ""])),
+      draftid: firstRow.draftid,
+      supplier: firstRow.supplier,
+      reference: firstRow.reference,
+      matchstatus: "NEW_PRODUCT",
+      selectedproductid: "",
+      quantity: "1",
+      unitcost: "",
+      conversionapproved: "FALSE",
+      conversionrecommended: "FALSE",
+      conversionconfidence: "LOW",
+      issceligible: "FALSE",
+      ispwdeligible: "FALSE",
+      bnpceligible: "FALSE",
+      trackslots: "FALSE",
+    } as ReceiptCsvRow;
+    setDraftRows((rows) => [...rows, newRow]);
+    clearReviewState();
+  }
+
+  function removeReceiptLine(index: number) {
+    setDraftRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+    setProductChooserRow(null);
+    clearReviewState();
+  }
+
+  function downloadCurrentCsv() {
+    if (!prepared || !draftHeaders.length) return;
+    downloadCsv(
+      serializeReceiptCsv(draftHeaders, draftRows),
+      prepared.filename,
+    );
   }
 
   async function importReviewedCsv() {
@@ -305,6 +557,9 @@ export function ReceiptReceivingPage() {
       setImported(result);
       setReview(null);
       setReviewCsv("");
+      setPrepared(null);
+      setDraftHeaders([]);
+      setDraftRows([]);
       setProgressStep(2);
     } catch (requestError) {
       setError(errorText(requestError));
@@ -318,11 +573,16 @@ export function ReceiptReceivingPage() {
   function startOver() {
     setFiles([]);
     setPrepared(null);
+    setDraftHeaders([]);
+    setDraftRows([]);
     setReview(null);
     setReviewCsv("");
     setIssues([]);
     setError("");
     setImported(null);
+    setProductChooserRow(null);
+    setProductSearch("");
+    setProductOptions([]);
     if (receiptInput.current) receiptInput.current.value = "";
     if (reviewInput.current) reviewInput.current.value = "";
   }
@@ -336,7 +596,7 @@ export function ReceiptReceivingPage() {
           </span>
           <h1>Receipt receiving</h1>
           <p>
-            Extract a supplier receipt, review the prepared CSV, then record
+            Extract a supplier receipt, edit and confirm the draft, then record
             stock and lot movements.
           </p>
         </div>
@@ -358,11 +618,11 @@ export function ReceiptReceivingPage() {
       )}
       {issues.length > 0 && (
         <div className="receipt-issues" role="alert">
-          <strong>Fix these CSV rows and upload the edited file again.</strong>
+          <strong>Fix these receipt lines, then validate again.</strong>
           <ul>
             {issues.map((issue, index) => (
               <li key={`${issue.row}-${index}`}>
-                Row {issue.row}: {issue.message}
+                Line {Math.max(1, issue.row - 1)}: {issue.message}
               </li>
             ))}
           </ul>
@@ -444,7 +704,7 @@ export function ReceiptReceivingPage() {
               )}
               {busy === "prepare"
                 ? "Reading receipt…"
-                : "Extract and prepare CSV"}
+                : "Extract receipt with AI"}
             </button>
             {busy === "prepare" && (
               <ReceiptProgressChecklist
@@ -456,17 +716,16 @@ export function ReceiptReceivingPage() {
         </section>
 
         <section
-          className={`settings-main-card receipt-step ${review ? "receipt-step-complete" : ""}`}
+          className={`settings-main-card receipt-step ${draftRows.length ? "receipt-step-complete" : ""}`}
         >
           <div className="receipt-step-number">2</div>
           <div className="receipt-step-content">
             <div className="card-heading receipt-card-heading">
               <div>
-                <h2>Review the CSV</h2>
+                <h2>Review and edit receipt</h2>
                 <p>
-                  Check original text, product suggestions, quantities, lots,
-                  expiry dates, and conversion approvals. Exact matches are
-                  preselected; choose a product for each possible match.
+                  Correct the AI draft here. Nothing changes inventory until you
+                  validate the receipt and confirm it.
                 </p>
               </div>
               {review && <Check size={18} aria-label="Complete" />}
@@ -474,21 +733,20 @@ export function ReceiptReceivingPage() {
             {prepared ? (
               <div className="receipt-prepared-file">
                 <span>
-                  <strong>{prepared.lineCount}</strong> line items prepared
+                  <strong>{draftRows.length}</strong> line items ready to edit
                 </span>
                 <button
                   className="button button-secondary"
                   type="button"
-                  onClick={() => downloadCsv(prepared.csv, prepared.filename)}
+                  onClick={downloadCurrentCsv}
                 >
-                  <ArrowDownToLine size={15} /> Download CSV again
+                  <ArrowDownToLine size={15} /> Download current CSV
                 </button>
               </div>
             ) : (
               <p className="receipt-step-hint">
-                Upload an edited CSV from this receipt or a previous session.
-                You can also validate a test CSV without preparing new receipt
-                pages first.
+                You can also load a receipt CSV from a previous session and
+                continue editing it here.
               </p>
             )}
             <input
@@ -496,7 +754,7 @@ export function ReceiptReceivingPage() {
               className="receipt-file-input"
               type="file"
               accept="text/csv,.csv"
-              onChange={(event) => void reviewEditedCsv(event)}
+              onChange={(event) => void loadEditedCsv(event)}
             />
             <button
               className="button button-secondary receipt-action"
@@ -504,20 +762,512 @@ export function ReceiptReceivingPage() {
               onClick={() => reviewInput.current?.click()}
               disabled={busy !== null}
             >
-              {busy === "review" ? (
-                <LoaderCircle className="receipt-spinner" size={16} />
-              ) : (
-                <FileUp size={16} />
-              )}
+              <FileUp size={16} />
               {busy === "review"
                 ? "Validating CSV…"
-                : "Upload edited CSV for validation"}
+                : "Load receipt CSV into editor"}
             </button>
-            {busy === "review" && (
-              <ReceiptProgressChecklist
-                task="review"
-                activeStep={progressStep}
-              />
+            {prepared && draftRows.length > 0 && (
+              <>
+                <div className="receipt-editor-heading">
+                  <div>
+                    <strong>Edit each receipt line</strong>
+                    <small>
+                      Source text is kept for reference. Update the fields that
+                      will be used to receive stock.
+                    </small>
+                  </div>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={addReceiptLine}
+                    disabled={busy !== null || draftRows.length >= 500}
+                  >
+                    Add missing line
+                  </button>
+                </div>
+                <fieldset
+                  className="receipt-editor-fieldset"
+                  disabled={busy !== null}
+                >
+                  <div className="receipt-line-list">
+                    {draftRows.map((row, index) => {
+                      const isNewProduct = row.matchstatus === "NEW_PRODUCT";
+                      const conversionRecommended =
+                        row.conversionrecommended?.toUpperCase() === "TRUE";
+                      const zeroCost =
+                        row.unitcost.trim() !== "" &&
+                        Number(row.unitcost) === 0;
+                      return (
+                        <article
+                          className="receipt-line-editor"
+                          key={`${row.draftid}-${index}`}
+                        >
+                          <div className="receipt-line-heading">
+                            <div>
+                              <strong>Line {index + 1}</strong>
+                              {conversionRecommended && (
+                                <span className="receipt-ai-badge">
+                                  AI suggests package conversion
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              className="receipt-remove-line"
+                              type="button"
+                              onClick={() => removeReceiptLine(index)}
+                              disabled={busy !== null || draftRows.length <= 1}
+                              aria-label={`Remove line ${index + 1}`}
+                            >
+                              Remove
+                            </button>
+                          </div>
+
+                          <div className="receipt-source-description">
+                            <span>Original receipt text</span>
+                            <p>
+                              {row.originaldescription ||
+                                "Enter the source item text below."}
+                            </p>
+                            {!row.originaldescription && (
+                              <ReceiptField
+                                label="Source item description"
+                                value={row.originaldescription}
+                                onChange={(value) =>
+                                  updateRow(index, {
+                                    originaldescription: value,
+                                  })
+                                }
+                              />
+                            )}
+                            {(row.sourcequantity ||
+                              row.sourceunitcost ||
+                              row.sourcelot ||
+                              row.sourceexpiry) && (
+                              <small className="receipt-source-values">
+                                AI read:{" "}
+                                {row.sourcequantity || "quantity unclear"}
+                                {row.sourceunitcost
+                                  ? ` at ${row.sourceunitcost} per package`
+                                  : ""}
+                                {row.sourcelot ? ` · lot ${row.sourcelot}` : ""}
+                                {row.sourceexpiry
+                                  ? ` · expiry ${row.sourceexpiry}`
+                                  : ""}
+                              </small>
+                            )}
+                          </div>
+
+                          <div className="receipt-edit-grid">
+                            <ReceiptField
+                              label="Product name"
+                              value={row.rearrangedname}
+                              onChange={(value) =>
+                                updateRow(index, { rearrangedname: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Receipt quantity / packages"
+                              type="number"
+                              min="1"
+                              step="1"
+                              value={row.quantity}
+                              onChange={(value) =>
+                                updateRow(index, { quantity: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Unit cost (as purchased)"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={row.unitcost}
+                              onChange={(value) =>
+                                updateRow(index, { unitcost: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Lot code"
+                              value={row.lotcode}
+                              onChange={(value) =>
+                                updateRow(index, { lotcode: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Expiry date"
+                              type={
+                                !row.expirydate ||
+                                /^\d{4}-\d{2}-\d{2}$/u.test(row.expirydate)
+                                  ? "date"
+                                  : "text"
+                              }
+                              placeholder="YYYY-MM-DD"
+                              value={row.expirydate}
+                              onChange={(value) =>
+                                updateRow(index, { expirydate: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Supplier"
+                              value={row.supplier}
+                              onChange={(value) =>
+                                updateRow(index, { supplier: value })
+                              }
+                            />
+                            <ReceiptField
+                              label="Reference"
+                              value={row.reference}
+                              onChange={(value) =>
+                                updateRow(index, { reference: value })
+                              }
+                            />
+                          </div>
+
+                          <div className="receipt-product-section">
+                            <ReceiptSelect
+                              label="Product handling"
+                              value={
+                                isNewProduct
+                                  ? "NEW_PRODUCT"
+                                  : "EXISTING_PRODUCT"
+                              }
+                              onChange={(value) => {
+                                if (value === "NEW_PRODUCT") {
+                                  updateRow(index, {
+                                    matchstatus: "NEW_PRODUCT",
+                                    selectedproductid: "",
+                                    sku: "",
+                                    unit: "",
+                                    sellingprice: "",
+                                    taxclass: "",
+                                    producttype: "",
+                                    trackslots: "FALSE",
+                                  });
+                                } else {
+                                  updateRow(index, {
+                                    matchstatus: "EXACT_MATCH",
+                                    selectedproductid: "",
+                                  });
+                                }
+                              }}
+                              options={[
+                                {
+                                  value: "EXISTING_PRODUCT",
+                                  label: "Use an existing product",
+                                },
+                                {
+                                  value: "NEW_PRODUCT",
+                                  label: "Create a new product",
+                                },
+                              ]}
+                            />
+
+                            {isNewProduct ? (
+                              <div className="receipt-product-setup">
+                                <div className="receipt-edit-grid">
+                                  <ReceiptField
+                                    label="New product SKU (optional)"
+                                    value={row.sku}
+                                    onChange={(value) =>
+                                      updateRow(index, { sku: value })
+                                    }
+                                  />
+                                  <ReceiptField
+                                    label="Sellable unit"
+                                    value={row.unit}
+                                    placeholder="e.g. tablet, bottle"
+                                    onChange={(value) =>
+                                      updateRow(index, { unit: value })
+                                    }
+                                  />
+                                  <ReceiptField
+                                    label="Selling price"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={row.sellingprice}
+                                    onChange={(value) =>
+                                      updateRow(index, { sellingprice: value })
+                                    }
+                                  />
+                                  <ReceiptSelect
+                                    label="Tax class"
+                                    value={row.taxclass.toUpperCase()}
+                                    onChange={(value) =>
+                                      updateRow(index, { taxclass: value })
+                                    }
+                                    options={[
+                                      { value: "", label: "Choose tax class" },
+                                      { value: "VATABLE", label: "Vatable" },
+                                      {
+                                        value: "VAT_EXEMPT",
+                                        label: "VAT exempt",
+                                      },
+                                      {
+                                        value: "ZERO_RATED",
+                                        label: "Zero rated",
+                                      },
+                                    ]}
+                                  />
+                                  <ReceiptSelect
+                                    label="Product type"
+                                    value={row.producttype.toUpperCase()}
+                                    onChange={(value) =>
+                                      updateRow(index, { producttype: value })
+                                    }
+                                    options={[
+                                      {
+                                        value: "",
+                                        label: "Choose product type",
+                                      },
+                                      { value: "GENERIC", label: "Generic" },
+                                      { value: "BRANDED", label: "Branded" },
+                                      {
+                                        value: "NOT_APPLICABLE",
+                                        label: "Not applicable",
+                                      },
+                                    ]}
+                                  />
+                                </div>
+                                <div className="receipt-edit-check-row">
+                                  <ReceiptCheck
+                                    label="Track lot and expiry"
+                                    checked={
+                                      row.trackslots.toUpperCase() === "TRUE"
+                                    }
+                                    onChange={(checked) =>
+                                      updateRow(index, {
+                                        trackslots: checked ? "TRUE" : "FALSE",
+                                      })
+                                    }
+                                  />
+                                  <ReceiptCheck
+                                    label="Senior citizen eligible"
+                                    checked={
+                                      row.issceligible.toUpperCase() === "TRUE"
+                                    }
+                                    onChange={(checked) =>
+                                      updateRow(index, {
+                                        issceligible: checked
+                                          ? "TRUE"
+                                          : "FALSE",
+                                      })
+                                    }
+                                  />
+                                  <ReceiptCheck
+                                    label="PWD eligible"
+                                    checked={
+                                      row.ispwdeligible.toUpperCase() === "TRUE"
+                                    }
+                                    onChange={(checked) =>
+                                      updateRow(index, {
+                                        ispwdeligible: checked
+                                          ? "TRUE"
+                                          : "FALSE",
+                                      })
+                                    }
+                                  />
+                                  <ReceiptCheck
+                                    label="BNPC eligible"
+                                    checked={
+                                      row.bnpceligible.toUpperCase() === "TRUE"
+                                    }
+                                    onChange={(checked) =>
+                                      updateRow(index, {
+                                        bnpceligible: checked
+                                          ? "TRUE"
+                                          : "FALSE",
+                                        ...(checked
+                                          ? {}
+                                          : { bnpccategory: "" }),
+                                      })
+                                    }
+                                  />
+                                </div>
+                                {row.bnpceligible.toUpperCase() === "TRUE" && (
+                                  <ReceiptSelect
+                                    label="BNPC category"
+                                    value={row.bnpccategory.toUpperCase()}
+                                    onChange={(value) =>
+                                      updateRow(index, { bnpccategory: value })
+                                    }
+                                    options={[
+                                      {
+                                        value: "",
+                                        label: "Choose BNPC category",
+                                      },
+                                      {
+                                        value: "BASIC_NECESSITY",
+                                        label: "Basic necessity",
+                                      },
+                                      {
+                                        value: "PRIME_COMMODITY",
+                                        label: "Prime commodity",
+                                      },
+                                    ]}
+                                  />
+                                )}
+                              </div>
+                            ) : (
+                              <div className="receipt-existing-product">
+                                <div>
+                                  <strong>
+                                    {row.selectedproductid
+                                      ? row.rearrangedname || row.sku
+                                      : "No catalog product selected"}
+                                  </strong>
+                                  <small>
+                                    {row.selectedproductid
+                                      ? `${row.sku || "No SKU"} · ${row.unit || "unit not set"}`
+                                      : row.suggestedproductsku
+                                        ? `AI suggestion: ${row.suggestedproductname} (${row.suggestedproductsku})`
+                                        : "Search the active catalog and select the matching product."}
+                                  </small>
+                                </div>
+                                <button
+                                  className="button button-secondary"
+                                  type="button"
+                                  onClick={() => openProductChooser(index)}
+                                  disabled={busy !== null}
+                                >
+                                  {row.selectedproductid
+                                    ? "Change product"
+                                    : "Choose product"}
+                                </button>
+                                {productChooserRow === index && (
+                                  <div className="receipt-product-picker">
+                                    <label className="receipt-edit-field">
+                                      <span>Search active products</span>
+                                      <input
+                                        autoFocus
+                                        value={productSearch}
+                                        onChange={(event) =>
+                                          changeProductSearch(
+                                            event.currentTarget.value,
+                                          )
+                                        }
+                                        placeholder="Search by product name or SKU"
+                                      />
+                                    </label>
+                                    {searchingProducts && (
+                                      <small>Searching catalog…</small>
+                                    )}
+                                    {productSearchError && (
+                                      <small className="receipt-picker-error">
+                                        {productSearchError}
+                                      </small>
+                                    )}
+                                    {!searchingProducts &&
+                                      productSearch.trim().length >= 2 &&
+                                      productOptions.length === 0 &&
+                                      !productSearchError && (
+                                        <small>
+                                          No active products matched.
+                                        </small>
+                                      )}
+                                    {productSearch.trim().length >= 2 &&
+                                      productOptions.length > 0 && (
+                                        <ul>
+                                          {productOptions.map((product) => (
+                                            <li key={product.id}>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  chooseProduct(index, product)
+                                                }
+                                              >
+                                                <strong>{product.name}</strong>
+                                                <small>
+                                                  {product.sku} · {product.unit}
+                                                  {product.tracksLots
+                                                    ? " · lot tracked"
+                                                    : ""}
+                                                </small>
+                                              </button>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    <button
+                                      className="receipt-picker-close"
+                                      type="button"
+                                      onClick={closeProductChooser}
+                                    >
+                                      Close search
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="receipt-conversion-panel">
+                            <div>
+                              <strong>Package conversion</strong>
+                              <small>
+                                {conversionRecommended
+                                  ? `AI suggests this conversion (${row.conversionconfidence || "LOW"} confidence). ${row.conversionreason || "Review the package before approving."}`
+                                  : "Leave conversion off to receive the quantity as printed."}
+                              </small>
+                            </div>
+                            <ReceiptField
+                              label="Units per package"
+                              type="number"
+                              min="2"
+                              step="1"
+                              value={row.unitsperpackage}
+                              onChange={(value) =>
+                                updateRow(index, { unitsperpackage: value })
+                              }
+                            />
+                            <ReceiptCheck
+                              label="Convert packages into sellable units"
+                              checked={
+                                row.conversionapproved.toUpperCase() === "TRUE"
+                              }
+                              onChange={(checked) =>
+                                updateRow(index, {
+                                  conversionapproved: checked
+                                    ? "TRUE"
+                                    : "FALSE",
+                                })
+                              }
+                            />
+                          </div>
+                          {zeroCost && (
+                            <ReceiptField
+                              label="Reason for zero cost"
+                              value={row.zerocostreason}
+                              onChange={(value) =>
+                                updateRow(index, { zerocostreason: value })
+                              }
+                            />
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+                <button
+                  className="button button-primary receipt-action"
+                  type="button"
+                  onClick={() => void validateDraft()}
+                  disabled={busy !== null || draftRows.length === 0}
+                >
+                  {busy === "review" ? (
+                    <LoaderCircle className="receipt-spinner" size={16} />
+                  ) : (
+                    <Check size={16} />
+                  )}
+                  {busy === "review" ? "Checking receipt…" : "Validate receipt"}
+                </button>
+                {busy === "review" && (
+                  <ReceiptProgressChecklist
+                    task="review"
+                    activeStep={progressStep}
+                  />
+                )}
+              </>
             )}
             {review && (
               <div className="receipt-review-summary">
@@ -584,15 +1334,14 @@ export function ReceiptReceivingPage() {
       </div>
 
       <section className="receipt-safety-note">
-        <strong>Review rules</strong>
+        <strong>Review before receiving</strong>
         <p>
-          AI matches are suggestions only. For a new product, complete its
-          sellable unit, sale price, tax class, and product type in the CSV. To
-          for every suggested conversion, set conversionApproved to TRUE to
-          convert or FALSE to keep the package quantity. Check the package count
-          and factor; the POS calculates exact per-unit cost and converts only
-          to a discrete sellable unit. Birth-control products are blocked.
-          Unreadable fields stay blank.
+          AI product matches and package conversions are suggestions. Confirm
+          the catalog item, quantity, unit cost, lot, expiry, and new product
+          details before validating. Approved package conversions must use an
+          exact sellable unit cost; conversions for birth-control products are
+          blocked. Stock is recorded only after you confirm the validated
+          receipt.
         </p>
       </section>
     </section>
