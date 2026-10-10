@@ -464,6 +464,8 @@ function boolValue(
 const separableUnits = new Set([
   "piece",
   "pieces",
+  "pc",
+  "pcs",
   "tablet",
   "tablets",
   "tab",
@@ -759,7 +761,10 @@ function parseReviewedCsv(
           row: row.row,
           message: "Lot-tracked products require a lot code and expiry date.",
         });
-      else if (expiryDate < manilaCalendarDate())
+      else if (
+        validCalendarDate(expiryDate) &&
+        expiryDate < manilaCalendarDate()
+      )
         rowErrors.push({
           row: row.row,
           message: "Expired stock cannot be received.",

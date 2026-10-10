@@ -340,6 +340,65 @@ describe("AI-assisted receipt receiving", () => {
     expect(db.pragma("foreign_key_check")).toEqual([]);
   });
 
+  it("accepts PCS conversions and avoids calling malformed expiry dates expired", async () => {
+    const product = await createProduct({ unit: "PCS" });
+    mockMixRoute({ productId: product.id });
+    const draft = await owner
+      .post("/api/stock/receipts/ai-draft")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        files: [
+          {
+            name: "receipt.pdf",
+            mimeType: "application/pdf",
+            dataBase64: pdfBase64,
+          },
+        ],
+      });
+
+    expect(draft.status).toBe(200);
+    const invalidExpiryCsv = editDraftCsv(draft.body.csv as string, {
+      conversionapproved: "TRUE",
+      expirydate: "12/31/2030",
+    });
+    const invalidExpiry = await owner
+      .post("/api/stock/receipts/ai-review")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(invalidExpiryCsv);
+
+    expect(invalidExpiry.status).toBe(400);
+    expect(invalidExpiry.body.rowErrors).toContainEqual({
+      row: 2,
+      message: "Expiry date must use YYYY-MM-DD.",
+    });
+    expect(invalidExpiry.body.rowErrors).not.toContainEqual({
+      row: 2,
+      message: "Expired stock cannot be received.",
+    });
+    expect(invalidExpiry.body.rowErrors).not.toContainEqual({
+      row: 2,
+      message:
+        "Conversions require a separable POS unit and are blocked for birth-control products.",
+    });
+
+    const validCsv = editDraftCsv(draft.body.csv as string, {
+      conversionapproved: "TRUE",
+      expirydate: "2030-12-31",
+    });
+    const reviewed = await owner
+      .post("/api/stock/receipts/ai-review")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(validCsv);
+
+    expect(reviewed.status).toBe(200);
+    expect(reviewed.body).toMatchObject({
+      conversions: 1,
+      lines: [{ quantity: 20, unitCost: "10.00", conversionFactor: 10 }],
+    });
+  });
+
   it("shows a possible match SKU without preselecting it until the owner confirms", async () => {
     const product = await createProduct();
     mockMixRoute({ status: "POSSIBLE_MATCH", productId: product.id });
