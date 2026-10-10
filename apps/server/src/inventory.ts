@@ -1474,17 +1474,6 @@ export function registerInventoryRoutes(
             throw error;
           }
         }
-        if (input.unit && input.unit !== current.unit) {
-          const history = db
-            .prepare("SELECT 1 FROM stock_events WHERE product_id = ? LIMIT 1")
-            .get(current.id);
-          if (current.quantity_on_hand > 0 || history) {
-            rowErrors.push({
-              row: row.row,
-              message: "unit_locked_after_stock_history",
-            });
-          }
-        }
         if (input.tracksLots === false && current.tracks_lots === 1) {
           const activeLot = db
             .prepare(
@@ -3056,14 +3045,6 @@ function applyProductUpdate(
   now: string,
 ): ProductRow {
   productFromBody(db, input);
-  if (input.unit && input.unit !== current.unit) {
-    const history = db
-      .prepare("SELECT 1 FROM stock_events WHERE product_id = ? LIMIT 1")
-      .get(current.id);
-    if (current.quantity_on_hand > 0 || history) {
-      throw new InventoryError(409, "unit_locked_after_stock_history");
-    }
-  }
   const changes: Record<string, string | number | boolean | null> = {};
   if (input.name !== undefined && input.name !== current.name) {
     changes.name = input.name;

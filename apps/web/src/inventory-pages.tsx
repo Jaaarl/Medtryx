@@ -270,8 +270,6 @@ function errorMessage(error: unknown): string {
       "A sold lot is expired or quarantined. Use the write-off treatment.",
     lot_return_verification_required:
       "Confirm that the returned items match their saved lots before restocking.",
-    unit_locked_after_stock_history:
-      "A product unit cannot change after stock history exists.",
     inventory_value_overflow:
       "The resulting stock value is outside the supported range.",
     tax_policy_not_approved:
@@ -1523,7 +1521,7 @@ export function ProductsPage() {
           <h2>{editing ? "Edit product" : "Add a product"}</h2>
           <p>
             {editing
-              ? "Changes apply to future sales; past records stay unchanged."
+              ? "Unit changes relabel the current stock count; they do not convert quantity, price, or costs. Past sales keep their saved unit."
               : "Set a single selling price and optional opening stock."}
           </p>
           <form

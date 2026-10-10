@@ -1253,7 +1253,7 @@ describe("owner catalog and stock operations", () => {
     expect(result.body.products[0]).not.toHaveProperty("inventoryValue");
   });
 
-  it("keeps units fixed after stock history, blocks unapproved zero-rated items, and lists low stock", async () => {
+  it("allows unit edits after stock history, blocks unapproved zero-rated items, and lists low stock", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const created = await createOpeningProduct(owner);
     activeProductId = created.body.product.id as string;
@@ -1262,8 +1262,11 @@ describe("owner catalog and stock operations", () => {
       .patch(`/api/products/${activeProductId}`)
       .set("x-csrf-token", token)
       .send({ unit: "box" });
-    expect(unitChange.status).toBe(409);
-    expect(unitChange.body.error).toBe("unit_locked_after_stock_history");
+    expect(unitChange.status).toBe(200);
+    expect(unitChange.body.product.unit).toBe("box");
+    expect(unitChange.body.product.quantityOnHand).toBe(
+      created.body.product.quantityOnHand,
+    );
 
     const zeroRated = await createOpeningProduct(owner, {
       sku: "SYN-ZERO-001",
