@@ -43,7 +43,7 @@ try {
     const emailValue = parsed.data.email.trim().toLowerCase();
     db.transaction(() => {
       db.prepare(
-        "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'owner', 1, ?, ?, ?)",
+        "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 'owner', 1, ?, ?)",
       ).run(id, emailValue, usernameValue, passwordHash, now, now);
       writeAuditEvent(db, {
         actorUserId: id,
