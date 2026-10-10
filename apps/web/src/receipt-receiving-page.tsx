@@ -33,6 +33,75 @@ type ImportResult = {
   createdProducts: Array<{ id: string; sku: string; name: string }>;
 };
 type RowIssue = { row: number; message: string };
+type ReceiptTask = "prepare" | "review" | "import";
+
+const receiptProgressSteps: Record<ReceiptTask, string[]> = {
+  prepare: [
+    "Prepare selected pages for upload",
+    "AI extracts receipt lines and matches catalog products",
+    "Build the editable review CSV",
+  ],
+  review: [
+    "Read the edited CSV",
+    "Check products, quantities, conversions, lots, and expiry dates",
+    "Prepare the receipt preview",
+  ],
+  import: [
+    "CSV passed review",
+    "Recheck the CSV and record stock and lot movements",
+    "Save receipt history and show the result",
+  ],
+};
+
+function ReceiptProgressChecklist({
+  task,
+  activeStep,
+}: {
+  task: ReceiptTask;
+  activeStep: number;
+}) {
+  return (
+    <div
+      className="receipt-progress"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <strong>What’s happening now</strong>
+      <ul>
+        {receiptProgressSteps[task].map((label, index) => {
+          const state =
+            index < activeStep
+              ? "complete"
+              : index === activeStep
+                ? "active"
+                : "pending";
+          return (
+            <li
+              className={`receipt-progress-item receipt-progress-${state}`}
+              key={label}
+            >
+              <span className="receipt-progress-marker" aria-hidden="true">
+                {state === "complete" ? (
+                  <Check size={13} />
+                ) : state === "active" ? (
+                  <LoaderCircle className="receipt-spinner" size={13} />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <span>{label}</span>
+              {state === "active" && (
+                <span className="receipt-progress-current">In progress</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <small>Keep this page open while processing finishes.</small>
+    </div>
+  );
+}
 
 const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
 
@@ -133,6 +202,7 @@ export function ReceiptReceivingPage() {
   const [busy, setBusy] = useState<"prepare" | "review" | "import" | null>(
     null,
   );
+  const [progressStep, setProgressStep] = useState(0);
 
   function chooseReceiptFiles(event: ChangeEvent<HTMLInputElement>) {
     const chosen = Array.from(event.currentTarget.files ?? []);
@@ -165,27 +235,30 @@ export function ReceiptReceivingPage() {
   async function prepareReceipt() {
     if (!files.length || busy) return;
     setBusy("prepare");
+    setProgressStep(0);
     setError("");
     setIssues([]);
     try {
+      const uploadFiles = await Promise.all(
+        files.map(async (file) => ({
+          name: file.name,
+          mimeType: fileMimeType(file),
+          dataBase64: await base64File(file),
+        })),
+      );
+      setProgressStep(1);
       const response = await api.post<PreparedReceipt>(
         "/stock/receipts/ai-draft",
-        {
-          files: await Promise.all(
-            files.map(async (file) => ({
-              name: file.name,
-              mimeType: fileMimeType(file),
-              dataBase64: await base64File(file),
-            })),
-          ),
-        },
+        { files: uploadFiles },
       );
+      setProgressStep(2);
       setPrepared(response);
       downloadCsv(response.csv, response.filename);
     } catch (requestError) {
       setError(errorText(requestError));
     } finally {
       setBusy(null);
+      setProgressStep(0);
     }
   }
 
@@ -198,25 +271,30 @@ export function ReceiptReceivingPage() {
     setReview(null);
     setImported(null);
     setBusy("review");
+    setProgressStep(0);
     try {
       const csv = await file.text();
       setReviewCsv(csv);
+      setProgressStep(1);
       const response = await api.postCsv<ReviewResult>(
         "/stock/receipts/ai-review",
         csv,
       );
+      setProgressStep(2);
       setReview(response);
     } catch (requestError) {
       setError(errorText(requestError));
       setIssues(rowIssues(requestError));
     } finally {
       setBusy(null);
+      setProgressStep(0);
     }
   }
 
   async function importReviewedCsv() {
     if (!review || !reviewCsv || busy) return;
     setBusy("import");
+    setProgressStep(1);
     setError("");
     setIssues([]);
     try {
@@ -227,11 +305,13 @@ export function ReceiptReceivingPage() {
       setImported(result);
       setReview(null);
       setReviewCsv("");
+      setProgressStep(2);
     } catch (requestError) {
       setError(errorText(requestError));
       setIssues(rowIssues(requestError));
     } finally {
       setBusy(null);
+      setProgressStep(0);
     }
   }
 
@@ -366,6 +446,12 @@ export function ReceiptReceivingPage() {
                 ? "Reading receipt…"
                 : "Extract and prepare CSV"}
             </button>
+            {busy === "prepare" && (
+              <ReceiptProgressChecklist
+                task="prepare"
+                activeStep={progressStep}
+              />
+            )}
           </div>
         </section>
 
@@ -400,8 +486,9 @@ export function ReceiptReceivingPage() {
               </div>
             ) : (
               <p className="receipt-step-hint">
-                Prepare a receipt first. The CSV download will open after
-                extraction.
+                Upload an edited CSV from this receipt or a previous session.
+                You can also validate a test CSV without preparing new receipt
+                pages first.
               </p>
             )}
             <input
@@ -415,7 +502,7 @@ export function ReceiptReceivingPage() {
               className="button button-secondary receipt-action"
               type="button"
               onClick={() => reviewInput.current?.click()}
-              disabled={!prepared || busy !== null}
+              disabled={busy !== null}
             >
               {busy === "review" ? (
                 <LoaderCircle className="receipt-spinner" size={16} />
@@ -426,6 +513,12 @@ export function ReceiptReceivingPage() {
                 ? "Validating CSV…"
                 : "Upload edited CSV for validation"}
             </button>
+            {busy === "review" && (
+              <ReceiptProgressChecklist
+                task="review"
+                activeStep={progressStep}
+              />
+            )}
             {review && (
               <div className="receipt-review-summary">
                 <strong>Ready for confirmation</strong>
@@ -478,6 +571,12 @@ export function ReceiptReceivingPage() {
                     ? "Recording stock…"
                     : "Confirm and receive stock"}
                 </button>
+                {busy === "import" && (
+                  <ReceiptProgressChecklist
+                    task="import"
+                    activeStep={progressStep}
+                  />
+                )}
               </div>
             )}
           </div>

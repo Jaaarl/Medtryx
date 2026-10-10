@@ -790,6 +790,66 @@ a {
 .receipt-action {
   margin-top: 14px;
 }
+.receipt-progress {
+  background: #f6faf7;
+  border: 1px solid #dce9e2;
+  border-radius: 8px;
+  color: #52695e;
+  font-size: 11px;
+  margin-top: 12px;
+  padding: 12px;
+}
+.receipt-progress > strong {
+  color: #2f5549;
+  display: block;
+  font-size: 12px;
+}
+.receipt-progress ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+}
+.receipt-progress-item {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  line-height: 1.4;
+}
+.receipt-progress-marker {
+  align-items: center;
+  background: #edf1ef;
+  border-radius: 50%;
+  color: #82908a;
+  display: inline-flex;
+  font-size: 10px;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+.receipt-progress-complete .receipt-progress-marker {
+  background: #e4f2e9;
+  color: #28705e;
+}
+.receipt-progress-active .receipt-progress-marker {
+  background: #e8f1ec;
+  color: #28705e;
+}
+.receipt-progress-pending {
+  color: #84928c;
+}
+.receipt-progress-current {
+  color: #28705e;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.receipt-progress > small {
+  color: #84928c;
+  font-size: 10px;
+}
 .receipt-prepared-file {
   background: #f5f8f6;
   border: 1px solid #e9efec;
