@@ -846,6 +846,14 @@ a {
   font-weight: 700;
   white-space: nowrap;
 }
+.receipt-progress .receipt-progress-details {
+  display: grid;
+  gap: 4px;
+  grid-column: 2 / -1;
+  list-style: disc;
+  margin: 1px 0 2px;
+  padding-left: 16px;
+}
 .receipt-progress > small {
   color: #84928c;
   font-size: 10px;

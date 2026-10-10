@@ -48,7 +48,7 @@ type ProductOption = {
 const receiptProgressSteps: Record<ReceiptTask, string[]> = {
   prepare: [
     "Prepare selected pages for upload",
-    "AI extracts receipt lines and matches catalog products",
+    "AI extracts and transforms receipt details, then matches products",
     "Build an editable receipt draft",
   ],
   review: [
@@ -62,6 +62,12 @@ const receiptProgressSteps: Record<ReceiptTask, string[]> = {
     "Save receipt history and show the result",
   ],
 };
+
+const receiptPreparationDetails = [
+  "Extract supplier, reference, item descriptions, quantities, costs, lot codes, and expiry dates",
+  "Normalize package quantities and unit costs; format clear expiry dates",
+  "Reorder medicine names and match each line against the product catalog",
+];
 
 function ReceiptProgressChecklist({
   task,
@@ -103,6 +109,13 @@ function ReceiptProgressChecklist({
               <span>{label}</span>
               {state === "active" && (
                 <span className="receipt-progress-current">In progress</span>
+              )}
+              {task === "prepare" && state === "active" && (
+                <ul className="receipt-progress-details">
+                  {receiptPreparationDetails.map((detail) => (
+                    <li key={detail}>{detail}</li>
+                  ))}
+                </ul>
               )}
             </li>
           );
