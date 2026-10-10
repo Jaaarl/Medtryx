@@ -23,6 +23,7 @@ const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 20;
 const MAX_RECEIPT_ROWS = 500;
 const MAX_STOCK_QUANTITY = 1_000_000;
+const RECEIPT_AI_TIMEOUT_MS = 10 * 60 * 1000;
 const MONEY_PATTERN = /^\d{1,7}(?:\.\d{1,2})?$/u;
 
 const csvHeaders = [
@@ -244,6 +245,7 @@ async function callGeminiJson<T>(
   apiKey: string,
   prompt: string,
   schema: z.ZodType<T>,
+  signal: AbortSignal,
   files: Array<{ mimeType: string; dataBase64: string; name: string }> = [],
   responseErrorCode = "mixroute_response_invalid",
 ): Promise<T> {
@@ -269,14 +271,20 @@ async function callGeminiJson<T>(
           responseMimeType: "application/json",
         },
       }),
-      signal: AbortSignal.timeout(90_000),
+      signal,
     },
   ).catch(() => {
+    if (signal.aborted)
+      throw new ReceiptWorkflowError(504, "receipt_ai_timeout");
     throw new ReceiptWorkflowError(502, "mixroute_unavailable");
   });
   if (!response.ok)
     throw new ReceiptWorkflowError(502, "mixroute_request_failed");
-  const payload = (await response.json().catch(() => null)) as {
+  const payload = (await response.json().catch(() => {
+    if (signal.aborted)
+      throw new ReceiptWorkflowError(504, "receipt_ai_timeout");
+    return null;
+  })) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   } | null;
   const text = payload?.candidates?.[0]?.content?.parts
@@ -293,6 +301,7 @@ async function callDeepSeekJson<T>(
   apiKey: string,
   prompt: string,
   schema: z.ZodType<T>,
+  signal: AbortSignal,
   responseErrorCode = "mixroute_response_invalid",
 ): Promise<T> {
   const response = await fetch("https://api.mixroute.ai/v1/chat/completions", {
@@ -314,13 +323,19 @@ async function callDeepSeekJson<T>(
         { role: "user", content: prompt },
       ],
     }),
-    signal: AbortSignal.timeout(90_000),
+    signal,
   }).catch(() => {
+    if (signal.aborted)
+      throw new ReceiptWorkflowError(504, "receipt_ai_timeout");
     throw new ReceiptWorkflowError(502, "mixroute_unavailable");
   });
   if (!response.ok)
     throw new ReceiptWorkflowError(502, "mixroute_request_failed");
-  const payload = (await response.json().catch(() => null)) as {
+  const payload = (await response.json().catch(() => {
+    if (signal.aborted)
+      throw new ReceiptWorkflowError(504, "receipt_ai_timeout");
+    return null;
+  })) as {
     choices?: Array<{ message?: { content?: string | null } }>;
   } | null;
   const content = payload?.choices?.[0]?.message?.content;
@@ -890,11 +905,15 @@ async function makeDraftCsv(
   db: Database.Database,
   apiKey: string,
   files: Array<{ mimeType: string; dataBase64: string; name: string }>,
+  onProgress: (step: number) => void = () => {},
 ): Promise<{ csv: string; lineCount: number }> {
+  const signal = AbortSignal.timeout(RECEIPT_AI_TIMEOUT_MS);
+  onProgress(1);
   const extraction = await callGeminiJson(
     apiKey,
     receiptDocumentPrompt(),
     extractionSchema,
+    signal,
     files,
     "receipt_extraction_invalid",
   );
@@ -906,10 +925,12 @@ async function makeDraftCsv(
     row: index + 1,
     ...item,
   }));
+  onProgress(2);
   const preparation = await callGeminiJson(
     apiKey,
     `Prepare these extracted receipt rows for CSV review. Do not remove or rewrite description text. Parse package count, unit cost per purchased package, lot code, and expiry date only when clear. Normalize a clear expiry to YYYY-MM-DD. Suggest a unitsPerPackage conversion only when the medicine is clearly separable into the POS unit; birth-control pill packs and other uncertain packaging must not be recommended for piece conversion. A recommendation is still only a suggestion and will require explicit owner approval. Never identify brands or active ingredients that are not in the source text. Return JSON: {"items":[{"row":1,"quantity":"","unitCost":"","lotCode":"","expiryDate":"","unitsPerPackage":null,"conversionRecommended":false,"conversionConfidence":"LOW","conversionReason":""}]}. One result for every row, in row order. Source rows: ${JSON.stringify(sourceLines)}`,
     preparationSchema,
+    signal,
     [],
     "receipt_normalization_invalid",
   );
@@ -918,10 +939,12 @@ async function makeDraftCsv(
   const preparedByRow = new Map(
     preparation.items.map((item) => [item.row, item]),
   );
+  onProgress(3);
   const formattedRows = await callDeepSeekJson(
     apiKey,
     `Rearrange each medicine name so a brand that is actually present comes first, followed by its generic/API text. Preserve every other detail exactly, including strength, dosage form, manufacturer, packaging and supplier codes. Do not invent brands or APIs. If no clear rearrangement exists, keep the source description unchanged. Return {"items":[{"row":1,"name":""}]} for every row. Rows: ${JSON.stringify(sourceLines)}`,
     rearrangedSchema,
+    signal,
     "receipt_product_names_invalid",
   );
   if (formattedRows.items.length !== sourceLines.length)
@@ -953,10 +976,12 @@ async function makeDraftCsv(
       ),
     };
   });
+  onProgress(4);
   const duplicates = await callDeepSeekJson(
     apiKey,
     `Compare every receipt row against only the listed SQLite catalog candidates. Label a row EXACT_MATCH only when the same product is clearly identified; use POSSIBLE_MATCH for similarity or uncertainty; otherwise use NEW_PRODUCT. When a candidate is relevant, return its exact listed id as suggestedProductId. Never choose a product absent from that row's candidates. The application preselects only valid active EXACT_MATCH candidates; possible matches remain suggestions for the owner to select. Return {"items":[{"row":1,"status":"POSSIBLE_MATCH","suggestedProductId":null}]} for every row. Rows and candidates: ${JSON.stringify(itemsForMatching)}`,
     duplicateSchema,
+    signal,
     "receipt_catalog_matching_invalid",
   );
   if (duplicates.items.length !== sourceLines.length)
@@ -966,6 +991,7 @@ async function makeDraftCsv(
   );
   const productById = new Map(products.map((product) => [product.id, product]));
 
+  onProgress(5);
   const outputRows = sourceLines.map((source) => {
     const prepared: PreparedLine | undefined = preparedByRow.get(source.row);
     const rearrangedName = formattedByRow.get(source.row) || source.description;
@@ -1053,6 +1079,63 @@ export function registerAiReceiptRoutes(
   const requireOwner = requireRole("owner");
   const csrf = (req: Request, res: Response, next: NextFunction) =>
     requireCsrf(db, req, res, next);
+
+  router.post(
+    "/ai-draft-stream",
+    requireAuth,
+    requireOwner,
+    csrf,
+    express.json({ limit: "26mb", strict: true }),
+    async (req, res): Promise<void> => {
+      const parsed = uploadSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "receipt_upload_invalid" });
+        return;
+      }
+      try {
+        const files = validateUploadedFiles(parsed.data.files);
+        const apiKey = readApiKey();
+        const writeEvent = (event: string, data: unknown) => {
+          if (!res.destroyed && !res.writableEnded)
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+        res.status(200);
+        res.set({
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+        res.flushHeaders();
+        const keepAlive = setInterval(() => {
+          if (!res.destroyed && !res.writableEnded)
+            res.write(": keep-alive\n\n");
+        }, 15_000);
+        try {
+          const result = await makeDraftCsv(db, apiKey, files, (step) =>
+            writeEvent("progress", { step }),
+          );
+          writeEvent("complete", {
+            ...result,
+            filename: "receipt-review.csv",
+          });
+        } catch (error) {
+          const code =
+            error instanceof ReceiptWorkflowError
+              ? error.code
+              : "receipt_processing_failed";
+          if (!(error instanceof ReceiptWorkflowError))
+            console.error("AI receipt draft stream failed", error);
+          writeEvent("error", { error: code });
+        } finally {
+          clearInterval(keepAlive);
+          res.end();
+        }
+      } catch (error) {
+        if (!sendWorkflowError(error, res)) throw error;
+      }
+    },
+  );
 
   router.post(
     "/ai-draft",

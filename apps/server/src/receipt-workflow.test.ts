@@ -257,6 +257,31 @@ describe("AI-assisted receipt receiving", () => {
     expect(response.body).toEqual({ error: "receipt_extraction_invalid" });
   });
 
+  it("streams progress for each receipt AI call in order", async () => {
+    mockMixRoute({ status: "NEW_PRODUCT" });
+    const response = await owner
+      .post("/api/stock/receipts/ai-draft-stream")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        files: [
+          {
+            name: "receipt.pdf",
+            mimeType: "application/pdf",
+            dataBase64: pdfBase64,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/event-stream");
+    const steps = [
+      ...response.text.matchAll(/event: progress\ndata: \{"step":(\d+)\}/gu),
+    ].map((match) => Number(match[1]));
+    expect(steps).toEqual([1, 2, 3, 4, 5]);
+    expect(response.text).toContain("event: complete");
+    expect(response.text).toContain('"filename":"receipt-review.csv"');
+  });
+
   it("preselects an exact match and receives approved per-tablet stock with immutable receipt evidence", async () => {
     const product = await createProduct();
     mockMixRoute({ productId: product.id });

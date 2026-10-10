@@ -50,7 +50,10 @@ type ProductOption = {
 const receiptProgressSteps: Record<ReceiptTask, string[]> = {
   prepare: [
     "Prepare selected pages for upload",
-    "AI extracts and transforms receipt details, then matches products",
+    "AI extracts supplier, reference, and receipt lines",
+    "AI normalizes quantities, package costs, lots, and expiry dates",
+    "AI formats product names from the receipt text",
+    "AI matches receipt lines against the product catalog",
     "Build an editable receipt draft",
   ],
   review: [
@@ -64,12 +67,6 @@ const receiptProgressSteps: Record<ReceiptTask, string[]> = {
     "Save receipt history and show the result",
   ],
 };
-
-const receiptPreparationDetails = [
-  "Extract supplier, reference, item descriptions, quantities, costs, lot codes, and expiry dates",
-  "Normalize package quantities and unit costs; format clear expiry dates",
-  "Reorder medicine names and match each line against the product catalog",
-];
 
 function ReceiptProgressChecklist({
   task,
@@ -111,13 +108,6 @@ function ReceiptProgressChecklist({
               <span>{label}</span>
               {state === "active" && (
                 <span className="receipt-progress-current">In progress</span>
-              )}
-              {task === "prepare" && state === "active" && (
-                <ul className="receipt-progress-details">
-                  {receiptPreparationDetails.map((detail) => (
-                    <li key={detail}>{detail}</li>
-                  ))}
-                </ul>
               )}
             </li>
           );
@@ -263,6 +253,14 @@ function errorText(error: unknown): string {
       "MixRoute rejected a model request. Check the API key, account credits, and model access.",
     mixroute_response_invalid:
       "The AI returned an incomplete response. Try again, or split the receipt into fewer pages.",
+    receipt_ai_timeout:
+      "Receipt AI processing reached its 10-minute limit. Try splitting the receipt into fewer pages.",
+    receipt_processing_failed:
+      "Receipt processing stopped unexpectedly. Try again, or split the receipt into fewer pages.",
+    receipt_stream_incomplete:
+      "The connection ended before receipt processing finished. Check your connection and try again.",
+    receipt_stream_invalid:
+      "Receipt processing returned an unreadable progress response. Try again.",
     receipt_extraction_invalid:
       "Receipt reading failed: AI could not return supplier and item details in the expected format. Check scan clarity or try one page at a time.",
     receipt_normalization_invalid:
@@ -472,12 +470,12 @@ export function ReceiptReceivingPage() {
           dataBase64: await base64File(file),
         })),
       );
-      setProgressStep(1);
-      const response = await api.post<AiDraftResponse>(
-        "/stock/receipts/ai-draft",
+      const response = await api.postEventStream<AiDraftResponse>(
+        "/stock/receipts/ai-draft-stream",
         { files: uploadFiles },
+        setProgressStep,
       );
-      setProgressStep(2);
+      setProgressStep(6);
       loadCsvIntoEditor(response.csv, response.filename);
     } catch (requestError) {
       setError(errorText(requestError));

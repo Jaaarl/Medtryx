@@ -36,22 +36,55 @@ test("owner sees specific AI receipt preparation activity while it loads", async
   page,
 }) => {
   await signInAsOwner(page);
+  const draftResponse = {
+    csv: [
+      "originaldescription,draftid,rearrangedname,quantity,unitcost,matchstatus,selectedproductid,conversionapproved",
+      `${JSON.stringify("Example item")},${randomUUID()},${JSON.stringify("Example item")},1,10.00,NEW_PRODUCT,,FALSE`,
+    ].join("\r\n"),
+    filename: "receipt-review.csv",
+    lineCount: 1,
+  };
+  await page.addInitScript((completePayload) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (!String(input).includes("/api/stock/receipts/ai-draft-stream"))
+        return originalFetch(input, init);
+      const encoder = new TextEncoder();
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              let step = 1;
+              const send = () => {
+                if (step <= 5) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: progress\ndata: ${JSON.stringify({ step })}\n\n`,
+                    ),
+                  );
+                  step += 1;
+                  window.setTimeout(send, 250);
+                } else {
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: complete\ndata: ${JSON.stringify(completePayload)}\n\n`,
+                    ),
+                  );
+                  controller.close();
+                }
+              };
+              send();
+            },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream; charset=utf-8" },
+          },
+        ),
+      );
+    };
+  }, draftResponse);
   await page.goto("/receipt-receiving");
-  await page.route("**/api/stock/receipts/ai-draft", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        csv: [
-          "originaldescription,draftid,rearrangedname,quantity,unitcost,matchstatus,selectedproductid,conversionapproved",
-          `${JSON.stringify("Example item")},${randomUUID()},${JSON.stringify("Example item")},1,10.00,NEW_PRODUCT,,FALSE`,
-        ].join("\r\n"),
-        filename: "receipt-review.csv",
-        lineCount: 1,
-      }),
-    });
-  });
 
   await page.locator('input[type="file"][accept*="image/png"]').setInputFiles({
     name: "receipt.png",
@@ -61,18 +94,20 @@ test("owner sees specific AI receipt preparation activity while it loads", async
   await page.getByRole("button", { name: "Extract receipt with AI" }).click();
 
   const progress = page.getByRole("status");
-  await expect(progress).toContainText(
-    "AI extracts and transforms receipt details, then matches products",
+  const activeStep = progress.locator(".receipt-progress-active");
+  await expect(activeStep).toContainText(
+    "AI extracts supplier, reference, and receipt lines",
   );
-  await expect(progress).toContainText(
-    "Extract supplier, reference, item descriptions, quantities, costs, lot codes, and expiry dates",
+  await expect(activeStep).toContainText(
+    "AI normalizes quantities, package costs, lots, and expiry dates",
   );
-  await expect(progress).toContainText(
-    "Normalize package quantities and unit costs; format clear expiry dates",
+  await expect(activeStep).toContainText(
+    "AI formats product names from the receipt text",
   );
-  await expect(progress).toContainText(
-    "Reorder medicine names and match each line against the product catalog",
+  await expect(activeStep).toContainText(
+    "AI matches receipt lines against the product catalog",
   );
+  await expect(activeStep).toContainText("Build an editable receipt draft");
   await expect(page.getByText("1 line items ready to edit")).toBeVisible();
 });
 
@@ -81,11 +116,11 @@ test("owner gets an explanation when AI cannot extract a receipt", async ({
 }) => {
   await signInAsOwner(page);
   await page.goto("/receipt-receiving");
-  await page.route("**/api/stock/receipts/ai-draft", async (route) => {
+  await page.route("**/api/stock/receipts/ai-draft-stream", async (route) => {
     await route.fulfill({
-      status: 502,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "receipt_extraction_invalid" }),
+      status: 200,
+      contentType: "text/event-stream",
+      body: `event: progress\ndata: {"step":1}\n\nevent: error\ndata: {"error":"receipt_extraction_invalid"}\n\n`,
     });
   });
 
