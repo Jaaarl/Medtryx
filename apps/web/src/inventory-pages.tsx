@@ -561,9 +561,12 @@ function explainProductCsvIssue(message: string): {
   };
   const detail =
     knownDetails[rawDetail] ??
-    (field === "sellingPrice" && rawDetail === "Invalid input"
+    (field === "sellingPrice" &&
+    (rawDetail === "Invalid input" || rawDetail.startsWith("Invalid string:"))
       ? "Enter a positive amount with no more than two decimal places."
-      : field === "openingUnitCost" && rawDetail === "Invalid input"
+      : field === "openingUnitCost" &&
+          (rawDetail === "Invalid input" ||
+            rawDetail.startsWith("Invalid string:"))
         ? "Enter a cost with no more than two decimal places."
         : rawDetail.replaceAll("_", " "));
   return {

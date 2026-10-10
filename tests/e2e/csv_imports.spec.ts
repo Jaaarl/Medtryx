@@ -145,6 +145,38 @@ test("owner sees grouped product CSV errors with expandable row details", async 
   );
 });
 
+test("owner gets a row-level message for a blank selling price", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Email address").fill("owner@example.test");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("SyntheticOwnerPassword-48!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/checkout$/);
+  await page.goto("/products");
+
+  const csv = [
+    "sku,name,unit,sellingPrice,taxClass,productType,tracksLots,openingQuantity",
+    "SYN-CSV-MISSING-PRICE,No price medicine,tablet,,VATABLE,GENERIC,FALSE,0",
+  ].join("\r\n");
+  await page.getByLabel("New products CSV file").setInputFiles({
+    name: "missing-price.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+  await page.getByRole("button", { name: "Import products" }).click();
+
+  const error = page.getByRole("alert");
+  await expect(error).toContainText("CSV not imported");
+  await expect(error).toContainText("Selling price:");
+  await expect(error).toContainText(
+    "Enter a positive amount with no more than two decimal places.",
+  );
+  await expect(error).toContainText("Row 2:");
+});
+
 test("owner exports and updates product data from the catalog page", async ({
   page,
 }) => {

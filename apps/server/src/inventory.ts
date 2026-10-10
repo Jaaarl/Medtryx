@@ -70,7 +70,8 @@ export const createProductSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if (parseMoney(value.sellingPrice) <= 0) {
+    const validSellingPrice = moneySchema.safeParse(value.sellingPrice).success;
+    if (validSellingPrice && parseMoney(value.sellingPrice) <= 0) {
       context.addIssue({
         code: "custom",
         path: ["sellingPrice"],
@@ -87,6 +88,7 @@ export const createProductSchema = z
     if (
       value.openingQuantity > 0 &&
       value.openingUnitCost !== undefined &&
+      moneySchema.safeParse(value.openingUnitCost).success &&
       parseMoney(value.openingUnitCost) === 0 &&
       !value.zeroCostReason
     ) {

@@ -170,6 +170,26 @@ describe("owner catalog and stock operations", () => {
     expect(invalidBatch.body.rowErrors).toEqual(
       expect.arrayContaining([expect.objectContaining({ row: 3 })]),
     );
+
+    const missingPriceToken = await csrfFor(owner);
+    const missingPriceBatch = await owner
+      .post("/api/products/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", missingPriceToken)
+      .send(
+        `${headers}\nSYN-CSV-NEW-004,Missing price,tablet,,VATABLE,GENERIC,TRUE,3,20.00,SYN-CSV-LOT-04,${manilaDayAfter(30)},FALSE,`,
+      );
+    expect(
+      missingPriceBatch.status,
+      JSON.stringify(missingPriceBatch.body),
+    ).toBe(400);
+    expect(missingPriceBatch.body.error).toBe("csv_import_invalid");
+    expect(missingPriceBatch.body.rowErrors).toEqual([
+      expect.objectContaining({
+        row: 2,
+        message: expect.stringContaining("sellingPrice:"),
+      }),
+    ]);
     expect(
       db
         .prepare(
