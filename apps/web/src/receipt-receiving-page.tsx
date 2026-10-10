@@ -262,7 +262,15 @@ function errorText(error: unknown): string {
     mixroute_request_failed:
       "MixRoute rejected a model request. Check the API key, account credits, and model access.",
     mixroute_response_invalid:
-      "The AI response could not be validated. Try a clearer scan or split this receipt into fewer pages.",
+      "The AI returned an incomplete response. Try again, or split the receipt into fewer pages.",
+    receipt_extraction_invalid:
+      "Receipt reading failed: AI could not return supplier and item details in the expected format. Check scan clarity or try one page at a time.",
+    receipt_normalization_invalid:
+      "Receipt details were read, but AI could not normalize every line's quantity, cost, lot, and expiry fields. Try a clearer scan or fewer pages.",
+    receipt_product_names_invalid:
+      "Receipt lines were extracted, but AI could not format a product name for every line. Try again or split the receipt.",
+    receipt_catalog_matching_invalid:
+      "Receipt lines were extracted, but AI could not complete product matching for every line. Try again or split the receipt.",
     receipt_file_invalid: "Use a valid PDF, JPEG, PNG, or WebP receipt file.",
     receipt_upload_too_large: "Keep the combined upload under 18 MB.",
     too_many_receipt_lines:

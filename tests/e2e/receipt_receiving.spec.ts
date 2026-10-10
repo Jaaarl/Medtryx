@@ -76,6 +76,31 @@ test("owner sees specific AI receipt preparation activity while it loads", async
   await expect(page.getByText("1 line items ready to edit")).toBeVisible();
 });
 
+test("owner gets an explanation when AI cannot extract a receipt", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+  await page.route("**/api/stock/receipts/ai-draft", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "receipt_extraction_invalid" }),
+    });
+  });
+
+  await page.locator('input[type="file"][accept*="image/png"]').setInputFiles({
+    name: "receipt.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgo=", "base64"),
+  });
+  await page.getByRole("button", { name: "Extract receipt with AI" }).click();
+
+  await expect(page.getByRole("alert")).toContainText(
+    "Receipt reading failed: AI could not return supplier and item details in the expected format.",
+  );
+});
+
 test("owner can edit a receipt CSV in the app before receiving stock", async ({
   page,
 }) => {

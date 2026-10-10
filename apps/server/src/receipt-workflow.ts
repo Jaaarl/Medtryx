@@ -228,7 +228,7 @@ function readApiKey(): string {
   return key;
 }
 
-function jsonFromText(text: string): unknown {
+function jsonFromText(text: string, responseErrorCode: string): unknown {
   const trimmed = text
     .trim()
     .replace(/^```(?:json)?\s*/iu, "")
@@ -236,7 +236,7 @@ function jsonFromText(text: string): unknown {
   try {
     return JSON.parse(trimmed) as unknown;
   } catch {
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    throw new ReceiptWorkflowError(502, responseErrorCode);
   }
 }
 
@@ -245,6 +245,7 @@ async function callGeminiJson<T>(
   prompt: string,
   schema: z.ZodType<T>,
   files: Array<{ mimeType: string; dataBase64: string; name: string }> = [],
+  responseErrorCode = "mixroute_response_invalid",
 ): Promise<T> {
   const parts: Array<Record<string, unknown>> = [
     { text: prompt },
@@ -282,10 +283,9 @@ async function callGeminiJson<T>(
     ?.map((part) => part.text ?? "")
     .join("")
     .trim();
-  if (!text) throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
-  const parsed = schema.safeParse(jsonFromText(text));
-  if (!parsed.success)
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+  if (!text) throw new ReceiptWorkflowError(502, responseErrorCode);
+  const parsed = schema.safeParse(jsonFromText(text, responseErrorCode));
+  if (!parsed.success) throw new ReceiptWorkflowError(502, responseErrorCode);
   return parsed.data;
 }
 
@@ -293,6 +293,7 @@ async function callDeepSeekJson<T>(
   apiKey: string,
   prompt: string,
   schema: z.ZodType<T>,
+  responseErrorCode = "mixroute_response_invalid",
 ): Promise<T> {
   const response = await fetch("https://api.mixroute.ai/v1/chat/completions", {
     method: "POST",
@@ -324,10 +325,9 @@ async function callDeepSeekJson<T>(
   } | null;
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim())
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
-  const parsed = schema.safeParse(jsonFromText(content));
-  if (!parsed.success)
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    throw new ReceiptWorkflowError(502, responseErrorCode);
+  const parsed = schema.safeParse(jsonFromText(content, responseErrorCode));
+  if (!parsed.success) throw new ReceiptWorkflowError(502, responseErrorCode);
   return parsed.data;
 }
 
@@ -896,6 +896,7 @@ async function makeDraftCsv(
     receiptDocumentPrompt(),
     extractionSchema,
     files,
+    "receipt_extraction_invalid",
   );
   if (extraction.items.length > MAX_RECEIPT_ROWS)
     throw new ReceiptWorkflowError(400, "too_many_receipt_lines");
@@ -909,9 +910,11 @@ async function makeDraftCsv(
     apiKey,
     `Prepare these extracted receipt rows for CSV review. Do not remove or rewrite description text. Parse package count, unit cost per purchased package, lot code, and expiry date only when clear. Normalize a clear expiry to YYYY-MM-DD. Suggest a unitsPerPackage conversion only when the medicine is clearly separable into the POS unit; birth-control pill packs and other uncertain packaging must not be recommended for piece conversion. A recommendation is still only a suggestion and will require explicit owner approval. Never identify brands or active ingredients that are not in the source text. Return JSON: {"items":[{"row":1,"quantity":"","unitCost":"","lotCode":"","expiryDate":"","unitsPerPackage":null,"conversionRecommended":false,"conversionConfidence":"LOW","conversionReason":""}]}. One result for every row, in row order. Source rows: ${JSON.stringify(sourceLines)}`,
     preparationSchema,
+    [],
+    "receipt_normalization_invalid",
   );
   if (preparation.items.length !== sourceLines.length)
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    throw new ReceiptWorkflowError(502, "receipt_normalization_invalid");
   const preparedByRow = new Map(
     preparation.items.map((item) => [item.row, item]),
   );
@@ -919,9 +922,10 @@ async function makeDraftCsv(
     apiKey,
     `Rearrange each medicine name so a brand that is actually present comes first, followed by its generic/API text. Preserve every other detail exactly, including strength, dosage form, manufacturer, packaging and supplier codes. Do not invent brands or APIs. If no clear rearrangement exists, keep the source description unchanged. Return {"items":[{"row":1,"name":""}]} for every row. Rows: ${JSON.stringify(sourceLines)}`,
     rearrangedSchema,
+    "receipt_product_names_invalid",
   );
   if (formattedRows.items.length !== sourceLines.length)
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    throw new ReceiptWorkflowError(502, "receipt_product_names_invalid");
   const formattedByRow = new Map(
     formattedRows.items.map((item) => [item.row, item.name]),
   );
@@ -953,9 +957,10 @@ async function makeDraftCsv(
     apiKey,
     `Compare every receipt row against only the listed SQLite catalog candidates. Label a row EXACT_MATCH only when the same product is clearly identified; use POSSIBLE_MATCH for similarity or uncertainty; otherwise use NEW_PRODUCT. When a candidate is relevant, return its exact listed id as suggestedProductId. Never choose a product absent from that row's candidates. The application preselects only valid active EXACT_MATCH candidates; possible matches remain suggestions for the owner to select. Return {"items":[{"row":1,"status":"POSSIBLE_MATCH","suggestedProductId":null}]} for every row. Rows and candidates: ${JSON.stringify(itemsForMatching)}`,
     duplicateSchema,
+    "receipt_catalog_matching_invalid",
   );
   if (duplicates.items.length !== sourceLines.length)
-    throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    throw new ReceiptWorkflowError(502, "receipt_catalog_matching_invalid");
   const duplicateByRow = new Map(
     duplicates.items.map((item) => [item.row, item]),
   );
@@ -965,8 +970,10 @@ async function makeDraftCsv(
     const prepared: PreparedLine | undefined = preparedByRow.get(source.row);
     const rearrangedName = formattedByRow.get(source.row) || source.description;
     const duplicate = duplicateByRow.get(source.row);
-    if (!prepared || !duplicate)
-      throw new ReceiptWorkflowError(502, "mixroute_response_invalid");
+    if (!prepared)
+      throw new ReceiptWorkflowError(502, "receipt_normalization_invalid");
+    if (!duplicate)
+      throw new ReceiptWorkflowError(502, "receipt_catalog_matching_invalid");
     const validCandidates = new Set(
       itemsForMatching
         .find((item) => item.row === source.row)

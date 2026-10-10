@@ -220,6 +220,43 @@ afterEach(() => {
 });
 
 describe("AI-assisted receipt receiving", () => {
+  it("identifies when AI receipt extraction returns an invalid response", async () => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    supplier: "",
+                    reference: "",
+                    items: [],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      })) as typeof globalThis.fetch;
+
+    const response = await owner
+      .post("/api/stock/receipts/ai-draft")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        files: [
+          {
+            name: "receipt.pdf",
+            mimeType: "application/pdf",
+            dataBase64: pdfBase64,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(502);
+    expect(response.body).toEqual({ error: "receipt_extraction_invalid" });
+  });
+
   it("preselects an exact match and receives approved per-tablet stock with immutable receipt evidence", async () => {
     const product = await createProduct();
     mockMixRoute({ productId: product.id });
