@@ -1,13 +1,14 @@
 import argon2 from "argon2";
+import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { SESSION_IDLE_MS } from "./auth.js";
-import { openDatabase } from "./db.js";
+import { migrateDatabase, openDatabase, repositoryRoot } from "./db.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -28,11 +29,19 @@ async function resetUsers(): Promise<void> {
   ownerId = randomUUID();
   cashierId = randomUUID();
   db.prepare(
-    "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-  ).run(ownerId, "owner@example.test", ownerHash, "owner", now, now);
+    "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+  ).run(ownerId, "owner@example.test", "owner", ownerHash, "owner", now, now);
   db.prepare(
-    "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-  ).run(cashierId, "cashier@example.test", cashierHash, "cashier", now, now);
+    "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+  ).run(
+    cashierId,
+    "cashier@example.test",
+    "cashier",
+    cashierHash,
+    "cashier",
+    now,
+    now,
+  );
 }
 
 async function signIn(
@@ -106,6 +115,58 @@ describe("account foundation", () => {
     live.close();
   });
 
+  it("backfills case-insensitive unique usernames when upgrading existing accounts", () => {
+    const legacyDb = new Database(":memory:");
+    legacyDb.exec(
+      `CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
+       ${readFileSync(
+         join(repositoryRoot, "database/migrations/0001_accounts.sql"),
+         "utf8",
+       )}`,
+    );
+    const applied = legacyDb.prepare(
+      "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+    );
+    for (let version = 1; version <= 25; version += 1) {
+      const number = String(version).padStart(4, "0");
+      const name = readdirSync(
+        join(repositoryRoot, "database/migrations"),
+      ).find((migration) => migration.startsWith(`${number}_`));
+      if (name) applied.run(name, new Date().toISOString());
+    }
+    const now = new Date().toISOString();
+    const insertLegacyUser = legacyDb.prepare(
+      "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, 'owner', ?, ?)",
+    );
+    const legacyUsers = [
+      { id: randomUUID(), email: "owner@example.test" },
+      { id: randomUUID(), email: "sam@first.example.test" },
+      { id: randomUUID(), email: "Sam@second.example.test" },
+      { id: randomUUID(), email: "staff-existing@example.test" },
+    ];
+    for (const user of legacyUsers)
+      insertLegacyUser.run(user.id, user.email, "unused", now, now);
+
+    migrateDatabase(legacyDb);
+
+    const migrated = legacyDb
+      .prepare("SELECT id, username FROM users ORDER BY email")
+      .all() as { id: string; username: string }[];
+    expect(
+      migrated.find((user) => user.id === legacyUsers[0]?.id)?.username,
+    ).toBe("owner");
+    expect(
+      migrated.find((user) => user.id === legacyUsers[1]?.id)?.username,
+    ).toBe(`staff-${legacyUsers[1]?.id.replaceAll("-", "")}`);
+    expect(
+      migrated.find((user) => user.id === legacyUsers[2]?.id)?.username,
+    ).toBe(`staff-${legacyUsers[2]?.id.replaceAll("-", "")}`);
+    expect(new Set(migrated.map((user) => user.username)).size).toBe(
+      legacyUsers.length,
+    );
+    legacyDb.close();
+  });
+
   it("requires a CSRF token, authenticates users, and stores only a hash of each opaque session", async () => {
     const agent = request.agent(app);
     expect((await agent.get("/api/auth/me")).status).toBe(401);
@@ -127,6 +188,7 @@ describe("account foundation", () => {
     const response = await signIn(agent, "owner@example.test", ownerPassword);
     expect(response.status).toBe(200);
     expect(response.body.user.role).toBe("owner");
+    expect(response.body.user.username).toBe("owner");
     expect(response.body.csrfToken).toEqual(expect.any(String));
     expect(String(response.headers["set-cookie"])).toContain("HttpOnly");
     expect(String(response.headers["set-cookie"])).toContain("SameSite=Strict");
@@ -140,6 +202,15 @@ describe("account foundation", () => {
     expect(stored.token_hash).toHaveLength(64);
     expect(stored.csrf_hash).not.toBe(response.body.csrfToken);
     expect((await agent.get("/api/auth/me")).body.user.id).toBe(ownerId);
+
+    const usernameAgent = request.agent(app);
+    const usernameCsrf = await usernameAgent.get("/api/auth/csrf");
+    const usernameLogin = await usernameAgent
+      .post("/api/auth/login")
+      .set("x-csrf-token", usernameCsrf.body.token as string)
+      .send({ identifier: "owner", password: ownerPassword });
+    expect(usernameLogin.status).toBe(200);
+    expect(usernameLogin.body.user.email).toBe("owner@example.test");
   });
 
   it("marks session cookies Secure by default", async () => {
@@ -195,6 +266,26 @@ describe("account foundation", () => {
       });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     expect(created.body.user.role).toBe("cashier");
+    expect(created.body.user.username).toBe("new.cashier");
+
+    const createdUserAgent = request.agent(app);
+    const createdUserLogin = await signIn(
+      createdUserAgent,
+      "new.cashier",
+      "SyntheticNewCashier-91!",
+    );
+    expect(createdUserLogin.status).toBe(200);
+    const duplicateUsername = await owner
+      .post("/api/users")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        email: "another.cashier@example.test",
+        username: "NEW.CASHIER",
+        password: "SyntheticAnotherCashier-22!",
+        role: "cashier",
+      });
+    expect(duplicateUsername.status).toBe(409);
+    expect(duplicateUsername.body.error).toBe("username_already_exists");
 
     const cashier = await cashierAgent();
     expect((await cashier.get("/api/users")).status).toBe(403);

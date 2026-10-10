@@ -29,19 +29,29 @@ export default async function globalSetup(): Promise<void> {
         {
           id: ownerId,
           email: "owner@example.test",
+          username: "owner",
           passwordHash,
           role: "owner",
         },
         {
           id: cashierId,
           email: "cashier@example.test",
+          username: "cashier",
           passwordHash: cashierHash,
           role: "cashier",
         },
       ]) {
         db.prepare(
-          "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-        ).run(user.id, user.email, user.passwordHash, user.role, now, now);
+          "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+        ).run(
+          user.id,
+          user.email,
+          user.username,
+          user.passwordHash,
+          user.role,
+          now,
+          now,
+        );
       }
     });
     seed();

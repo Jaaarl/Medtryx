@@ -11,6 +11,7 @@ export const SESSION_MAX_MS = 12 * 60 * 60 * 1000;
 export type AuthenticatedUser = {
   id: string;
   email: string;
+  username: string | null;
   role: UserRole;
 };
 
@@ -131,7 +132,7 @@ export function requireAuthentication(db: Database.Database) {
     const session = db
       .prepare(
         `SELECT s.token_hash, s.user_id, s.last_seen_at, s.expires_at,
-                u.email, u.role, u.is_active
+                u.email, u.username, u.role, u.is_active
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = ?`,
       )
@@ -142,6 +143,7 @@ export function requireAuthentication(db: Database.Database) {
           last_seen_at: string;
           expires_at: string;
           email: string;
+          username: string | null;
           role: UserRole;
           is_active: number;
         }
@@ -170,6 +172,7 @@ export function requireAuthentication(db: Database.Database) {
     req.user = {
       id: session.user_id,
       email: session.email,
+      username: session.username,
       role: session.role,
     };
     req.sessionTokenHash = tokenHash;

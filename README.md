@@ -9,7 +9,7 @@ The roadmap target is Node.js 24 LTS. The current development environment may us
 1. Copy `.env.example` to `.env` and use unique local credentials if you need an owner account.
 2. Run `npm install` from the repository root.
 3. Run `npm run db:migrate` to apply migrations to the selected environment's database.
-4. For a fresh development database only, set `MEDTRYX_OWNER_EMAIL` and `MEDTRYX_OWNER_PASSWORD` in `.env`, then run `npm run db:create-owner`. Bootstrap refuses to add an owner once that environment has any users.
+4. For a fresh development database only, set `MEDTRYX_OWNER_EMAIL` and `MEDTRYX_OWNER_PASSWORD` in `.env` (optionally set `MEDTRYX_OWNER_USERNAME`), then run `npm run db:create-owner`. The username defaults to the part of the email before `@`. Bootstrap refuses to add an owner once that environment has any users.
 5. Run `npm run dev`. Vite is available at `http://127.0.0.1:5173`; Express listens on `http://127.0.0.1:3001` and Vite proxies `/api` requests.
 
 The owner-only **Receipt receiving** page uses MixRoute for receipt OCR and review suggestions. Set `MIXROUTE_API_KEY` in the local `.env` file and restart the server to enable it. Uploaded receipt pages are sent to MixRoute during extraction and are not retained by this workflow. The reviewed CSV must confirm product matches and new-product POS fields before stock can be received.

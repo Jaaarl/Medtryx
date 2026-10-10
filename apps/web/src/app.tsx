@@ -261,7 +261,7 @@ function pageTitle(path: string): string {
 function LoginPage() {
   const { user, ready, signIn } = useAuth();
   const location = useLocation();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -281,12 +281,12 @@ function LoginPage() {
     setError("");
     setSubmitting(true);
     try {
-      await signIn(email, password);
+      await signIn(identifier, password);
     } catch (caught) {
       setError(
         caught instanceof ApiError && caught.status === 429
           ? "Too many attempts. Please try again later."
-          : "Email or password is incorrect.",
+          : "Email, username, or password is incorrect.",
       );
     } finally {
       setSubmitting(false);
@@ -352,16 +352,17 @@ function LoginPage() {
             className="form-stack login-form"
             onSubmit={(event) => void handleSubmit(event)}
           >
-            <label className="field-label" htmlFor="login-email">
-              Email address
+            <label className="field-label" htmlFor="login-identifier">
+              Email address or username
             </label>
             <input
-              id="login-email"
+              id="login-identifier"
               className="text-input"
-              type="email"
+              type="text"
+              autoCapitalize="none"
               autoComplete="username"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={identifier}
+              onChange={(event) => setIdentifier(event.target.value)}
               required
               autoFocus
             />
@@ -546,6 +547,7 @@ function SettingsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"cashier" | "owner">("cashier");
   const [saving, setSaving] = useState(false);
@@ -581,8 +583,9 @@ function SettingsPage() {
     setNotice("");
     setSaving(true);
     try {
-      await api.post("/users", { email, password, role });
+      await api.post("/users", { email, username, password, role });
       setEmail("");
+      setUsername("");
       setPassword("");
       setNotice("Staff account created.");
       await loadSettings();
@@ -590,7 +593,10 @@ function SettingsPage() {
       setError(
         caught instanceof ApiError && caught.code === "email_already_exists"
           ? "That email already has an account."
-          : "Unable to create the account. Check the details and try again.",
+          : caught instanceof ApiError &&
+              caught.code === "username_already_exists"
+            ? "That username already has an account."
+            : "Unable to create the account. Check the details and try again.",
       );
     } finally {
       setSaving(false);
@@ -668,7 +674,8 @@ function SettingsPage() {
                     <span>
                       <strong>{user.email}</strong>
                       <small>
-                        Added {new Date(user.createdAt).toLocaleDateString()}
+                        {user.username ? `@${user.username} · ` : ""}Added{" "}
+                        {new Date(user.createdAt).toLocaleDateString()}
                       </small>
                     </span>
                   </div>
@@ -717,6 +724,25 @@ function SettingsPage() {
               required
               maxLength={254}
             />
+            <label className="field-label" htmlFor="staff-username">
+              Username
+            </label>
+            <input
+              id="staff-username"
+              className="text-input"
+              type="text"
+              autoCapitalize="none"
+              autoComplete="off"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+              minLength={1}
+              maxLength={64}
+              pattern="[A-Za-z0-9._-]+"
+            />
+            <small className="field-hint">
+              Use letters, numbers, periods, underscores, or hyphens.
+            </small>
             <label className="field-label" htmlFor="staff-password">
               Temporary password
             </label>

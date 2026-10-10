@@ -12,7 +12,7 @@ import {
 type AuthContextValue = {
   user: User | null;
   ready: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (identifier: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   changePassword: (
     currentPassword: string,
@@ -40,11 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       ready,
-      async signIn(email, password) {
+      async signIn(identifier, password) {
         await refreshCsrf();
         const result = await api.post<
           CurrentUserResponse & { csrfToken: string }
-        >("/auth/login", { email, password });
+        >("/auth/login", { identifier, password });
         setCsrfToken(result.csrfToken);
         setUser(result.user);
       },

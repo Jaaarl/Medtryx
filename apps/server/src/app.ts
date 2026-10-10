@@ -38,9 +38,20 @@ import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
 import { apiMaintenance } from "./maintenance.js";
 import { registerAiReceiptRoutes } from "./receipt-workflow.js";
 
-const loginSchema = z
-  .object({ email: z.email().max(254), password: z.string().min(1).max(128) })
-  .strict();
+const loginSchema = z.union([
+  z
+    .object({
+      identifier: z.string().trim().min(1).max(254),
+      password: z.string().min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
+      email: z.string().trim().min(1).max(254),
+      password: z.string().min(1).max(128),
+    })
+    .strict(),
+]);
 const activeSchema = z.object({ active: z.boolean() }).strict();
 const passwordSchema = z
   .object({
@@ -54,6 +65,7 @@ const DUMMY_PASSWORD_HASH =
 type UserRow = {
   id: string;
   email: string;
+  username: string | null;
   role: "owner" | "cashier";
   is_active: number;
   created_at: string;
@@ -62,6 +74,7 @@ type UserRow = {
 function presentUser(row: UserRow): {
   id: string;
   email: string;
+  username: string | null;
   role: "owner" | "cashier";
   isActive: boolean;
   createdAt: string;
@@ -69,6 +82,7 @@ function presentUser(row: UserRow): {
   return {
     id: row.id,
     email: row.email,
+    username: row.username,
     role: row.role,
     isActive: row.is_active === 1,
     createdAt: row.created_at,
@@ -84,7 +98,9 @@ function readCurrentUser(
   id: string,
 ): AuthenticatedUser | undefined {
   const row = db
-    .prepare("SELECT id, email, role FROM users WHERE id = ? AND is_active = 1")
+    .prepare(
+      "SELECT id, email, username, role FROM users WHERE id = ? AND is_active = 1",
+    )
     .get(id) as AuthenticatedUser | undefined;
   return row;
 }
@@ -115,12 +131,18 @@ function registerAuthRoutes(app: Express, db: Database.Database): void {
       const parsed = loginSchema.safeParse(req.body);
       if (!parsed.success) return sendBadRequest(res);
 
-      const email = parsed.data.email.trim().toLowerCase();
+      const identifier = (
+        "identifier" in parsed.data ? parsed.data.identifier : parsed.data.email
+      )
+        .trim()
+        .toLowerCase();
       const row = db
         .prepare(
-          "SELECT id, email, password_hash, role, is_active, created_at FROM users WHERE email = ? COLLATE NOCASE",
+          "SELECT id, email, username, password_hash, role, is_active, created_at FROM users WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE",
         )
-        .get(email) as (UserRow & { password_hash: string }) | undefined;
+        .get(identifier, identifier) as
+        | (UserRow & { password_hash: string })
+        | undefined;
 
       let verified = false;
       try {
@@ -243,7 +265,7 @@ function registerAuthRoutes(app: Express, db: Database.Database): void {
   app.get("/api/users", requireAuth, requireOwner, (_req, res) => {
     const rows = db
       .prepare(
-        "SELECT id, email, role, is_active, created_at FROM users ORDER BY created_at, email",
+        "SELECT id, email, username, role, is_active, created_at FROM users ORDER BY created_at, email",
       )
       .all() as UserRow[];
     res.json({ users: rows.map(presentUser) });
@@ -263,14 +285,17 @@ function registerAuthRoutes(app: Express, db: Database.Database): void {
       const id = randomUUID();
       const now = new Date().toISOString();
       const email = parsed.data.email.trim().toLowerCase();
+      const username = (
+        parsed.data.username ?? email.slice(0, email.indexOf("@")).slice(0, 64)
+      ).toLowerCase();
       const passwordHash = await argon2.hash(parsed.data.password, {
         type: argon2.argon2id,
       });
       try {
         db.transaction(() => {
           db.prepare(
-            "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-          ).run(id, email, passwordHash, parsed.data.role, now, now);
+            "INSERT INTO users (id, email, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+          ).run(id, email, username, passwordHash, parsed.data.role, now, now);
           writeAuditEvent(db, {
             actorUserId: req.user?.id ?? null,
             action: "user.created",
@@ -287,12 +312,20 @@ function registerAuthRoutes(app: Express, db: Database.Database): void {
           res.status(409).json({ error: "email_already_exists" });
           return;
         }
+        if (
+          error instanceof Error &&
+          error.message.includes("users.username")
+        ) {
+          res.status(409).json({ error: "username_already_exists" });
+          return;
+        }
         throw error;
       }
       res.status(201).json({
         user: presentUser({
           id,
           email,
+          username,
           role: parsed.data.role,
           is_active: 1,
           created_at: now,

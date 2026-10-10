@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const ownerCredentials = {
-  email: "owner@example.test",
+  username: "owner",
   password: "SyntheticOwnerPassword-48!",
 };
 
@@ -10,7 +10,9 @@ test("owner can sign in, open a browser route directly, and add a cashier", asyn
 }) => {
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/login$/);
-  await page.getByLabel("Email address").fill(ownerCredentials.email);
+  await page
+    .getByLabel("Email address or username")
+    .fill(ownerCredentials.username);
   await page
     .getByLabel("Password", { exact: true })
     .fill(ownerCredentials.password);
@@ -23,16 +25,26 @@ test("owner can sign in, open a browser route directly, and add a cashier", asyn
   await page
     .getByLabel("Email address", { exact: true })
     .fill("pilot.cashier@example.test");
+  await page.getByLabel("Username", { exact: true }).fill("pilot-cashier");
   await page.getByLabel("Temporary password").fill("SyntheticPilotCashier-53!");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByText("Staff account created.")).toBeVisible();
   await expect(page.getByText("pilot.cashier@example.test")).toBeVisible();
+  await expect(
+    page.getByText("@pilot-cashier", { exact: false }),
+  ).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "Staff accounts" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Log out" }).click();
   await expect(page).toHaveURL(/\/login$/);
+  await page.getByLabel("Email address or username").fill("pilot-cashier");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("SyntheticPilotCashier-53!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/checkout$/);
 });
 
 test("cashier cannot see or open owner pages and direct owner API requests are forbidden", async ({
@@ -41,7 +53,9 @@ test("cashier cannot see or open owner pages and direct owner API requests are f
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto("/login");
-  await page.getByLabel("Email address").fill("cashier@example.test");
+  await page
+    .getByLabel("Email address or username")
+    .fill("cashier@example.test");
   await page
     .getByLabel("Password", { exact: true })
     .fill("SyntheticCashierPassword-72!");
@@ -82,7 +96,9 @@ test("cashier cannot see or open owner pages and direct owner API requests are f
   await expect(
     page.getByText("Password changed. Sign in with your new password."),
   ).toBeVisible();
-  await page.getByLabel("Email address").fill("cashier@example.test");
+  await page
+    .getByLabel("Email address or username")
+    .fill("cashier@example.test");
   await page
     .getByLabel("Password", { exact: true })
     .fill("SyntheticCashierPassword-84!");
