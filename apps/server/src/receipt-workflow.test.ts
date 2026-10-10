@@ -111,6 +111,7 @@ function mockMixRoute(
     description?: string;
     unitCost?: string;
     quantity?: string;
+    lineTotal?: string;
     unitsPerPackage?: number | null;
     productId?: string;
   } = {},
@@ -140,7 +141,7 @@ function mockMixRoute(
                 description: rowDescription,
                 quantity: options.quantity ?? "2",
                 unitCost: options.unitCost ?? "100.00",
-                lineTotal: "200.00",
+                lineTotal: options.lineTotal ?? "200.00",
                 lot: "B-1",
                 expiry: "12/2030",
               },
@@ -338,6 +339,85 @@ describe("AI-assisted receipt receiving", () => {
       db.prepare("SELECT COUNT(*) AS count FROM stock_receipts").get(),
     ).toEqual({ count: 1 });
     expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("preserves exact receipt totals when a package conversion has fractional-cent unit cost", async () => {
+    const product = await createProduct({ unit: "capsule" });
+    mockMixRoute({
+      productId: product.id,
+      quantity: "5",
+      unitCost: "71.50",
+      lineTotal: "357.50",
+      unitsPerPackage: 100,
+    });
+    const draft = await owner
+      .post("/api/stock/receipts/ai-draft")
+      .set("x-csrf-token", csrfToken)
+      .send({
+        files: [
+          {
+            name: "receipt.pdf",
+            mimeType: "application/pdf",
+            dataBase64: pdfBase64,
+          },
+        ],
+      });
+
+    expect(draft.status).toBe(200);
+    const reviewedCsv = editDraftCsv(draft.body.csv as string, {
+      conversionapproved: "TRUE",
+    });
+    const reviewed = await owner
+      .post("/api/stock/receipts/ai-review")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(reviewedCsv);
+
+    expect(reviewed.status).toBe(200);
+    expect(reviewed.body.lines[0]).toMatchObject({
+      quantity: 500,
+      unitCost: "0.72",
+      unitCostRounded: true,
+      lineTotal: "357.50",
+      conversionFactor: 100,
+    });
+
+    const imported = await owner
+      .post("/api/stock/receipts/ai-import")
+      .set("x-csrf-token", csrfToken)
+      .set("content-type", "text/csv")
+      .send(reviewedCsv);
+
+    expect(imported.status).toBe(201);
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+        )
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 500, inventory_value_centavos: 35_750 });
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_delta, unit_cost_centavos, inventory_value_delta_centavos FROM stock_events WHERE product_id = ? AND event_type = 'RECEIPT'",
+        )
+        .get(product.id),
+    ).toEqual({
+      quantity_delta: 500,
+      unit_cost_centavos: 72,
+      inventory_value_delta_centavos: 35_750,
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT quantity_delta, unit_cost_centavos, inventory_value_delta_centavos FROM lot_stock_movements WHERE product_id = ? AND movement_type = 'RECEIPT'",
+        )
+        .get(product.id),
+    ).toEqual({
+      quantity_delta: 500,
+      unit_cost_centavos: 72,
+      inventory_value_delta_centavos: 35_750,
+    });
   });
 
   it("accepts PCS conversions and avoids calling malformed expiry dates expired", async () => {

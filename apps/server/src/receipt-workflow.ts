@@ -201,6 +201,7 @@ type ImportLine = {
   reference: string;
   quantity: number;
   unitCost: string;
+  inventoryValueDeltaCentavos: number;
   lotCode: string;
   expiryDate: string;
   conversionFactor: number | null;
@@ -704,6 +705,19 @@ function parseReviewedCsv(
     let finalQuantity = quantity;
     let finalUnitCost = unitCostText;
     let conversionFactor: number | null = null;
+    let inventoryValueDeltaCentavos: number | null = null;
+    if (unitCostCents !== null && Number.isInteger(quantity) && quantity >= 1) {
+      const lineValue = BigInt(unitCostCents) * BigInt(quantity);
+      if (lineValue > BigInt(Number.MAX_SAFE_INTEGER)) {
+        rowErrors.push({
+          row: row.row,
+          message:
+            "Receipt line total exceeds the supported inventory value limit.",
+        });
+      } else {
+        inventoryValueDeltaCentavos = Number(lineValue);
+      }
+    }
     if (conversionApproved) {
       if (!factor)
         rowErrors.push({
@@ -734,16 +748,10 @@ function parseReviewedCsv(
           });
       }
       if (factor && unitCostCents !== null) {
-        if (unitCostCents % factor !== 0)
-          rowErrors.push({
-            row: row.row,
-            message:
-              "Package cost cannot be split into exact centavo unit costs; receive by package or review the source cost.",
-          });
-        else
-          finalUnitCost = new Decimal(unitCostCents / factor)
-            .div(100)
-            .toFixed(2);
+        finalUnitCost = new Decimal(unitCostCents)
+          .div(factor)
+          .div(100)
+          .toFixed(2);
       }
       if (factor) conversionFactor = factor;
     }
@@ -819,6 +827,7 @@ function parseReviewedCsv(
       productName &&
       Number.isInteger(finalQuantity) &&
       unitCostCents !== null &&
+      inventoryValueDeltaCentavos !== null &&
       ((status === "NEW_PRODUCT" && createProduct) || productId)
     ) {
       const receiptInput = receiptSchema.safeParse({
@@ -852,6 +861,7 @@ function parseReviewedCsv(
           reference,
           quantity: finalQuantity,
           unitCost: finalUnitCost,
+          inventoryValueDeltaCentavos,
           lotCode: productTracksLots ? lotCode : "",
           expiryDate: productTracksLots ? expiryDate : "",
           conversionFactor,
@@ -1089,6 +1099,12 @@ export function registerAiReceiptRoutes(
           name: line.productName,
           quantity: line.quantity,
           unitCost: line.unitCost,
+          unitCostRounded:
+            moneyToCents(line.unitCost)! * line.quantity !==
+            line.inventoryValueDeltaCentavos,
+          lineTotal: new Decimal(line.inventoryValueDeltaCentavos)
+            .div(100)
+            .toFixed(2),
           conversionFactor: line.conversionFactor,
         })),
       });
@@ -1194,6 +1210,7 @@ export function registerAiReceiptRoutes(
               sourceLot: line.sourceLot,
               sourceExpiry: line.sourceExpiry,
               conversionFactor: line.conversionFactor,
+              inventoryValueDeltaCentavos: line.inventoryValueDeltaCentavos,
             });
             affected.add(productId);
           }

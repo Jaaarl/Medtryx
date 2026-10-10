@@ -1089,10 +1089,15 @@ export function receiveStockRecord(
     sourceLot: string;
     sourceExpiry: string;
     conversionFactor: number | null;
+    inventoryValueDeltaCentavos?: number;
   },
 ): string {
   const costCents = parseMoney(input.unitCost);
-  const valueDelta = roundedInteger(new Decimal(costCents).mul(input.quantity));
+  const valueDelta =
+    receiptLine?.inventoryValueDeltaCentavos ??
+    roundedInteger(new Decimal(costCents).mul(input.quantity));
+  if (!Number.isSafeInteger(valueDelta) || valueDelta < 0)
+    throw new InventoryError(400, "inventory_value_overflow");
   const product = db
     .prepare(
       "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",

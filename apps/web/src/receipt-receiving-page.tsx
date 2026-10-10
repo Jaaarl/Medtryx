@@ -19,6 +19,8 @@ type ReviewLine = {
   name: string;
   quantity: number;
   unitCost: string;
+  unitCostRounded: boolean;
+  lineTotal: string;
   conversionFactor: number | null;
 };
 type ReviewResult = {
@@ -1297,7 +1299,8 @@ export function ReceiptReceivingPage() {
                       <tr>
                         <th>Product</th>
                         <th>Receive</th>
-                        <th>Unit cost</th>
+                        <th>Avg. unit cost</th>
+                        <th>Line total</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1311,12 +1314,19 @@ export function ReceiptReceivingPage() {
                               : ""}
                           </td>
                           <td>{line.unitCost}</td>
+                          <td>{line.lineTotal}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                   {review.lines.length > 8 && (
                     <small>Showing 8 of {review.lines.length} lines.</small>
+                  )}
+                  {review.lines.some((line) => line.unitCostRounded) && (
+                    <small>
+                      Average unit cost is rounded to centavos; line total
+                      preserves the exact package cost.
+                    </small>
                   )}
                 </div>
                 <button
