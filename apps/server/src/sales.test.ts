@@ -1757,24 +1757,23 @@ describe("checkout, sales, and cashier shifts", () => {
     const cashier = await signIn("cashier.sales@example.test", cashierPassword);
     const opened = await openShift(cashier, "50.00");
     expect(opened.status).toBe(201);
-    expect(
-      (
-        await postSale(cashier, {
-          productId: product.id,
-          quantity: 2,
-          paymentMethod: "CASH",
-        })
-      ).status,
-    ).toBe(201);
-    expect(
-      (
-        await postSale(cashier, {
-          productId: product.id,
-          quantity: 1,
-          paymentMethod: "QR",
-        })
-      ).status,
-    ).toBe(201);
+    const cashSaleResponse = await postSale(cashier, {
+      productId: product.id,
+      quantity: 2,
+      paymentMethod: "CASH",
+    });
+    expect(cashSaleResponse.status).toBe(201);
+    const cashSale = cashSaleResponse.body.sale as {
+      transactionId: string;
+      lines: Array<{ saleLineId: string }>;
+    };
+    const qrSaleResponse = await postSale(cashier, {
+      productId: product.id,
+      quantity: 1,
+      paymentMethod: "QR",
+    });
+    expect(qrSaleResponse.status).toBe(201);
+    const qrSale = qrSaleResponse.body.sale as { transactionId: string };
 
     const date = manilaDayAfter(0);
     const ownerSummary = await owner.get(
@@ -1819,10 +1818,68 @@ describe("checkout, sales, and cashier shifts", () => {
         },
       ],
     });
+
+    const reversalCsrf = await csrfFor(owner);
+    const reversal = await owner
+      .post(`/api/sales/${cashSale.transactionId}/reversals`)
+      .set("x-csrf-token", reversalCsrf)
+      .send({
+        ownerPassword,
+        reason: "Synthetic daily summary reversal",
+        refundMethod: "QR",
+        lines: [{ saleLineId: cashSale.lines[0]!.saleLineId, restock: true }],
+      });
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+
+    const currentSummary = await owner.get(
+      `/api/shifts/daily-sales-summary?date=${date}`,
+    );
+    expect(currentSummary.body.summary).toMatchObject({
+      salesBreakdown: {
+        invoiceNumberRange: qrSale.transactionId,
+        seniorDiscount: "0.00",
+        nonVat: "0.00",
+        vatableSales: "100.00",
+        totalVat: "12.00",
+        grossSales: "112.00",
+        netSales: "100.00",
+      },
+      totals: {
+        transactionCount: 1,
+        sales: "112.00",
+        cashSales: "0.00",
+        qrSales: "112.00",
+      },
+      shifts: [
+        {
+          id: opened.body.shift.id,
+          transactionCount: 1,
+          sales: "112.00",
+          cashSales: "0.00",
+          qrSales: "112.00",
+        },
+      ],
+      products: [
+        {
+          sku: "SYN-DAILY-SUMMARY",
+          name: "Synthetic Sale Product",
+          quantity: 1,
+          sales: "112.00",
+        },
+      ],
+    });
     const cashierSummary = await cashier.get(
       `/api/shifts/daily-sales-summary?date=${date}`,
     );
-    expect(cashierSummary.body.summary).toMatchObject({ scope: "CASHIER" });
+    expect(cashierSummary.body.summary).toMatchObject({
+      scope: "CASHIER",
+      totals: {
+        transactionCount: 1,
+        sales: "112.00",
+        cashSales: "0.00",
+        qrSales: "112.00",
+      },
+    });
     expect(
       (await cashier.get("/api/shifts/daily-sales-summary?date=bad-date"))
         .status,

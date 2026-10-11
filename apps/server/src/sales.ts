@@ -2361,6 +2361,9 @@ export function registerSalesRoutes(
     const date = parsedDate.data;
     const cashierOnly =
       req.user!.role === "owner" ? "" : "AND s.cashier_user_id = ?";
+    const activeSaleOnly = `AND NOT EXISTS (
+      SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
+    )`;
     const parameters =
       req.user!.role === "owner" ? [date] : [date, req.user!.id];
     const totals = db
@@ -2371,7 +2374,8 @@ export function registerSalesRoutes(
                   AS cash_sales_centavos,
                 COALESCE(SUM(CASE WHEN payment_method = 'QR' THEN amount_due_centavos ELSE 0 END), 0)
                   AS qr_sales_centavos
-         FROM sales s WHERE s.business_date = ? ${cashierOnly}`,
+         FROM sales s
+         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}`,
       )
       .get(...parameters) as {
       transaction_count: number;
@@ -2391,7 +2395,7 @@ export function registerSalesRoutes(
          FROM sales s
          JOIN shifts sh ON sh.id = s.shift_id
          JOIN users u ON u.id = sh.cashier_user_id
-         WHERE s.business_date = ? ${cashierOnly}
+         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
          GROUP BY sh.id
          ORDER BY sh.opened_at, sh.id`,
       )
@@ -2412,7 +2416,7 @@ export function registerSalesRoutes(
                 SUM(sl.quantity) AS quantity,
                 SUM(sl.amount_due_centavos) AS sales_centavos
          FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
-         WHERE s.business_date = ? ${cashierOnly}
+         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
          GROUP BY sl.product_id, sl.sku_snapshot, sl.product_name_snapshot
          ORDER BY sales_centavos DESC, name COLLATE NOCASE`,
       )
@@ -2427,28 +2431,28 @@ export function registerSalesRoutes(
         ? (db
             .prepare(
               `SELECT
-                 (SELECT MIN(transaction_id) FROM sales
-                  WHERE business_date = ? ${cashierOnly}) AS first_invoice,
-                 (SELECT MAX(transaction_id) FROM sales
-                  WHERE business_date = ? ${cashierOnly}) AS last_invoice,
-                 (SELECT COALESCE(SUM(senior_discount_centavos), 0) FROM sales
-                  WHERE business_date = ? ${cashierOnly}) AS senior_discount_centavos,
+                 (SELECT MIN(s.transaction_id) FROM sales s
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS first_invoice,
+                 (SELECT MAX(s.transaction_id) FROM sales s
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS last_invoice,
+                 (SELECT COALESCE(SUM(s.senior_discount_centavos), 0) FROM sales s
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS senior_discount_centavos,
                  (SELECT COALESCE(SUM(sl.amount_due_centavos), 0)
                   FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
-                  WHERE s.business_date = ? ${cashierOnly}
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
                     AND sl.tax_class_snapshot <> 'VATABLE') AS non_vat_centavos,
                  (SELECT COALESCE(SUM(sl.tax_basis_centavos), 0)
                   FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
-                  WHERE s.business_date = ? ${cashierOnly}
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
                     AND sl.tax_class_snapshot = 'VATABLE') AS vatable_centavos,
-                 (SELECT COALESCE(SUM(vat_centavos), 0) FROM sales
-                  WHERE business_date = ? ${cashierOnly}) AS total_vat_centavos,
+                 (SELECT COALESCE(SUM(s.vat_centavos), 0) FROM sales s
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS total_vat_centavos,
                  (SELECT COALESCE(SUM(sl.quantity * sl.unit_price_centavos), 0)
                   FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
-                  WHERE s.business_date = ? ${cashierOnly}) AS gross_sales_centavos,
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS gross_sales_centavos,
                  (SELECT COALESCE(SUM(sl.amount_due_centavos - sl.vat_centavos), 0)
                   FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
-                  WHERE s.business_date = ? ${cashierOnly}) AS net_sales_centavos`,
+                  WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS net_sales_centavos`,
             )
             .get(...Array.from({ length: 8 }, () => date)) as {
             first_invoice: string | null;

@@ -294,8 +294,8 @@ export function DailySalesSummaryPage() {
       <div className="report-notes">
         <p>
           Cashiers see their own shifts and products. Owners see store totals
-          across all cashiers. Product quantities show sold units before
-          refunds.
+          across all cashiers. Fully reversed sales are excluded from totals and
+          product quantities.
         </p>
       </div>
     </section>
