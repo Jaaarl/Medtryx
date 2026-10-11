@@ -715,7 +715,7 @@ a {
 .receipt-steps {
   display: grid;
   gap: 15px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
 }
 .receipt-step {
   align-items: start;
@@ -1230,11 +1230,6 @@ a {
 @keyframes receipt-spin {
   to {
     transform: rotate(360deg);
-  }
-}
-@media (max-width: 850px) {
-  .receipt-steps {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-width: 520px) {

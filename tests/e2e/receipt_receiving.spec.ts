@@ -30,6 +30,12 @@ test("owner can open the receipt receiving workflow and choose receipt pages", a
   await expect(
     page.getByRole("button", { name: "Load receipt CSV into editor" }),
   ).toBeVisible();
+
+  const uploadStep = await page.locator(".receipt-step").nth(0).boundingBox();
+  const reviewStep = await page.locator(".receipt-step").nth(1).boundingBox();
+  expect(uploadStep).not.toBeNull();
+  expect(reviewStep).not.toBeNull();
+  expect(reviewStep!.y).toBeGreaterThan(uploadStep!.y);
 });
 
 test("owner receipt draft survives leaving and reopening the page", async ({
