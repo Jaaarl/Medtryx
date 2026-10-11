@@ -212,6 +212,7 @@ function SortableHeader({
 }
 
 const PRODUCT_CATALOG_COLUMNS = [
+  { key: "unit", label: "STOCK UNIT", sortKey: "unit" },
   { key: "onHand", label: "ON HAND", sortKey: "onHand" },
   { key: "sellingPrice", label: "SELL PRICE", sortKey: "sellingPrice" },
   { key: "latestCost", label: "LATEST COST", sortKey: "latestCost" },
@@ -1042,6 +1043,7 @@ export function ProductsPage() {
   const [visibleProductColumns, setVisibleProductColumns] = useState<
     Record<ProductCatalogColumnKey, boolean>
   >({
+    unit: true,
     onHand: true,
     sellingPrice: true,
     latestCost: true,
@@ -1121,6 +1123,8 @@ export function ProductsPage() {
     visibleProducts,
     (product) => {
       switch (sort.key) {
+        case "unit":
+          return product.unit;
         case "onHand":
           return product.quantityOnHand;
         case "sellingPrice":
@@ -1175,6 +1179,8 @@ export function ProductsPage() {
     column: ProductCatalogColumnKey,
   ): ReactNode {
     switch (column) {
+      case "unit":
+        return product.unit;
       case "onHand":
         return (
           <>
@@ -1510,7 +1516,6 @@ export function ProductsPage() {
                               ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
                               : "BNPC category missing"
                             : "BNPC ineligible"}
-                          {product.unit}
                         </small>
                       </td>
                       {PRODUCT_CATALOG_COLUMNS.filter(
