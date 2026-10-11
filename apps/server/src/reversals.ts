@@ -235,7 +235,7 @@ export function registerReversalRoutes(
       .number()
       .int()
       .min(1)
-      .max(100)
+      .max(300)
       .safeParse(req.query.limit ?? "100");
     if (!limit.success) return validationFailure(res);
     const rows = db

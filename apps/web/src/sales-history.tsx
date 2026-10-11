@@ -597,7 +597,7 @@ export function SalesHistoryPage() {
                     setRecordLimit(Number(event.target.value))
                   }
                 >
-                  {[10, 25, 50, 100].map((limit) => (
+                  {[10, 25, 50, 100, 200, 300].map((limit) => (
                     <option key={limit} value={limit}>
                       {limit} records
                     </option>

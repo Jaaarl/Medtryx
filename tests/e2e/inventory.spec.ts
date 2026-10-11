@@ -334,6 +334,17 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(recordsToShow).toHaveValue("100");
   await recordsToShow.selectOption("10");
   await expect(recordsToShow).toHaveValue("10");
+  for (const limit of [200, 300]) {
+    const response = await ownerContext.request.get(
+      `/api/sales?limit=${limit}`,
+    );
+    expect(response.status()).toBe(200);
+    expect(
+      ((await response.json()) as { sales: unknown[] }).sales.length,
+    ).toBeLessThanOrEqual(limit);
+    await recordsToShow.selectOption(String(limit));
+    await expect(recordsToShow).toHaveValue(String(limit));
+  }
   const saleHistoryRow = ownerPage.getByRole("row").filter({
     hasText: transactionId,
   });
