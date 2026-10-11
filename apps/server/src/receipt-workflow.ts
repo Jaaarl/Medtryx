@@ -18,7 +18,7 @@ import { writeAuditEvent } from "./db.js";
 import { manilaCalendarDate, validCalendarDate } from "./lot-stock.js";
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
-const DEEPSEEK_MODEL = "deepseek-v4-flash";
+const QWEN_MODEL = "qwen3.6-flash";
 const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 20;
 const MAX_RECEIPT_ROWS = 500;
@@ -300,7 +300,7 @@ async function callGeminiJson<T>(
   return parsed.data;
 }
 
-async function callDeepSeekJson<T>(
+async function callQwenJson<T>(
   apiKey: string,
   prompt: string,
   schema: z.ZodType<T>,
@@ -314,7 +314,7 @@ async function callDeepSeekJson<T>(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
+      model: QWEN_MODEL,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -943,7 +943,7 @@ async function makeDraftCsv(
     preparation.items.map((item) => [item.row, item]),
   );
   onProgress(3);
-  const formattedRows = await callDeepSeekJson(
+  const formattedRows = await callQwenJson(
     apiKey,
     `Rearrange each medicine name so a brand that is actually present comes first, followed by its generic/API text. Preserve every other detail exactly, including strength, dosage form, manufacturer, packaging and supplier codes. Do not invent brands or APIs. If no clear rearrangement exists, keep the source description unchanged. Return {"items":[{"row":1,"name":""}]} for every row. Rows: ${JSON.stringify(sourceLines)}`,
     rearrangedSchema,
@@ -980,7 +980,7 @@ async function makeDraftCsv(
     };
   });
   onProgress(4);
-  const duplicates = await callDeepSeekJson(
+  const duplicates = await callQwenJson(
     apiKey,
     `Compare every receipt row against only the listed SQLite catalog candidates. Label a row EXACT_MATCH only when the same product is clearly identified; use POSSIBLE_MATCH for similarity or uncertainty; otherwise use NEW_PRODUCT. When a candidate is relevant, return its exact listed id as suggestedProductId. Never choose a product absent from that row's candidates. The application preselects only valid active EXACT_MATCH candidates; possible matches remain suggestions for the owner to select. Return {"items":[{"row":1,"status":"POSSIBLE_MATCH","suggestedProductId":null}]} for every row. Rows and candidates: ${JSON.stringify(itemsForMatching)}`,
     duplicateSchema,

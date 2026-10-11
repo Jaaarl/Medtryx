@@ -126,6 +126,7 @@ function mockMixRoute(
       contents?: Array<{
         parts?: Array<{ inlineData?: { mimeType: string } }>;
       }>;
+      model?: string;
       messages?: Array<{ content?: string }>;
     };
     if (url.includes(":generateContent")) {
@@ -166,6 +167,7 @@ function mockMixRoute(
         candidates: [{ content: { parts: [{ text: JSON.stringify(text) }] } }],
       });
     }
+    expect(body.model).toBe("qwen3.6-flash");
     const userPrompt = body.messages?.[1]?.content ?? "";
     const response = userPrompt.startsWith("Rearrange each")
       ? {
