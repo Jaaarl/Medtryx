@@ -1817,6 +1817,38 @@ describe("checkout, sales, and cashier shifts", () => {
           sales: "336.00",
         },
       ],
+      transactions: [
+        {
+          transactionId: cashSale.transactionId,
+          cashierEmail: "cashier.sales@example.test",
+          paymentMethod: "CASH",
+          sales: "224.00",
+          products: [
+            {
+              lineNumber: 1,
+              sku: "SYN-DAILY-SUMMARY",
+              name: "Synthetic Sale Product",
+              quantity: 2,
+              sales: "224.00",
+            },
+          ],
+        },
+        {
+          transactionId: qrSale.transactionId,
+          cashierEmail: "cashier.sales@example.test",
+          paymentMethod: "QR",
+          sales: "112.00",
+          products: [
+            {
+              lineNumber: 1,
+              sku: "SYN-DAILY-SUMMARY",
+              name: "Synthetic Sale Product",
+              quantity: 1,
+              sales: "112.00",
+            },
+          ],
+        },
+      ],
     });
 
     const reversalCsrf = await csrfFor(owner);
@@ -1865,6 +1897,20 @@ describe("checkout, sales, and cashier shifts", () => {
           name: "Synthetic Sale Product",
           quantity: 1,
           sales: "112.00",
+        },
+      ],
+      transactions: [
+        {
+          transactionId: qrSale.transactionId,
+          paymentMethod: "QR",
+          sales: "112.00",
+          products: [
+            {
+              sku: "SYN-DAILY-SUMMARY",
+              quantity: 1,
+              sales: "112.00",
+            },
+          ],
         },
       ],
     });
@@ -1958,6 +2004,13 @@ describe("checkout, sales, and cashier shifts", () => {
       },
       shifts: [],
       products: [{ sku: "SYN-OFFLINE-SALE", quantity: 1, sales: "112.00" }],
+      transactions: [
+        {
+          transactionId: `MTX-${businessDate.replaceAll("-", "")}-000001`,
+          paymentMethod: "CASH",
+          products: [{ sku: "SYN-OFFLINE-SALE", quantity: 1, sales: "112.00" }],
+        },
+      ],
     });
 
     const dailySalesRange = await owner.get(

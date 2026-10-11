@@ -37,6 +37,20 @@ type DailySalesSummary = {
     quantity: number;
     sales: string;
   }>;
+  transactions: Array<{
+    transactionId: string;
+    createdAt: string;
+    cashierEmail: string;
+    paymentMethod: "CASH" | "QR";
+    sales: string;
+    products: Array<{
+      lineNumber: number;
+      sku: string;
+      name: string;
+      quantity: number;
+      sales: string;
+    }>;
+  }>;
 };
 
 function todayInManila(): string {
@@ -63,6 +77,7 @@ function localTime(value: string): string {
 export function DailySalesSummaryPage() {
   const [date, setDate] = useState(todayInManila);
   const [summary, setSummary] = useState<DailySalesSummary | null>(null);
+  const [groupProducts, setGroupProducts] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -254,15 +269,60 @@ export function DailySalesSummaryPage() {
             <div className="card-heading">
               <div>
                 <h2>Products sold</h2>
-                <p>Quantities and line totals from saved sales on this date.</p>
+                <p>
+                  {groupProducts
+                    ? "Quantities and line totals grouped by product."
+                    : "Each transaction with its products and line totals."}
+                </p>
               </div>
-              <span className="count-chip">
-                {summary.products.length} products
-              </span>
+              <div className="daily-sales-product-actions">
+                <label className="inventory-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={groupProducts}
+                    onChange={(event) => setGroupProducts(event.target.checked)}
+                  />
+                  Group products by item
+                </label>
+                <span className="count-chip">
+                  {groupProducts
+                    ? `${summary.products.length} products`
+                    : `${summary.transactions.length} transactions`}
+                </span>
+              </div>
             </div>
-            {summary.products.length ? (
+            {groupProducts ? (
+              summary.products.length ? (
+                <div className="inventory-table-wrap">
+                  <table className="inventory-table">
+                    <thead>
+                      <tr>
+                        <th>PRODUCT</th>
+                        <th>SKU</th>
+                        <th>QUANTITY SOLD</th>
+                        <th>LINE TOTAL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.products.map((product) => (
+                        <tr key={`${product.sku}-${product.name}`}>
+                          <td>{product.name}</td>
+                          <td>{product.sku}</td>
+                          <td>{product.quantity}</td>
+                          <td>₱{product.sales}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="report-empty">
+                  No products were sold on this date.
+                </p>
+              )
+            ) : summary.transactions.length ? (
               <div className="inventory-table-wrap">
-                <table className="inventory-table">
+                <table className="inventory-table daily-sales-transactions">
                   <thead>
                     <tr>
                       <th>PRODUCT</th>
@@ -271,16 +331,34 @@ export function DailySalesSummaryPage() {
                       <th>LINE TOTAL</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {summary.products.map((product) => (
-                      <tr key={`${product.sku}-${product.name}`}>
-                        <td>{product.name}</td>
-                        <td>{product.sku}</td>
-                        <td>{product.quantity}</td>
-                        <td>₱{product.sales}</td>
+                  {summary.transactions.map((transaction) => (
+                    <tbody key={transaction.transactionId}>
+                      <tr className="daily-sales-transaction-row">
+                        <td colSpan={4}>
+                          <div className="daily-sales-transaction-heading">
+                            <strong>{transaction.transactionId}</strong>
+                            <span>{localTime(transaction.createdAt)}</span>
+                          </div>
+                          <div className="daily-sales-transaction-meta">
+                            {transaction.cashierEmail} ·{" "}
+                            {transaction.paymentMethod}
+                            {" · "}Total ₱{transaction.sales}
+                          </div>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
+                      {transaction.products.map((product) => (
+                        <tr
+                          className="daily-sales-transaction-product"
+                          key={`${transaction.transactionId}-${product.lineNumber}`}
+                        >
+                          <td>{product.name}</td>
+                          <td>{product.sku}</td>
+                          <td>{product.quantity}</td>
+                          <td>₱{product.sales}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  ))}
                 </table>
               </div>
             ) : (

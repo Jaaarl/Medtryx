@@ -2426,6 +2426,67 @@ export function registerSalesRoutes(
       quantity: number;
       sales_centavos: number;
     }>;
+    const transactionRows = db
+      .prepare(
+        `SELECT s.transaction_id, s.created_at, s.payment_method,
+                s.amount_due_centavos AS sales_centavos,
+                u.email AS cashier_email,
+                sl.line_number, sl.sku_snapshot AS sku,
+                sl.product_name_snapshot AS name,
+                sl.quantity, sl.amount_due_centavos AS line_sales_centavos
+         FROM sales s
+         JOIN users u ON u.id = s.cashier_user_id
+         JOIN sale_lines sl ON sl.sale_id = s.id
+         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
+         ORDER BY s.created_at, s.transaction_id, sl.line_number`,
+      )
+      .all(...parameters) as Array<{
+      transaction_id: string;
+      created_at: string;
+      payment_method: "CASH" | "QR";
+      sales_centavos: number;
+      cashier_email: string;
+      line_number: number;
+      sku: string;
+      name: string;
+      quantity: number;
+      line_sales_centavos: number;
+    }>;
+    const transactions: Array<{
+      transactionId: string;
+      createdAt: string;
+      cashierEmail: string;
+      paymentMethod: "CASH" | "QR";
+      sales: string;
+      products: Array<{
+        lineNumber: number;
+        sku: string;
+        name: string;
+        quantity: number;
+        sales: string;
+      }>;
+    }> = [];
+    for (const row of transactionRows) {
+      let transaction = transactions.at(-1);
+      if (!transaction || transaction.transactionId !== row.transaction_id) {
+        transaction = {
+          transactionId: row.transaction_id,
+          createdAt: row.created_at,
+          cashierEmail: row.cashier_email,
+          paymentMethod: row.payment_method,
+          sales: money(row.sales_centavos),
+          products: [],
+        };
+        transactions.push(transaction);
+      }
+      transaction.products.push({
+        lineNumber: row.line_number,
+        sku: row.sku,
+        name: row.name,
+        quantity: row.quantity,
+        sales: money(row.line_sales_centavos),
+      });
+    }
     const ownerSalesBreakdown =
       req.user!.role === "owner"
         ? (db
@@ -2513,6 +2574,7 @@ export function registerSalesRoutes(
           quantity: product.quantity,
           sales: money(product.sales_centavos),
         })),
+        transactions,
       },
     });
   });

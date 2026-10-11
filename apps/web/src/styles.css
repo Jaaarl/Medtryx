@@ -4291,6 +4291,39 @@ a {
   min-width: 620px;
   width: 100%;
 }
+.daily-sales-product-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.daily-sales-transaction-row td {
+  background: #f5f8f6;
+  padding-bottom: 9px;
+  padding-top: 10px;
+  white-space: normal;
+}
+.daily-sales-transaction-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.daily-sales-transaction-heading strong {
+  color: #294f43;
+  font-size: 11px;
+}
+.daily-sales-transaction-heading span,
+.daily-sales-transaction-meta {
+  color: #71817b;
+  font-size: 9px;
+}
+.daily-sales-transaction-meta {
+  margin-top: 4px;
+}
+.daily-sales-transaction-product td:first-child {
+  padding-left: 28px;
+}
 .report-empty {
   color: var(--muted);
   font-size: 12px;
