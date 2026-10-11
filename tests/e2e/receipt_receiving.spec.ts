@@ -680,7 +680,7 @@ test("owner can edit a receipt CSV in the app before receiving stock", async ({
   await expect(page.getByRole("status")).toContainText("E2E-RECEIPT-EDIT");
 });
 
-test("owner can import selected receipt lines and keep the rest as a new draft", async ({
+test("owner preselects high-confidence lines and keeps unselected rows as a new draft", async ({
   page,
 }) => {
   await signInAsOwner(page);
@@ -742,6 +742,9 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
     "unitcost",
     "matchstatus",
     "selectedproductid",
+    "conversionrecommended",
+    "unitsperpackage",
+    "conversionconfidence",
     "conversionapproved",
   ];
   const rows = [
@@ -753,6 +756,9 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
       "3.00",
       "NEW_PRODUCT",
       "",
+      "TRUE",
+      "20",
+      "HIGH",
       "FALSE",
     ],
     [
@@ -763,6 +769,9 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
       "5.00",
       "NEW_PRODUCT",
       "",
+      "TRUE",
+      "20",
+      "LOW",
       "FALSE",
     ],
   ];
@@ -785,12 +794,15 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
   await page.getByRole("button", { name: "Validate receipt" }).click();
   await expect(page.getByText("Ready for confirmation")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Import selected (2)" }),
+    page.getByRole("button", { name: "Import selected (1)" }),
   ).toBeEnabled();
 
-  await page
-    .getByRole("checkbox", { name: "Select line 2: Selected product" })
-    .uncheck();
+  await expect(
+    page.getByRole("checkbox", { name: "Select line 2: Selected product" }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: "Select line 3: Remaining product" }),
+  ).not.toBeChecked();
   await page.getByRole("button", { name: "Import selected (1)" }).click();
 
   await expect(page.getByRole("status")).toContainText(
@@ -799,8 +811,8 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
   await expect(page.locator(".receipt-prepared-file")).toContainText(
     "1 line items ready to edit",
   );
-  expect(importedCsv).toContain("Remaining product");
-  expect(importedCsv).not.toContain("Selected product");
+  expect(importedCsv).toContain("Selected product");
+  expect(importedCsv).not.toContain("Remaining product");
 
   const savedDraft = await page.evaluate(() => {
     const value = window.localStorage.getItem("medtryx-receipt-draft-v1");
@@ -811,7 +823,7 @@ test("owner can import selected receipt lines and keep the rest as a new draft",
       : null;
   });
   expect(savedDraft?.rows).toHaveLength(1);
-  expect(savedDraft?.rows[0]?.originaldescription).toBe("Selected product");
+  expect(savedDraft?.rows[0]?.originaldescription).toBe("Remaining product");
   expect(savedDraft?.rows[0]?.draftid).not.toBe(originalDraftId);
 });
 

@@ -248,6 +248,13 @@ function receiptFileGroupId(row: ReceiptCsvRow): string {
     : row.sourcegroupid || "receipt-lines";
 }
 
+function isHighConfidenceConversion(row: ReceiptCsvRow): boolean {
+  return (
+    row.conversionrecommended?.trim().toUpperCase() === "TRUE" &&
+    row.conversionconfidence?.trim().toUpperCase() === "HIGH"
+  );
+}
+
 function ReceiptField({
   label,
   value,
@@ -752,7 +759,13 @@ export function ReceiptReceivingPage() {
       setProgressStep(2);
       setReviewCsv(csv);
       setReview(response);
-      setSelectedReviewRows(new Set(response.lines.map((_, index) => index)));
+      const highConfidenceRows = new Set<number>();
+      response.lines.forEach((_, index) => {
+        const row = draftRows[index];
+        if (row && isHighConfidenceConversion(row))
+          highConfidenceRows.add(index);
+      });
+      setSelectedReviewRows(highConfidenceRows);
     } catch (requestError) {
       setError(errorText(requestError));
       setIssues(rowIssues(requestError));
@@ -1140,8 +1153,7 @@ export function ReceiptReceivingPage() {
                       const conversionRecommended =
                         row.conversionrecommended?.toUpperCase() === "TRUE";
                       const highConfidenceConversion =
-                        conversionRecommended &&
-                        row.conversionconfidence?.toUpperCase() === "HIGH";
+                        isHighConfidenceConversion(row);
                       const packageCostCents = receiptMoneyToCents(
                         row.unitcost,
                       );
