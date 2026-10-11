@@ -47,6 +47,53 @@ type ProductOption = {
   tracksLots: boolean;
 };
 
+type PersistedReceiptDraft = {
+  prepared: PreparedReceipt;
+  headers: string[];
+  rows: ReceiptCsvRow[];
+};
+
+const RECEIPT_DRAFT_STORAGE_KEY = "medtryx-receipt-draft-v1";
+
+function readPersistedReceiptDraft(): PersistedReceiptDraft | null {
+  try {
+    const stored = window.localStorage.getItem(RECEIPT_DRAFT_STORAGE_KEY);
+    if (!stored) return null;
+    const value: unknown = JSON.parse(stored);
+    if (typeof value !== "object" || value === null) return null;
+    const candidate = value as Partial<PersistedReceiptDraft>;
+    if (
+      typeof candidate.prepared !== "object" ||
+      candidate.prepared === null ||
+      typeof candidate.prepared.filename !== "string" ||
+      !Array.isArray(candidate.headers) ||
+      !candidate.headers.every((header) => typeof header === "string") ||
+      !Array.isArray(candidate.rows) ||
+      !candidate.rows.every(
+        (row) =>
+          typeof row === "object" &&
+          row !== null &&
+          Object.values(row).every((cell) => typeof cell === "string"),
+      )
+    )
+      return null;
+
+    const document = parseReceiptCsv(
+      serializeReceiptCsv(candidate.headers, candidate.rows as ReceiptCsvRow[]),
+    );
+    return {
+      prepared: {
+        filename: candidate.prepared.filename,
+        lineCount: document.rows.length,
+      },
+      headers: document.headers,
+      rows: document.rows,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const receiptProgressSteps: Record<ReceiptTask, string[]> = {
   prepare: [
     "Prepare selected pages for upload",
@@ -304,10 +351,17 @@ function rowIssues(error: unknown): RowIssue[] {
 export function ReceiptReceivingPage() {
   const receiptInput = useRef<HTMLInputElement>(null);
   const reviewInput = useRef<HTMLInputElement>(null);
+  const [initialDraft] = useState(readPersistedReceiptDraft);
   const [files, setFiles] = useState<File[]>([]);
-  const [prepared, setPrepared] = useState<PreparedReceipt | null>(null);
-  const [draftHeaders, setDraftHeaders] = useState<string[]>([]);
-  const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>([]);
+  const [prepared, setPrepared] = useState<PreparedReceipt | null>(
+    initialDraft?.prepared ?? null,
+  );
+  const [draftHeaders, setDraftHeaders] = useState<string[]>(
+    initialDraft?.headers ?? [],
+  );
+  const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>(
+    initialDraft?.rows ?? [],
+  );
   const [reviewCsv, setReviewCsv] = useState("");
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [issues, setIssues] = useState<RowIssue[]>([]);
@@ -324,6 +378,21 @@ export function ReceiptReceivingPage() {
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [searchingProducts, setSearchingProducts] = useState(false);
   const [productSearchError, setProductSearchError] = useState("");
+
+  useEffect(() => {
+    try {
+      if (prepared && draftHeaders.length > 0 && draftRows.length > 0) {
+        window.localStorage.setItem(
+          RECEIPT_DRAFT_STORAGE_KEY,
+          JSON.stringify({ prepared, headers: draftHeaders, rows: draftRows }),
+        );
+      } else {
+        window.localStorage.removeItem(RECEIPT_DRAFT_STORAGE_KEY);
+      }
+    } catch {
+      // The receipt editor remains usable when browser storage is unavailable.
+    }
+  }, [prepared, draftHeaders, draftRows]);
 
   useEffect(() => {
     if (productChooserRow === null) return;

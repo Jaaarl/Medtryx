@@ -32,6 +32,59 @@ test("owner can open the receipt receiving workflow and choose receipt pages", a
   ).toBeVisible();
 });
 
+test("owner receipt draft survives leaving and reopening the page", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "supplier",
+    "matchstatus",
+    "selectedproductid",
+    "conversionapproved",
+  ];
+  const row = [
+    "Parsed medicine line",
+    randomUUID(),
+    "Parsed medicine line",
+    "2",
+    "14.50",
+    "Saved supplier",
+    "NEW_PRODUCT",
+    "",
+    "FALSE",
+  ];
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [columns.map(cell).join(","), row.map(cell).join(",")].join(
+    "\r\n",
+  );
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "receipt-review.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+
+  await page.getByLabel("Supplier", { exact: true }).fill("Edited supplier");
+  await page.goto("/checkout");
+  await page.goto("/receipt-receiving");
+
+  await expect(page.getByText("1 line items ready to edit")).toBeVisible();
+  await expect(page.getByLabel("Supplier", { exact: true })).toHaveValue(
+    "Edited supplier",
+  );
+});
+
 test("owner sees specific AI receipt preparation activity while it loads", async ({
   page,
 }) => {
