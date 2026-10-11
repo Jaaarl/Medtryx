@@ -375,6 +375,7 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
     }),
   ).toBeVisible();
   await expect(saleHistoryRow).toContainText("Reversed");
+  await expect(saleHistoryRow).not.toContainText(/MTR-\d{8}-\d{6}/);
   const cashierShiftResponse = await cashierContext.request.get(
     "/api/shifts/current",
   );

@@ -601,9 +601,6 @@ export function SalesHistoryPage() {
                     <tr key={item.id}>
                       <td>
                         <strong>{item.transactionId}</strong>
-                        {item.reversal && (
-                          <small>{item.reversal.transactionId}</small>
-                        )}
                       </td>
                       <td>
                         {dateText(item.createdAt)}
