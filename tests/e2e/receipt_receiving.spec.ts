@@ -267,8 +267,8 @@ test("groups receipt rows by source PDF or image name", async ({ page }) => {
   ];
   const rows = [
     ["First page line one", "group-one", "first-page.pdf"],
-    ["First page line two", "group-two", "first-page.pdf"],
     ["Second page line", "group-three", "second-page.png"],
+    ["First page line two", "group-two", "first-page.pdf"],
   ].map(([description, groupId, sourceFile]) => [
     description!,
     randomUUID(),
@@ -304,6 +304,12 @@ test("groups receipt rows by source PDF or image name", async ({ page }) => {
   await expect(groups.nth(0)).toContainText("2 line items");
   await expect(groups.nth(1)).toContainText("second-page.png");
   await expect(groups.nth(1)).toContainText("1 line item");
+
+  const lineEditors = page.locator(".receipt-line-editor");
+  await expect(lineEditors).toHaveCount(3);
+  await expect(lineEditors.nth(0)).toContainText("First page line one");
+  await expect(lineEditors.nth(1)).toContainText("First page line two");
+  await expect(lineEditors.nth(2)).toContainText("Second page line");
 });
 
 test("owner can apply one supplier to every image group and restore group suppliers", async ({

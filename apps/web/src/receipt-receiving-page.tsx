@@ -248,6 +248,20 @@ function receiptFileGroupId(row: ReceiptCsvRow): string {
     : row.sourcegroupid || "receipt-lines";
 }
 
+function groupReceiptRows(rows: ReceiptCsvRow[]): ReceiptCsvRow[] {
+  const groups = new Map<string, ReceiptCsvRow[]>();
+  for (const row of rows) {
+    const groupId = receiptFileGroupId(row);
+    const group = groups.get(groupId);
+    if (group) {
+      group.push(row);
+    } else {
+      groups.set(groupId, [row]);
+    }
+  }
+  return [...groups.values()].flat();
+}
+
 function isHighConfidenceConversion(row: ReceiptCsvRow): boolean {
   return (
     row.conversionrecommended?.trim().toUpperCase() === "TRUE" &&
@@ -414,7 +428,7 @@ export function ReceiptReceivingPage() {
     initialDraft?.headers ?? [],
   );
   const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>(
-    initialDraft?.rows ?? [],
+    groupReceiptRows(initialDraft?.rows ?? []),
   );
   const [singleSupplierMode, setSingleSupplierMode] = useState(
     initialDraft?.singleSupplierMode ?? false,
@@ -597,12 +611,14 @@ export function ReceiptReceivingPage() {
     setDraftHeaders(document.headers);
     const fallbackGroupId = crypto.randomUUID();
     setDraftRows(
-      document.rows.map((row) => ({
-        ...row,
-        sourcegroupid: row.sourcegroupid || fallbackGroupId,
-        sourcefile: row.sourcefile || filename,
-        sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
-      })),
+      groupReceiptRows(
+        document.rows.map((row) => ({
+          ...row,
+          sourcegroupid: row.sourcegroupid || fallbackGroupId,
+          sourcefile: row.sourcefile || filename,
+          sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+        })),
+      ),
     );
     setSingleSupplierMode(false);
     setSharedSupplier("");
@@ -697,7 +713,7 @@ export function ReceiptReceivingPage() {
           sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
           supplier: singleSupplierMode ? sharedSupplier : row.supplier,
         }));
-        appendedRows = [...appendedRows, ...newRows];
+        appendedRows = groupReceiptRows([...appendedRows, ...newRows]);
         receiptFilename ??= response.filename;
         setDraftHeaders(extracted.headers);
         setDraftRows(appendedRows);
@@ -798,7 +814,7 @@ export function ReceiptReceivingPage() {
       bnpceligible: "FALSE",
       trackslots: "FALSE",
     } as ReceiptCsvRow;
-    setDraftRows((rows) => [...rows, newRow]);
+    setDraftRows((rows) => groupReceiptRows([...rows, newRow]));
     clearReviewState();
   }
 
