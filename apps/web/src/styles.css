@@ -883,6 +883,11 @@ a {
   display: grid;
   gap: 4px;
 }
+.receipt-supplier-control {
+  display: grid;
+  gap: 8px;
+  min-width: min(100%, 220px);
+}
 .receipt-editor-heading strong {
   color: #2f5549;
   font-size: 12px;

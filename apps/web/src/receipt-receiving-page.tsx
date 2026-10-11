@@ -51,6 +51,8 @@ type PersistedReceiptDraft = {
   prepared: PreparedReceipt;
   headers: string[];
   rows: ReceiptCsvRow[];
+  singleSupplierMode: boolean;
+  sharedSupplier: string;
 };
 
 const RECEIPT_DRAFT_STORAGE_KEY = "medtryx-receipt-draft-v1";
@@ -69,6 +71,10 @@ function readPersistedReceiptDraft(): PersistedReceiptDraft | null {
       !Array.isArray(candidate.headers) ||
       !candidate.headers.every((header) => typeof header === "string") ||
       !Array.isArray(candidate.rows) ||
+      (candidate.singleSupplierMode !== undefined &&
+        typeof candidate.singleSupplierMode !== "boolean") ||
+      (candidate.sharedSupplier !== undefined &&
+        typeof candidate.sharedSupplier !== "string") ||
       !candidate.rows.every(
         (row) =>
           typeof row === "object" &&
@@ -88,6 +94,8 @@ function readPersistedReceiptDraft(): PersistedReceiptDraft | null {
       },
       headers: document.headers,
       rows: document.rows,
+      singleSupplierMode: candidate.singleSupplierMode ?? false,
+      sharedSupplier: candidate.sharedSupplier ?? "",
     };
   } catch {
     return null;
@@ -215,6 +223,7 @@ function ReceiptField({
   placeholder,
   step,
   min,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -223,6 +232,7 @@ function ReceiptField({
   placeholder?: string;
   step?: string;
   min?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className="receipt-edit-field">
@@ -233,6 +243,7 @@ function ReceiptField({
         placeholder={placeholder}
         step={step}
         min={min}
+        disabled={disabled}
         onChange={(event) => onChange(event.currentTarget.value)}
       />
     </label>
@@ -271,16 +282,19 @@ function ReceiptCheck({
   label,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="receipt-edit-check">
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
       <span>{label}</span>
@@ -362,6 +376,12 @@ export function ReceiptReceivingPage() {
   const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>(
     initialDraft?.rows ?? [],
   );
+  const [singleSupplierMode, setSingleSupplierMode] = useState(
+    initialDraft?.singleSupplierMode ?? false,
+  );
+  const [sharedSupplier, setSharedSupplier] = useState(
+    initialDraft?.sharedSupplier ?? "",
+  );
   const [reviewCsv, setReviewCsv] = useState("");
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [issues, setIssues] = useState<RowIssue[]>([]);
@@ -384,7 +404,13 @@ export function ReceiptReceivingPage() {
       if (prepared && draftHeaders.length > 0 && draftRows.length > 0) {
         window.localStorage.setItem(
           RECEIPT_DRAFT_STORAGE_KEY,
-          JSON.stringify({ prepared, headers: draftHeaders, rows: draftRows }),
+          JSON.stringify({
+            prepared,
+            headers: draftHeaders,
+            rows: draftRows,
+            singleSupplierMode,
+            sharedSupplier,
+          }),
         );
       } else {
         window.localStorage.removeItem(RECEIPT_DRAFT_STORAGE_KEY);
@@ -392,7 +418,7 @@ export function ReceiptReceivingPage() {
     } catch {
       // The receipt editor remains usable when browser storage is unavailable.
     }
-  }, [prepared, draftHeaders, draftRows]);
+  }, [prepared, draftHeaders, draftRows, singleSupplierMode, sharedSupplier]);
 
   useEffect(() => {
     if (productChooserRow === null) return;
@@ -433,11 +459,45 @@ export function ReceiptReceivingPage() {
   }
 
   function updateRow(index: number, changes: Record<string, string>) {
+    const rowChanges =
+      changes.supplier !== undefined && !singleSupplierMode
+        ? { ...changes, sourcegroupsupplier: changes.supplier }
+        : changes;
     setDraftRows((rows) =>
       rows.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, ...changes } : row,
+        rowIndex === index ? { ...row, ...rowChanges } : row,
       ),
     );
+    clearReviewState();
+  }
+
+  function changeSingleSupplierMode(enabled: boolean) {
+    setSingleSupplierMode(enabled);
+    if (enabled) {
+      const supplier =
+        draftRows.find((row) => row.supplier.trim())?.supplier ?? "";
+      setSharedSupplier(supplier);
+      setDraftRows((rows) =>
+        rows.map((row) => ({
+          ...row,
+          sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+          supplier,
+        })),
+      );
+    } else {
+      setDraftRows((rows) =>
+        rows.map((row) => ({
+          ...row,
+          supplier: row.sourcegroupsupplier || row.supplier,
+        })),
+      );
+    }
+    clearReviewState();
+  }
+
+  function updateSharedSupplier(supplier: string) {
+    setSharedSupplier(supplier);
+    setDraftRows((rows) => rows.map((row) => ({ ...row, supplier })));
     clearReviewState();
   }
 
@@ -492,8 +552,11 @@ export function ReceiptReceivingPage() {
         ...row,
         sourcegroupid: row.sourcegroupid || fallbackGroupId,
         sourcefile: row.sourcefile || filename,
+        sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
       })),
     );
+    setSingleSupplierMode(false);
+    setSharedSupplier("");
     setPrepared({ lineCount: document.rows.length, filename });
     setReview(null);
     setReviewCsv("");
@@ -560,6 +623,7 @@ export function ReceiptReceivingPage() {
             ...row,
             sourcegroupid: row.sourcegroupid || previousGroupId,
             sourcefile: row.sourcefile || prepared.filename,
+            sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
           }))
         : [];
       const draftId = existingRows[0]?.draftid || extracted.rows[0]?.draftid;
@@ -569,6 +633,8 @@ export function ReceiptReceivingPage() {
         draftid: draftId,
         sourcegroupid: groupId,
         sourcefile: groupName,
+        sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+        supplier: singleSupplierMode ? sharedSupplier : row.supplier,
       }));
       setDraftHeaders(extracted.headers);
       setDraftRows([...existingRows, ...newRows]);
@@ -640,6 +706,7 @@ export function ReceiptReceivingPage() {
       draftid: firstRow.draftid,
       sourcegroupid: firstRow.sourcegroupid,
       sourcefile: firstRow.sourcefile,
+      sourcegroupsupplier: firstRow.sourcegroupsupplier,
       supplier: firstRow.supplier,
       reference: firstRow.reference,
       matchstatus: "NEW_PRODUCT",
@@ -704,6 +771,8 @@ export function ReceiptReceivingPage() {
     setPrepared(null);
     setDraftHeaders([]);
     setDraftRows([]);
+    setSingleSupplierMode(false);
+    setSharedSupplier("");
     setReview(null);
     setReviewCsv("");
     setIssues([]);
@@ -927,6 +996,22 @@ export function ReceiptReceivingPage() {
                       will be used to receive stock.
                     </small>
                   </div>
+                  <div className="receipt-supplier-control">
+                    <ReceiptCheck
+                      label="Use one supplier for all receipt pages"
+                      checked={singleSupplierMode}
+                      onChange={changeSingleSupplierMode}
+                      disabled={busy !== null}
+                    />
+                    {singleSupplierMode && (
+                      <ReceiptField
+                        label="Supplier for all receipt pages"
+                        value={sharedSupplier}
+                        onChange={updateSharedSupplier}
+                        disabled={busy !== null}
+                      />
+                    )}
+                  </div>
                   <button
                     className="button button-secondary"
                     type="button"
@@ -1072,13 +1157,15 @@ export function ReceiptReceivingPage() {
                                 updateRow(index, { expirydate: value })
                               }
                             />
-                            <ReceiptField
-                              label="Supplier"
-                              value={row.supplier}
-                              onChange={(value) =>
-                                updateRow(index, { supplier: value })
-                              }
-                            />
+                            {!singleSupplierMode && (
+                              <ReceiptField
+                                label="Supplier"
+                                value={row.supplier}
+                                onChange={(value) =>
+                                  updateRow(index, { supplier: value })
+                                }
+                              />
+                            )}
                             <ReceiptField
                               label="Reference"
                               value={row.reference}

@@ -31,6 +31,7 @@ const csvHeaders = [
   "draftid",
   "sourcegroupid",
   "sourcefile",
+  "sourcegroupsupplier",
   "rearrangedname",
   "sourcequantity",
   "sourceunitcost",
@@ -1021,6 +1022,7 @@ async function makeDraftCsv(
     return [
       source.description,
       draftId,
+      "",
       "",
       "",
       rearrangedName,

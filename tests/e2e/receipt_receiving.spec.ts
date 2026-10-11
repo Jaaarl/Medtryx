@@ -243,6 +243,101 @@ test("owner can append a parsed image as a separate receipt group", async ({
   await expect(page.getByText("Second page medicine").first()).toBeVisible();
 });
 
+test("owner can apply one supplier to every image group and restore group suppliers", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "sourcegroupid",
+    "sourcefile",
+    "sourcegroupsupplier",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "supplier",
+    "matchstatus",
+    "selectedproductid",
+    "conversionapproved",
+  ];
+  const draftId = randomUUID();
+  const rows = [
+    [
+      "First supplier line",
+      draftId,
+      "group-one",
+      "first-page.png",
+      "Supplier One",
+      "First supplier line",
+      "1",
+      "10.00",
+      "Supplier One",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+    [
+      "Second supplier line",
+      draftId,
+      "group-two",
+      "second-page.png",
+      "Supplier Two",
+      "Second supplier line",
+      "1",
+      "12.00",
+      "Supplier Two",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+  ];
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [
+    columns.map(cell).join(","),
+    ...rows.map((row) => row.map(cell).join(",")),
+  ].join("\r\n");
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "grouped-receipts.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+
+  const sharedSupplierToggle = page.getByLabel(
+    "Use one supplier for all receipt pages",
+  );
+  await sharedSupplierToggle.check();
+  const sharedSupplierField = page.getByLabel(
+    "Supplier for all receipt pages",
+    { exact: true },
+  );
+  await sharedSupplierField.fill("Unified Supplier");
+  await expect(page.locator(".receipt-line-group-heading")).toHaveCount(2);
+  await expect(
+    page.locator(".receipt-line-group-heading").nth(0),
+  ).toContainText("Unified Supplier");
+  await expect(
+    page.locator(".receipt-line-group-heading").nth(1),
+  ).toContainText("Unified Supplier");
+
+  await page.reload();
+  await expect(sharedSupplierToggle).toBeChecked();
+  await expect(sharedSupplierField).toHaveValue("Unified Supplier");
+  await sharedSupplierToggle.uncheck();
+  await expect(
+    page.locator(".receipt-line-group-heading").nth(0),
+  ).toContainText("Supplier One");
+  await expect(
+    page.locator(".receipt-line-group-heading").nth(1),
+  ).toContainText("Supplier Two");
+});
+
 test("owner gets an explanation when AI cannot extract a receipt", async ({
   page,
 }) => {
