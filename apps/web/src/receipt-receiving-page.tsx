@@ -219,6 +219,28 @@ function downloadCsv(csv: string, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function receiptMoneyToCents(value: string): number | null {
+  const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/u.exec(value.trim());
+  if (!match) return null;
+  return Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+}
+
+function formatReceiptMoney(cents: number): string {
+  const wholePesos = Math.floor(cents / 100);
+  return `₱${wholePesos.toLocaleString("en-PH")}.${String(cents % 100).padStart(2, "0")}`;
+}
+
+function convertedUnitCostCents(
+  packageCostCents: number,
+  factor: number,
+): number {
+  const divisor = BigInt(factor);
+  const cost = BigInt(packageCostCents);
+  const quotient = cost / divisor;
+  const remainder = cost % divisor;
+  return Number(quotient + (remainder * 2n >= divisor ? 1n : 0n));
+}
+
 function ReceiptField({
   label,
   value,
@@ -1070,6 +1092,25 @@ export function ReceiptReceivingPage() {
                       const isNewProduct = row.matchstatus === "NEW_PRODUCT";
                       const conversionRecommended =
                         row.conversionrecommended?.toUpperCase() === "TRUE";
+                      const highConfidenceConversion =
+                        conversionRecommended &&
+                        row.conversionconfidence?.toUpperCase() === "HIGH";
+                      const packageCostCents = receiptMoneyToCents(
+                        row.unitcost,
+                      );
+                      const receiptPackages = Number(row.quantity);
+                      const unitsPerPackage = Number(row.unitsperpackage);
+                      const convertedQuantity =
+                        receiptPackages * unitsPerPackage;
+                      const showConversionPreview =
+                        highConfidenceConversion &&
+                        packageCostCents !== null &&
+                        Number.isInteger(receiptPackages) &&
+                        receiptPackages >= 1 &&
+                        Number.isInteger(unitsPerPackage) &&
+                        unitsPerPackage > 1 &&
+                        Number.isSafeInteger(convertedQuantity) &&
+                        convertedQuantity <= 1_000_000;
                       const zeroCost =
                         row.unitcost.trim() !== "" &&
                         Number(row.unitcost) === 0;
@@ -1505,6 +1546,23 @@ export function ReceiptReceivingPage() {
                                   ? `AI suggests this conversion (${row.conversionconfidence || "LOW"} confidence). ${row.conversionreason || "Review the package before approving."}`
                                   : "Leave conversion off to receive the quantity as printed."}
                               </small>
+                              {showConversionPreview && (
+                                <small className="receipt-conversion-preview">
+                                  If approved, converted unit cost is{" "}
+                                  {formatReceiptMoney(
+                                    convertedUnitCostCents(
+                                      packageCostCents,
+                                      unitsPerPackage,
+                                    ),
+                                  )}{" "}
+                                  per sellable unit (
+                                  {formatReceiptMoney(packageCostCents)} per
+                                  package ÷ {unitsPerPackage} units/package).
+                                  Receipt quantity: {receiptPackages} packages
+                                  {" → "}
+                                  {convertedQuantity} sellable units.
+                                </small>
+                              )}
                             </div>
                             <ReceiptField
                               label="Units per package"

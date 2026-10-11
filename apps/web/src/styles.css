@@ -1135,6 +1135,9 @@ a {
   font-size: 9px;
   line-height: 1.45;
 }
+.receipt-conversion-panel .receipt-conversion-preview {
+  color: #345b4d;
+}
 .receipt-conversion-panel > .receipt-edit-check {
   grid-column: 1 / -1;
 }

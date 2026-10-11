@@ -617,6 +617,77 @@ test("owner can edit a receipt CSV in the app before receiving stock", async ({
   await expect(page.getByRole("status")).toContainText("E2E-RECEIPT-EDIT");
 });
 
+test("shows converted unit cost only for high-confidence package suggestions", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "matchstatus",
+    "selectedproductid",
+    "conversionrecommended",
+    "unitsperpackage",
+    "conversionconfidence",
+    "conversionapproved",
+  ];
+  const rows = [
+    [
+      "High-confidence medicine",
+      randomUUID(),
+      "High-confidence medicine",
+      "2",
+      "100.00",
+      "NEW_PRODUCT",
+      "",
+      "TRUE",
+      "20",
+      "HIGH",
+      "FALSE",
+    ],
+    [
+      "Medium-confidence medicine",
+      randomUUID(),
+      "Medium-confidence medicine",
+      "3",
+      "90.00",
+      "NEW_PRODUCT",
+      "",
+      "TRUE",
+      "10",
+      "MEDIUM",
+      "FALSE",
+    ],
+  ];
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [
+    columns.map(cell).join(","),
+    ...rows.map((row) => row.map(cell).join(",")),
+  ].join("\r\n");
+
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "receipt-review.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+
+  const preview = page.locator(".receipt-conversion-preview");
+  await expect(preview).toHaveCount(1);
+  await expect(preview).toContainText("₱5.00 per sellable unit");
+  await expect(preview).toContainText("₱100.00 per package ÷ 20 units/package");
+  await expect(preview).toContainText("2 packages → 40 sellable units");
+});
+
 test("owner can search and select an existing catalog product in the editor", async ({
   page,
 }) => {
