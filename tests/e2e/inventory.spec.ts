@@ -330,6 +330,10 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await expect(
     ownerPage.getByRole("heading", { name: "Sales history", exact: true }),
   ).toBeVisible();
+  const recordsToShow = ownerPage.getByLabel("Records to show");
+  await expect(recordsToShow).toHaveValue("100");
+  await recordsToShow.selectOption("10");
+  await expect(recordsToShow).toHaveValue("10");
   const saleHistoryRow = ownerPage.getByRole("row").filter({
     hasText: transactionId,
   });

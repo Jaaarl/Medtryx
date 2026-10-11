@@ -209,6 +209,7 @@ export function SalesHistoryPage() {
   const [searchParams] = useSearchParams();
   const requestedTransactionId = searchParams.get("transactionId") ?? "";
   const [sales, setSales] = useState<SaleSummary[]>([]);
+  const [recordLimit, setRecordLimit] = useState(100);
   const [openShifts, setOpenShifts] = useState<OpenShift[]>([]);
   const [pendingVariances, setPendingVariances] = useState<PendingVariance[]>(
     [],
@@ -242,7 +243,7 @@ export function SalesHistoryPage() {
 
   async function refreshLists() {
     const [salesResult, shiftResult, varianceResult] = await Promise.all([
-      api.get<{ sales: SaleSummary[] }>("/sales?limit=100"),
+      api.get<{ sales: SaleSummary[] }>(`/sales?limit=${recordLimit}`),
       api.get<{ shifts: OpenShift[] }>("/shifts/open"),
       api.get<{ shifts: PendingVariance[] }>("/shifts/variance-approvals"),
     ]);
@@ -266,8 +267,9 @@ export function SalesHistoryPage() {
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
     void Promise.all([
-      api.get<{ sales: SaleSummary[] }>("/sales?limit=100"),
+      api.get<{ sales: SaleSummary[] }>(`/sales?limit=${recordLimit}`),
       api.get<{ shifts: OpenShift[] }>("/shifts/open"),
       api.get<{ shifts: PendingVariance[] }>("/shifts/variance-approvals"),
     ])
@@ -291,7 +293,7 @@ export function SalesHistoryPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [recordLimit]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -579,9 +581,31 @@ export function SalesHistoryPage() {
           <div className="card-heading inventory-card-heading">
             <div>
               <h2>Recent internal sales</h2>
-              <p>Latest 100 records. A reversal leaves the original intact.</p>
+              <p>
+                Showing up to {recordLimit} most recent records. A reversal
+                leaves the original intact.
+              </p>
             </div>
-            <span className="count-chip">{sales.length} records</span>
+            <div className="history-list-controls">
+              <label className="history-limit-control">
+                <span>Show</span>
+                <select
+                  aria-label="Records to show"
+                  className="text-input history-limit-select"
+                  value={recordLimit}
+                  onChange={(event) =>
+                    setRecordLimit(Number(event.target.value))
+                  }
+                >
+                  {[10, 25, 50, 100].map((limit) => (
+                    <option key={limit} value={limit}>
+                      {limit} records
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="count-chip">{sales.length} records</span>
+            </div>
           </div>
           <div className="inventory-table-wrap">
             <table className="inventory-table">

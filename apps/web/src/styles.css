@@ -1752,6 +1752,25 @@ a {
 .inventory-card-heading {
   border-bottom: 1px solid #edf1ef;
 }
+.history-list-controls {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.history-limit-control {
+  align-items: center;
+  color: #71817b;
+  display: flex;
+  font-size: 10px;
+  gap: 6px;
+  white-space: nowrap;
+}
+.history-limit-select {
+  height: 30px;
+  min-width: 96px;
+  padding: 0 7px;
+  width: auto;
+}
 .inventory-search-row {
   align-items: center;
   background: #fbfcfb;
