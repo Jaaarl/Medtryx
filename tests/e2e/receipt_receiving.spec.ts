@@ -91,6 +91,152 @@ test("owner receipt draft survives leaving and reopening the page", async ({
   );
 });
 
+test("owner can hide and restore a receipt line without removing it", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "sourcegroupid",
+    "sourcefile",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "supplier",
+    "matchstatus",
+    "selectedproductid",
+    "conversionapproved",
+  ];
+  const rows = [
+    [
+      "First parsed medicine",
+      randomUUID(),
+      randomUUID(),
+      "first-page.pdf",
+      "First parsed medicine",
+      "1",
+      "10.00",
+      "Saved supplier",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+    [
+      "Second parsed medicine",
+      randomUUID(),
+      randomUUID(),
+      "second-page.pdf",
+      "Second parsed medicine",
+      "2",
+      "12.00",
+      "Saved supplier",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+  ];
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [
+    columns.map(cell).join(","),
+    ...rows.map((row) => row.map(cell).join(",")),
+  ].join("\r\n");
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "receipt-review.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+
+  await page.getByRole("button", { name: "Hide line 2" }).click();
+  await expect(
+    page.getByText("Second parsed medicine", { exact: true }),
+  ).toBeHidden();
+  await expect(
+    page.getByText(
+      "Hidden from the editor. This line stays in the receipt and will be validated and imported.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("First parsed medicine", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("2 line items ready to edit")).toBeVisible();
+
+  await page.getByRole("button", { name: "Add missing line" }).click();
+  await expect(page.getByRole("button", { name: "Show line 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Remove line 2" }).click();
+  await expect(page.getByRole("button", { name: "Show line 2" })).toBeVisible();
+
+  await page.goto("/checkout");
+  await page.goto("/receipt-receiving");
+  await expect(page.getByRole("button", { name: "Show line 2" })).toBeVisible();
+  await expect(
+    page.getByText("First parsed medicine", { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Show line 2" }).click();
+  await expect(
+    page.getByText("Second parsed medicine", { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Hide line 2" }).click();
+  let reviewedCsv = "";
+  await page.route("**/api/stock/receipts/ai-review", async (route) => {
+    reviewedCsv = route.request().postData() ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        valid: true,
+        lineCount: 2,
+        newProducts: 2,
+        existingProducts: 0,
+        conversions: 0,
+        lines: rows.map((row, index) => ({
+          row: index + 1,
+          name: row[4],
+          quantity: Number(row[5]),
+          unitCost: row[6],
+          unitCostRounded: false,
+          lineTotal: row[6],
+          conversionFactor: null,
+        })),
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Validate receipt" }).click();
+  await expect(page.getByText("Ready for confirmation")).toBeVisible();
+  expect(reviewedCsv).toContain("First parsed medicine");
+  expect(reviewedCsv).toContain("Second parsed medicine");
+
+  let importedCsv = "";
+  await page.route("**/api/stock/receipts/ai-import", async (route) => {
+    importedCsv = route.request().postData() ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        receiptId: randomUUID(),
+        importedCount: 2,
+        productsAffected: 2,
+        createdProducts: [],
+      }),
+    });
+  });
+  await page.getByRole("button", { name: "Import all" }).click();
+  await expect(page.locator(".banner-success")).toContainText(
+    "Received 2 lines across 2 products.",
+  );
+  expect(importedCsv).toContain("First parsed medicine");
+  expect(importedCsv).toContain("Second parsed medicine");
+});
+
 test("owner sees specific AI receipt preparation activity while it loads", async ({
   page,
 }) => {

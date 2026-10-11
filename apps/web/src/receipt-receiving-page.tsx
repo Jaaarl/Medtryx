@@ -3,6 +3,8 @@ import type { ChangeEvent } from "react";
 import {
   ArrowDownToLine,
   Check,
+  Eye,
+  EyeOff,
   FileUp,
   LoaderCircle,
   RotateCcw,
@@ -51,6 +53,7 @@ type PersistedReceiptDraft = {
   prepared: PreparedReceipt;
   headers: string[];
   rows: ReceiptCsvRow[];
+  hiddenLineIds: string[];
   singleSupplierMode: boolean;
   sharedSupplier: string;
 };
@@ -71,6 +74,9 @@ function readPersistedReceiptDraft(): PersistedReceiptDraft | null {
       !Array.isArray(candidate.headers) ||
       !candidate.headers.every((header) => typeof header === "string") ||
       !Array.isArray(candidate.rows) ||
+      (candidate.hiddenLineIds !== undefined &&
+        (!Array.isArray(candidate.hiddenLineIds) ||
+          !candidate.hiddenLineIds.every((id) => typeof id === "string"))) ||
       (candidate.singleSupplierMode !== undefined &&
         typeof candidate.singleSupplierMode !== "boolean") ||
       (candidate.sharedSupplier !== undefined &&
@@ -87,13 +93,22 @@ function readPersistedReceiptDraft(): PersistedReceiptDraft | null {
     const document = parseReceiptCsv(
       serializeReceiptCsv(candidate.headers, candidate.rows as ReceiptCsvRow[]),
     );
+    const rows = document.rows.map((row, index) => ({
+      ...row,
+      __receiptLocalRowId:
+        candidate.rows?.[index]?.__receiptLocalRowId || crypto.randomUUID(),
+    }));
+
     return {
       prepared: {
         filename: candidate.prepared.filename,
         lineCount: document.rows.length,
       },
       headers: document.headers,
-      rows: document.rows,
+      rows,
+      hiddenLineIds: (candidate.hiddenLineIds ?? []).filter((id) =>
+        rows.some((row) => row.__receiptLocalRowId === id),
+      ),
       singleSupplierMode: candidate.singleSupplierMode ?? false,
       sharedSupplier: candidate.sharedSupplier ?? "",
     };
@@ -439,6 +454,9 @@ export function ReceiptReceivingPage() {
   const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>(
     groupReceiptRows(initialDraft?.rows ?? []),
   );
+  const [hiddenLineIds, setHiddenLineIds] = useState<Set<string>>(
+    () => new Set(initialDraft?.hiddenLineIds ?? []),
+  );
   const [singleSupplierMode, setSingleSupplierMode] = useState(
     initialDraft?.singleSupplierMode ?? false,
   );
@@ -479,6 +497,7 @@ export function ReceiptReceivingPage() {
             prepared,
             headers: draftHeaders,
             rows: draftRows,
+            hiddenLineIds: [...hiddenLineIds],
             singleSupplierMode,
             sharedSupplier,
           }),
@@ -489,7 +508,14 @@ export function ReceiptReceivingPage() {
     } catch {
       // The receipt editor remains usable when browser storage is unavailable.
     }
-  }, [prepared, draftHeaders, draftRows, singleSupplierMode, sharedSupplier]);
+  }, [
+    prepared,
+    draftHeaders,
+    draftRows,
+    hiddenLineIds,
+    singleSupplierMode,
+    sharedSupplier,
+  ]);
 
   useEffect(() => {
     if (productChooserRow === null) return;
@@ -623,12 +649,14 @@ export function ReceiptReceivingPage() {
       groupReceiptRows(
         document.rows.map((row) => ({
           ...row,
+          __receiptLocalRowId: crypto.randomUUID(),
           sourcegroupid: row.sourcegroupid || fallbackGroupId,
           sourcefile: row.sourcefile || filename,
           sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
         })),
       ),
     );
+    setHiddenLineIds(new Set());
     setSingleSupplierMode(false);
     setSharedSupplier("");
     setPrepared({ lineCount: document.rows.length, filename });
@@ -716,6 +744,7 @@ export function ReceiptReceivingPage() {
           throw new Error("The receipt draft has no line items.");
         const newRows = extracted.rows.map((row) => ({
           ...row,
+          __receiptLocalRowId: crypto.randomUUID(),
           draftid: receiptDraftId!,
           sourcegroupid: groupId,
           sourcefile: file.name,
@@ -805,6 +834,7 @@ export function ReceiptReceivingPage() {
     if (!firstRow) return;
     const newRow = {
       ...Object.fromEntries(draftHeaders.map((header) => [header, ""])),
+      __receiptLocalRowId: crypto.randomUUID(),
       draftid: firstRow.draftid,
       sourcegroupid: firstRow.sourcegroupid,
       sourcefile: firstRow.sourcefile,
@@ -822,15 +852,33 @@ export function ReceiptReceivingPage() {
       ispwdeligible: "FALSE",
       bnpceligible: "FALSE",
       trackslots: "FALSE",
-    } as ReceiptCsvRow;
+    } as unknown as ReceiptCsvRow;
     setDraftRows((rows) => groupReceiptRows([...rows, newRow]));
     clearReviewState();
   }
 
   function removeReceiptLine(index: number) {
+    const removedRowId = draftRows[index]?.__receiptLocalRowId;
     setDraftRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index));
+    if (removedRowId)
+      setHiddenLineIds((ids) => {
+        const next = new Set(ids);
+        next.delete(removedRowId);
+        return next;
+      });
     setProductChooserRow(null);
     clearReviewState();
+  }
+
+  function toggleLineHidden(index: number) {
+    const rowId = draftRows[index]?.__receiptLocalRowId;
+    if (!rowId) return;
+    setHiddenLineIds((ids) => {
+      const next = new Set(ids);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
   }
 
   function downloadCurrentCsv() {
@@ -858,6 +906,11 @@ export function ReceiptReceivingPage() {
     const remainingRows = selectedOnly
       ? draftRows.filter((_, index) => !selectedReviewRows.has(index))
       : [];
+    const remainingHiddenLineIds = remainingRows.flatMap((row) =>
+      row.__receiptLocalRowId && hiddenLineIds.has(row.__receiptLocalRowId)
+        ? [row.__receiptLocalRowId]
+        : [],
+    );
     setBusy("import");
     setProgressStep(1);
     setError("");
@@ -881,10 +934,12 @@ export function ReceiptReceivingPage() {
           current ? { ...current, lineCount: nextRows.length } : null,
         );
         setDraftRows(nextRows);
+        setHiddenLineIds(new Set(remainingHiddenLineIds));
       } else {
         setPrepared(null);
         setDraftHeaders([]);
         setDraftRows([]);
+        setHiddenLineIds(new Set());
       }
       setProgressStep(2);
     } catch (requestError) {
@@ -901,6 +956,7 @@ export function ReceiptReceivingPage() {
     setPrepared(null);
     setDraftHeaders([]);
     setDraftRows([]);
+    setHiddenLineIds(new Set());
     setSingleSupplierMode(false);
     setSharedSupplier("");
     setReview(null);
@@ -1174,6 +1230,10 @@ export function ReceiptReceivingPage() {
                     {draftRows.map((row, index) => {
                       const groupId = receiptFileGroupId(row);
                       const group = receiptGroups.get(groupId)!;
+                      const isHidden = Boolean(
+                        row.__receiptLocalRowId &&
+                        hiddenLineIds.has(row.__receiptLocalRowId),
+                      );
                       const isNewProduct = row.matchstatus === "NEW_PRODUCT";
                       const conversionRecommended =
                         row.conversionrecommended?.toUpperCase() === "TRUE";
@@ -1200,7 +1260,7 @@ export function ReceiptReceivingPage() {
                         Number(row.unitcost) === 0;
                       return (
                         <article
-                          className="receipt-line-editor"
+                          className={`receipt-line-editor ${isHidden ? "receipt-line-hidden" : ""}`}
                           key={`${groupId}-${index}`}
                         >
                           {group.firstIndex === index && (
@@ -1217,23 +1277,56 @@ export function ReceiptReceivingPage() {
                           )}
                           <div className="receipt-line-heading">
                             <div>
-                              <strong>Line {index + 1}</strong>
+                              <strong>
+                                Line {index + 1}
+                                {isHidden ? " hidden" : ""}
+                              </strong>
                               {conversionRecommended && (
                                 <span className="receipt-ai-badge">
                                   AI suggests package conversion
                                 </span>
                               )}
                             </div>
-                            <button
-                              className="receipt-remove-line"
-                              type="button"
-                              onClick={() => removeReceiptLine(index)}
-                              disabled={busy !== null || draftRows.length <= 1}
-                              aria-label={`Remove line ${index + 1}`}
-                            >
-                              Remove
-                            </button>
+                            <div className="receipt-line-actions">
+                              <button
+                                className="receipt-hide-line"
+                                type="button"
+                                onClick={() => toggleLineHidden(index)}
+                                disabled={busy !== null}
+                                aria-label={`${isHidden ? "Show" : "Hide"} line ${index + 1}`}
+                              >
+                                {isHidden ? (
+                                  <>
+                                    <Eye size={14} /> Show line
+                                  </>
+                                ) : (
+                                  <>
+                                    <EyeOff size={14} /> Hide line
+                                  </>
+                                )}
+                              </button>
+                              {!isHidden && (
+                                <button
+                                  className="receipt-remove-line"
+                                  type="button"
+                                  onClick={() => removeReceiptLine(index)}
+                                  disabled={
+                                    busy !== null || draftRows.length <= 1
+                                  }
+                                  aria-label={`Remove line ${index + 1}`}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
                           </div>
+
+                          {isHidden && (
+                            <p className="receipt-hidden-line-note">
+                              Hidden from the editor. This line stays in the
+                              receipt and will be validated and imported.
+                            </p>
+                          )}
 
                           <div className="receipt-source-description">
                             <span>Original receipt text</span>
@@ -1417,7 +1510,10 @@ export function ReceiptReceivingPage() {
                                         value: "",
                                         label: "Choose tax class",
                                       },
-                                      { value: "VATABLE", label: "Vatable" },
+                                      {
+                                        value: "VATABLE",
+                                        label: "Vatable",
+                                      },
                                       {
                                         value: "VAT_EXEMPT",
                                         label: "VAT exempt",
@@ -1432,15 +1528,23 @@ export function ReceiptReceivingPage() {
                                     label="Product type"
                                     value={row.producttype.toUpperCase()}
                                     onChange={(value) =>
-                                      updateRow(index, { producttype: value })
+                                      updateRow(index, {
+                                        producttype: value,
+                                      })
                                     }
                                     options={[
                                       {
                                         value: "",
                                         label: "Choose product type",
                                       },
-                                      { value: "GENERIC", label: "Generic" },
-                                      { value: "BRANDED", label: "Branded" },
+                                      {
+                                        value: "GENERIC",
+                                        label: "Generic",
+                                      },
+                                      {
+                                        value: "BRANDED",
+                                        label: "Branded",
+                                      },
                                       {
                                         value: "NOT_APPLICABLE",
                                         label: "Not applicable",
