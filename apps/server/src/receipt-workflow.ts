@@ -29,6 +29,8 @@ const MONEY_PATTERN = /^\d{1,7}(?:\.\d{1,2})?$/u;
 const csvHeaders = [
   "originaldescription",
   "draftid",
+  "sourcegroupid",
+  "sourcefile",
   "rearrangedname",
   "sourcequantity",
   "sourceunitcost",
@@ -1019,6 +1021,8 @@ async function makeDraftCsv(
     return [
       source.description,
       draftId,
+      "",
+      "",
       rearrangedName,
       source.quantity,
       source.unitCost,

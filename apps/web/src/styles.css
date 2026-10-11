@@ -907,6 +907,24 @@ a {
   display: grid;
   gap: 12px;
 }
+.receipt-line-group-heading {
+  background: #edf4f0;
+  border: 1px solid #d8e6de;
+  border-radius: 8px;
+  color: #2f5549;
+  padding: 10px 12px;
+}
+.receipt-line-group-heading strong {
+  display: block;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.receipt-line-group-heading small {
+  color: #71847a;
+  display: block;
+  font-size: 9px;
+  margin-top: 4px;
+}
 .receipt-line-editor {
   background: #fbfcfb;
   border: 1px solid #e2ebe6;

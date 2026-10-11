@@ -1,6 +1,8 @@
 export type ReceiptCsvRow = Record<string, string> & {
   originaldescription: string;
   draftid: string;
+  sourcegroupid: string;
+  sourcefile: string;
   rearrangedname: string;
   sourcequantity: string;
   sourceunitcost: string;
@@ -55,6 +57,8 @@ const requiredHeaders = [
 const currentReceiptHeaders = [
   "originaldescription",
   "draftid",
+  "sourcegroupid",
+  "sourcefile",
   "rearrangedname",
   "sourcequantity",
   "sourceunitcost",
@@ -175,6 +179,8 @@ export function parseReceiptCsv(source: string): ReceiptCsvDocument {
     const values = {
       originaldescription: "",
       draftid: "",
+      sourcegroupid: "",
+      sourcefile: "",
       rearrangedname: "",
       sourcequantity: "",
       sourceunitcost: "",

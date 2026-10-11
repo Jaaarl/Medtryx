@@ -164,6 +164,85 @@ test("owner sees specific AI receipt preparation activity while it loads", async
   await expect(page.getByText("1 line items ready to edit")).toBeVisible();
 });
 
+test("owner can append a parsed image as a separate receipt group", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  const makeDraft = (description: string, supplier: string) => ({
+    csv: [
+      "originaldescription,draftid,rearrangedname,quantity,unitcost,supplier,matchstatus,selectedproductid,conversionapproved",
+      [
+        description,
+        randomUUID(),
+        description,
+        "1",
+        "10.00",
+        supplier,
+        "NEW_PRODUCT",
+        "",
+        "FALSE",
+      ]
+        .map((value) => `"${value.replaceAll('"', '""')}"`)
+        .join(","),
+    ].join("\r\n"),
+    filename: "receipt-review.csv",
+    lineCount: 1,
+  });
+  await page.addInitScript(
+    (drafts) => {
+      const originalFetch = window.fetch.bind(window);
+      let nextDraft = 0;
+      window.fetch = (input, init) => {
+        if (!String(input).includes("/api/stock/receipts/ai-draft-stream"))
+          return originalFetch(input, init);
+        const draft = drafts[nextDraft++];
+        if (!draft) throw new Error("Unexpected receipt extraction request.");
+        const body = [
+          `event: progress\ndata: ${JSON.stringify({ step: 1 })}\n\n`,
+          `event: complete\ndata: ${JSON.stringify(draft)}\n\n`,
+        ].join("");
+        return Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream; charset=utf-8" },
+          }),
+        );
+      };
+    },
+    [
+      makeDraft("First page medicine", "Supplier One"),
+      makeDraft("Second page medicine", "Supplier Two"),
+    ],
+  );
+  await page.goto("/receipt-receiving");
+
+  const receiptInput = page.locator('input[type="file"][accept*="image/png"]');
+  await receiptInput.setInputFiles({
+    name: "first-page.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("first page"),
+  });
+  await page.getByRole("button", { name: "Extract receipt with AI" }).click();
+  await expect(page.locator(".receipt-line-group-heading")).toHaveCount(1);
+
+  await receiptInput.setInputFiles({
+    name: "second-page.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("second page"),
+  });
+  await page.getByRole("button", { name: "Extract and append pages" }).click();
+
+  await expect(page.locator(".receipt-line-group-heading")).toHaveCount(2);
+  await expect(page.getByText("2 line items ready to edit")).toBeVisible();
+  await expect(page.getByText("First page medicine").first()).toBeVisible();
+  await expect(page.getByText("Second page medicine").first()).toBeVisible();
+  await expect(page.getByText(/Supplier: Supplier One/)).toBeVisible();
+  await expect(page.getByText(/Supplier: Supplier Two/)).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".receipt-line-group-heading")).toHaveCount(2);
+  await expect(page.getByText("Second page medicine").first()).toBeVisible();
+});
+
 test("owner gets an explanation when AI cannot extract a receipt", async ({
   page,
 }) => {

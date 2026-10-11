@@ -486,7 +486,14 @@ export function ReceiptReceivingPage() {
   function loadCsvIntoEditor(csv: string, filename: string) {
     const document = parseReceiptCsv(csv);
     setDraftHeaders(document.headers);
-    setDraftRows(document.rows);
+    const fallbackGroupId = crypto.randomUUID();
+    setDraftRows(
+      document.rows.map((row) => ({
+        ...row,
+        sourcegroupid: row.sourcegroupid || fallbackGroupId,
+        sourcefile: row.sourcefile || filename,
+      })),
+    );
     setPrepared({ lineCount: document.rows.length, filename });
     setReview(null);
     setReviewCsv("");
@@ -503,13 +510,8 @@ export function ReceiptReceivingPage() {
         fileMimeType(file),
       ),
     );
-    setPrepared(null);
-    setDraftHeaders([]);
-    setDraftRows([]);
-    setReview(null);
-    setReviewCsv("");
+    clearReviewState();
     setImported(null);
-    setIssues([]);
     if (chosen.length > 20) {
       setFiles([]);
       setError("Choose no more than 20 files at a time.");
@@ -545,7 +547,42 @@ export function ReceiptReceivingPage() {
         setProgressStep,
       );
       setProgressStep(6);
-      loadCsvIntoEditor(response.csv, response.filename);
+      const extracted = parseReceiptCsv(response.csv);
+      if (draftRows.length + extracted.rows.length > 500) {
+        setError("A receipt can contain no more than 500 line items.");
+        return;
+      }
+      const groupId = crypto.randomUUID();
+      const groupName = files.map((file) => file.name).join(", ");
+      const previousGroupId = crypto.randomUUID();
+      const existingRows = prepared
+        ? draftRows.map((row) => ({
+            ...row,
+            sourcegroupid: row.sourcegroupid || previousGroupId,
+            sourcefile: row.sourcefile || prepared.filename,
+          }))
+        : [];
+      const draftId = existingRows[0]?.draftid || extracted.rows[0]?.draftid;
+      if (!draftId) throw new Error("The receipt draft has no line items.");
+      const newRows = extracted.rows.map((row) => ({
+        ...row,
+        draftid: draftId,
+        sourcegroupid: groupId,
+        sourcefile: groupName,
+      }));
+      setDraftHeaders(extracted.headers);
+      setDraftRows([...existingRows, ...newRows]);
+      setPrepared({
+        lineCount: existingRows.length + newRows.length,
+        filename: prepared?.filename ?? response.filename,
+      });
+      setReview(null);
+      setReviewCsv("");
+      setIssues([]);
+      setImported(null);
+      setFiles([]);
+      if (receiptInput.current) receiptInput.current.value = "";
+      setError("");
     } catch (requestError) {
       setError(errorText(requestError));
     } finally {
@@ -601,6 +638,8 @@ export function ReceiptReceivingPage() {
     const newRow = {
       ...Object.fromEntries(draftHeaders.map((header) => [header, ""])),
       draftid: firstRow.draftid,
+      sourcegroupid: firstRow.sourcegroupid,
+      sourcefile: firstRow.sourcefile,
       supplier: firstRow.supplier,
       reference: firstRow.reference,
       matchstatus: "NEW_PRODUCT",
@@ -677,6 +716,25 @@ export function ReceiptReceivingPage() {
     if (reviewInput.current) reviewInput.current.value = "";
   }
 
+  const receiptGroups = new Map<
+    string,
+    { firstIndex: number; label: string; count: number; supplier: string }
+  >();
+  draftRows.forEach((row, index) => {
+    const id = row.sourcegroupid || row.sourcefile || "receipt-lines";
+    const group = receiptGroups.get(id);
+    if (group) {
+      group.count += 1;
+    } else {
+      receiptGroups.set(id, {
+        firstIndex: index,
+        label: row.sourcefile || prepared?.filename || "Receipt lines",
+        count: 1,
+        supplier: row.supplier,
+      });
+    }
+  });
+
   return (
     <section className="page-section inventory-page receipt-receiving-page">
       <div className="page-heading">
@@ -745,8 +803,8 @@ export function ReceiptReceivingPage() {
               <div>
                 <h2>Upload receipt pages</h2>
                 <p>
-                  Choose receipt images or PDFs. Files are sent to MixRoute for
-                  extraction and are not stored by this workflow.
+                  Add images or PDFs to extract their lines into the current
+                  receipt draft.
                 </p>
               </div>
               {prepared && <Check size={18} aria-label="Complete" />}
@@ -794,7 +852,9 @@ export function ReceiptReceivingPage() {
               )}
               {busy === "prepare"
                 ? "Reading receipt…"
-                : "Extract receipt with AI"}
+                : prepared
+                  ? "Extract and append pages"
+                  : "Extract receipt with AI"}
             </button>
             {busy === "prepare" && (
               <ReceiptProgressChecklist
@@ -882,6 +942,9 @@ export function ReceiptReceivingPage() {
                 >
                   <div className="receipt-line-list">
                     {draftRows.map((row, index) => {
+                      const groupId =
+                        row.sourcegroupid || row.sourcefile || "receipt-lines";
+                      const group = receiptGroups.get(groupId)!;
                       const isNewProduct = row.matchstatus === "NEW_PRODUCT";
                       const conversionRecommended =
                         row.conversionrecommended?.toUpperCase() === "TRUE";
@@ -891,8 +954,20 @@ export function ReceiptReceivingPage() {
                       return (
                         <article
                           className="receipt-line-editor"
-                          key={`${row.draftid}-${index}`}
+                          key={`${groupId}-${index}`}
                         >
+                          {group.firstIndex === index && (
+                            <div className="receipt-line-group-heading">
+                              <div>
+                                <strong>{group.label}</strong>
+                                <small>
+                                  {group.count} line item
+                                  {group.count === 1 ? "" : "s"} · Supplier:{" "}
+                                  {group.supplier || "not identified"}
+                                </small>
+                              </div>
+                            </div>
+                          )}
                           <div className="receipt-line-heading">
                             <div>
                               <strong>Line {index + 1}</strong>
@@ -1077,7 +1152,9 @@ export function ReceiptReceivingPage() {
                                     step="0.01"
                                     value={row.sellingprice}
                                     onChange={(value) =>
-                                      updateRow(index, { sellingprice: value })
+                                      updateRow(index, {
+                                        sellingprice: value,
+                                      })
                                     }
                                   />
                                   <ReceiptSelect
@@ -1087,7 +1164,10 @@ export function ReceiptReceivingPage() {
                                       updateRow(index, { taxclass: value })
                                     }
                                     options={[
-                                      { value: "", label: "Choose tax class" },
+                                      {
+                                        value: "",
+                                        label: "Choose tax class",
+                                      },
                                       { value: "VATABLE", label: "Vatable" },
                                       {
                                         value: "VAT_EXEMPT",
@@ -1179,7 +1259,9 @@ export function ReceiptReceivingPage() {
                                     label="BNPC category"
                                     value={row.bnpccategory.toUpperCase()}
                                     onChange={(value) =>
-                                      updateRow(index, { bnpccategory: value })
+                                      updateRow(index, {
+                                        bnpccategory: value,
+                                      })
                                     }
                                     options={[
                                       {
