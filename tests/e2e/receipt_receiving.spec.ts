@@ -833,7 +833,7 @@ test("owner preselects high-confidence lines and keeps unselected rows as a new 
   expect(savedDraft?.rows[0]?.draftid).not.toBe(originalDraftId);
 });
 
-test("shows converted unit cost only for high-confidence package suggestions", async ({
+test("shows converted unit cost for high- and medium-confidence suggestions", async ({
   page,
 }) => {
   await signInAsOwner(page);
@@ -879,6 +879,19 @@ test("shows converted unit cost only for high-confidence package suggestions", a
       "MEDIUM",
       "FALSE",
     ],
+    [
+      "Low-confidence medicine",
+      randomUUID(),
+      "Low-confidence medicine",
+      "3",
+      "90.00",
+      "NEW_PRODUCT",
+      "",
+      "TRUE",
+      "10",
+      "LOW",
+      "FALSE",
+    ],
   ];
   const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
   const csv = [
@@ -898,10 +911,13 @@ test("shows converted unit cost only for high-confidence package suggestions", a
     .click();
 
   const preview = page.locator(".receipt-conversion-preview");
-  await expect(preview).toHaveCount(1);
-  await expect(preview).toContainText("₱5.00 per sellable unit");
-  await expect(preview).toContainText("₱100.00 per package ÷ 20 units/package");
-  await expect(preview).toContainText("2 packages → 40 sellable units");
+  await expect(preview).toHaveCount(2);
+  await expect(preview.nth(0)).toContainText("5.00 per sellable unit");
+  await expect(preview.nth(0)).toContainText("100.00 per package");
+  await expect(preview.nth(0)).toContainText("40 sellable units");
+  await expect(preview.nth(1)).toContainText("9.00 per sellable unit");
+  await expect(preview.nth(1)).toContainText("90.00 per package");
+  await expect(preview.nth(1)).toContainText("30 sellable units");
 });
 
 test("owner can search and select an existing catalog product in the editor", async ({

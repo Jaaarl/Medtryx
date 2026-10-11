@@ -269,6 +269,15 @@ function isHighConfidenceConversion(row: ReceiptCsvRow): boolean {
   );
 }
 
+function hasPreviewableConversionCost(row: ReceiptCsvRow): boolean {
+  return (
+    row.conversionrecommended?.trim().toUpperCase() === "TRUE" &&
+    ["HIGH", "MEDIUM"].includes(
+      row.conversionconfidence?.trim().toUpperCase() ?? "",
+    )
+  );
+}
+
 function ReceiptField({
   label,
   value,
@@ -1168,8 +1177,8 @@ export function ReceiptReceivingPage() {
                       const isNewProduct = row.matchstatus === "NEW_PRODUCT";
                       const conversionRecommended =
                         row.conversionrecommended?.toUpperCase() === "TRUE";
-                      const highConfidenceConversion =
-                        isHighConfidenceConversion(row);
+                      const previewableConversion =
+                        hasPreviewableConversionCost(row);
                       const packageCostCents = receiptMoneyToCents(
                         row.unitcost,
                       );
@@ -1178,7 +1187,7 @@ export function ReceiptReceivingPage() {
                       const convertedQuantity =
                         receiptPackages * unitsPerPackage;
                       const showConversionPreview =
-                        highConfidenceConversion &&
+                        previewableConversion &&
                         packageCostCents !== null &&
                         Number.isInteger(receiptPackages) &&
                         receiptPackages >= 1 &&
