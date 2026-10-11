@@ -124,61 +124,60 @@ function mockMixRoute(
     const url = String(input);
     const body = JSON.parse(String(init?.body ?? "{}")) as {
       contents?: Array<{
-        parts?: Array<{ inlineData?: { mimeType: string } }>;
+        parts?: Array<{
+          text?: string;
+          inlineData?: { mimeType: string };
+        }>;
       }>;
-      model?: string;
-      messages?: Array<{ content?: string }>;
     };
     if (url.includes(":generateContent")) {
-      const isExtraction = (body.contents?.[0]?.parts?.length ?? 0) > 1;
+      expect(url).toContain("models/gemini-3.5-flash-lite:generateContent");
+      const prompt = body.contents?.[0]?.parts?.[0]?.text ?? "";
       const suggestedFactor =
         options.unitsPerPackage === undefined ? 10 : options.unitsPerPackage;
-      const text = isExtraction
-        ? {
-            supplier: "Synthetic Pharma Supplier",
-            reference: "SYN-REC-01",
-            items: [
-              {
-                description: rowDescription,
-                quantity: options.quantity ?? "2",
-                unitCost: options.unitCost ?? "100.00",
-                lineTotal: options.lineTotal ?? "200.00",
-                lot: "B-1",
-                expiry: "12/2030",
-              },
-            ],
-          }
-        : {
-            items: [
-              {
-                row: 1,
-                quantity: options.quantity ?? "2",
-                unitCost: options.unitCost ?? "100.00",
-                lotCode: "B-1",
-                expiryDate: "2030-12-31",
-                unitsPerPackage: suggestedFactor,
-                conversionRecommended: suggestedFactor !== null,
-                conversionConfidence: "HIGH",
-                conversionReason: "Clearly labeled tablet count.",
-              },
-            ],
-          };
-      return Response.json({
-        candidates: [{ content: { parts: [{ text: JSON.stringify(text) }] } }],
-      });
-    }
-    expect(body.model).toBe("qwen3.6-flash");
-    const userPrompt = body.messages?.[1]?.content ?? "";
-    const response = userPrompt.startsWith("Rearrange each")
-      ? {
+      let text: unknown;
+      if (prompt.startsWith("Read every supplied receipt image and PDF.")) {
+        text = {
+          supplier: "Synthetic Pharma Supplier",
+          reference: "SYN-REC-01",
+          items: [
+            {
+              description: rowDescription,
+              quantity: options.quantity ?? "2",
+              unitCost: options.unitCost ?? "100.00",
+              lineTotal: options.lineTotal ?? "200.00",
+              lot: "B-1",
+              expiry: "12/2030",
+            },
+          ],
+        };
+      } else if (prompt.startsWith("Prepare these extracted receipt rows")) {
+        text = {
+          items: [
+            {
+              row: 1,
+              quantity: options.quantity ?? "2",
+              unitCost: options.unitCost ?? "100.00",
+              lotCode: "B-1",
+              expiryDate: "2030-12-31",
+              unitsPerPackage: suggestedFactor,
+              conversionRecommended: suggestedFactor !== null,
+              conversionConfidence: "HIGH",
+              conversionReason: "Clearly labeled tablet count.",
+            },
+          ],
+        };
+      } else if (prompt.includes("Rearrange each medicine name")) {
+        text = {
           items: [
             {
               row: 1,
               name: "PREDOQUE-10 Prednisone 10mg tablet (Amb) 100's 200C",
             },
           ],
-        }
-      : {
+        };
+      } else {
+        text = {
           items: [
             {
               row: 1,
@@ -187,9 +186,12 @@ function mockMixRoute(
             },
           ],
         };
-    return Response.json({
-      choices: [{ message: { content: JSON.stringify(response) } }],
-    });
+      }
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(text) }] } }],
+      });
+    }
+    throw new Error(`Unexpected MixRoute endpoint: ${url}`);
   }) as typeof globalThis.fetch;
   originalFetch = oldFetch;
 }
