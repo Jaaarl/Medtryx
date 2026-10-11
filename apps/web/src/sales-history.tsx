@@ -20,6 +20,12 @@ type SaleSummary = {
   cashRoundingAdjustment: string;
   createdAt: string;
   status: "FINALIZED" | "REVERSED";
+  lines: Array<{
+    productName: string;
+    sku: string;
+    unit: string;
+    quantity: number;
+  }>;
   reversal: {
     transactionId: string;
     createdAt: string;
@@ -601,6 +607,12 @@ export function SalesHistoryPage() {
                     <tr key={item.id}>
                       <td>
                         <strong>{item.transactionId}</strong>
+                        {item.lines.map((line, index) => (
+                          <small key={`${item.id}-${index}`}>
+                            {line.productName} Â· {line.sku} Â· {line.quantity}{" "}
+                            {line.unit}
+                          </small>
+                        ))}
                       </td>
                       <td>
                         {dateText(item.createdAt)}

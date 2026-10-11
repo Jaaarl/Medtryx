@@ -163,6 +163,14 @@ type SaleSummaryRow = {
   cash_rounding_adjustment_centavos: number;
 };
 
+type SaleSummaryLineRow = {
+  sale_id: string;
+  product_name_snapshot: string;
+  sku_snapshot: string;
+  unit_snapshot: string;
+  quantity: number;
+};
+
 function presentSaleSummary(row: SaleSummaryRow) {
   return {
     id: row.id,
@@ -244,7 +252,43 @@ export function registerReversalRoutes(
          ORDER BY s.created_at DESC, s.transaction_id DESC LIMIT ?`,
       )
       .all(limit.data) as SaleSummaryRow[];
-    res.json({ sales: rows.map(presentSaleSummary) });
+    const saleIds = rows.map((row) => row.id);
+    const saleLines = saleIds.length
+      ? (db
+          .prepare(
+            `SELECT sale_id, product_name_snapshot, sku_snapshot,
+                    unit_snapshot, quantity
+             FROM sale_lines
+             WHERE sale_id IN (${saleIds.map(() => "?").join(", ")})
+             ORDER BY sale_id, line_number`,
+          )
+          .all(...saleIds) as SaleSummaryLineRow[])
+      : [];
+    const linesBySaleId = new Map<
+      string,
+      Array<{
+        productName: string;
+        sku: string;
+        unit: string;
+        quantity: number;
+      }>
+    >();
+    for (const line of saleLines) {
+      const lines = linesBySaleId.get(line.sale_id) ?? [];
+      lines.push({
+        productName: line.product_name_snapshot,
+        sku: line.sku_snapshot,
+        unit: line.unit_snapshot,
+        quantity: line.quantity,
+      });
+      linesBySaleId.set(line.sale_id, lines);
+    }
+    res.json({
+      sales: rows.map((row) => ({
+        ...presentSaleSummary(row),
+        lines: linesBySaleId.get(row.id) ?? [],
+      })),
+    });
   });
 
   router.get("/sales/recent", requireAuth, (req, res) => {
