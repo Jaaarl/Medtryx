@@ -338,6 +338,146 @@ test("owner can apply one supplier to every image group and restore group suppli
   ).toContainText("Supplier Two");
 });
 
+test("owner can process multiple receipt images one at a time", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  const makeDraft = (description: string, supplier: string) => ({
+    csv: [
+      "originaldescription,draftid,rearrangedname,quantity,unitcost,supplier,matchstatus,selectedproductid,conversionapproved",
+      [
+        description,
+        randomUUID(),
+        description,
+        "1",
+        "10.00",
+        supplier,
+        "NEW_PRODUCT",
+        "",
+        "FALSE",
+      ]
+        .map((value) => `"${value.replaceAll('"', '""')}"`)
+        .join(","),
+    ].join("\r\n"),
+    filename: "receipt-review.csv",
+    lineCount: 1,
+  });
+  await page.addInitScript(
+    (
+      draftsByFilename: Record<
+        string,
+        { csv: string; filename: string; lineCount: number }
+      >,
+    ) => {
+      const testWindow = window as typeof window & {
+        __receiptUploadRequests: string[][];
+        __receiptMaxConcurrent: number;
+      };
+      testWindow.__receiptUploadRequests = [];
+      testWindow.__receiptMaxConcurrent = 0;
+      let activeRequests = 0;
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (!String(input).includes("/api/stock/receipts/ai-draft-stream"))
+          return originalFetch(input, init);
+        const requestBody = JSON.parse(String(init?.body)) as {
+          files: Array<{ name: string }>;
+        };
+        const filenames = requestBody.files.map((file) => file.name);
+        testWindow.__receiptUploadRequests.push(filenames);
+        const draft = draftsByFilename[filenames[0] ?? ""];
+        if (!draft) throw new Error("Unexpected receipt extraction request.");
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                activeRequests += 1;
+                testWindow.__receiptMaxConcurrent = Math.max(
+                  testWindow.__receiptMaxConcurrent,
+                  activeRequests,
+                );
+                const encoder = new TextEncoder();
+                window.setTimeout(() => {
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: progress\ndata: ${JSON.stringify({ step: 1 })}\n\n`,
+                    ),
+                  );
+                  controller.enqueue(
+                    encoder.encode(
+                      `event: complete\ndata: ${JSON.stringify(draft)}\n\n`,
+                    ),
+                  );
+                  controller.close();
+                  activeRequests -= 1;
+                }, 250);
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream; charset=utf-8" },
+            },
+          ),
+        );
+      };
+    },
+    {
+      "first-page.png": makeDraft("First image item", "Supplier One"),
+      "second-page.png": makeDraft("Second image item", "Supplier Two"),
+      "third-page.png": makeDraft("Third image item", "Supplier Three"),
+    },
+  );
+  await page.goto("/receipt-receiving");
+
+  await page.locator('input[type="file"][accept*="image/png"]').setInputFiles([
+    {
+      name: "first-page.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("first image"),
+    },
+    {
+      name: "second-page.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("second image"),
+    },
+    {
+      name: "third-page.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("third image"),
+    },
+  ]);
+  await page.getByRole("button", { name: "Extract receipt with AI" }).click();
+
+  await expect(
+    page.getByText("Reading file 1 of 3: first-page.png"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Reading file 2 of 3: second-page.png"),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Reading file 3 of 3: third-page.png"),
+  ).toBeVisible();
+  await expect(page.getByText("3 line items ready to edit")).toBeVisible();
+  await expect(page.locator(".receipt-line-group-heading")).toHaveCount(3);
+
+  const requestLog = await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __receiptUploadRequests: string[][];
+      __receiptMaxConcurrent: number;
+    };
+    return {
+      requests: testWindow.__receiptUploadRequests,
+      maxConcurrent: testWindow.__receiptMaxConcurrent,
+    };
+  });
+  expect(requestLog.requests).toEqual([
+    ["first-page.png"],
+    ["second-page.png"],
+    ["third-page.png"],
+  ]);
+  expect(requestLog.maxConcurrent).toBe(1);
+});
+
 test("owner gets an explanation when AI cannot extract a receipt", async ({
   page,
 }) => {

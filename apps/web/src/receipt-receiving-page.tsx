@@ -126,9 +126,11 @@ const receiptProgressSteps: Record<ReceiptTask, string[]> = {
 function ReceiptProgressChecklist({
   task,
   activeStep,
+  detail,
 }: {
   task: ReceiptTask;
   activeStep: number;
+  detail?: string | undefined;
 }) {
   return (
     <div
@@ -168,7 +170,9 @@ function ReceiptProgressChecklist({
           );
         })}
       </ul>
-      <small>Keep this page open while processing finishes.</small>
+      <small>
+        {detail ?? "Keep this page open while processing finishes."}
+      </small>
     </div>
   );
 }
@@ -390,6 +394,11 @@ export function ReceiptReceivingPage() {
   const [busy, setBusy] = useState<"prepare" | "review" | "import" | null>(
     null,
   );
+  const [processingFile, setProcessingFile] = useState<{
+    number: number;
+    total: number;
+    name: string;
+  } | null>(null);
   const [progressStep, setProgressStep] = useState(0);
   const [productChooserRow, setProductChooserRow] = useState<number | null>(
     null,
@@ -592,68 +601,89 @@ export function ReceiptReceivingPage() {
 
   async function prepareReceipt() {
     if (!files.length || busy) return;
+    const selectedFiles = files;
     setBusy("prepare");
     setProgressStep(0);
     setError("");
     setIssues([]);
+    const previousGroupId = crypto.randomUUID();
+    let appendedRows = prepared
+      ? draftRows.map((row) => ({
+          ...row,
+          sourcegroupid: row.sourcegroupid || previousGroupId,
+          sourcefile: row.sourcefile || prepared.filename,
+          sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+        }))
+      : [];
+    let receiptDraftId = appendedRows[0]?.draftid;
+    let receiptFilename = prepared?.filename;
+    let nextFileIndex = 0;
     try {
-      const uploadFiles = await Promise.all(
-        files.map(async (file) => ({
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        nextFileIndex = index;
+        const file = selectedFiles[index]!;
+        setProcessingFile({
+          number: index + 1,
+          total: selectedFiles.length,
+          name: file.name,
+        });
+        setProgressStep(0);
+        const uploadFile = {
           name: file.name,
           mimeType: fileMimeType(file),
           dataBase64: await base64File(file),
-        })),
-      );
-      const response = await api.postEventStream<AiDraftResponse>(
-        "/stock/receipts/ai-draft-stream",
-        { files: uploadFiles },
-        setProgressStep,
-      );
-      setProgressStep(6);
-      const extracted = parseReceiptCsv(response.csv);
-      if (draftRows.length + extracted.rows.length > 500) {
-        setError("A receipt can contain no more than 500 line items.");
-        return;
+        };
+        const response = await api.postEventStream<AiDraftResponse>(
+          "/stock/receipts/ai-draft-stream",
+          { files: [uploadFile] },
+          setProgressStep,
+        );
+        const extracted = parseReceiptCsv(response.csv);
+        if (appendedRows.length + extracted.rows.length > 500) {
+          setFiles(selectedFiles.slice(index));
+          if (receiptInput.current) receiptInput.current.value = "";
+          setError("A receipt can contain no more than 500 line items.");
+          return;
+        }
+        const groupId = crypto.randomUUID();
+        receiptDraftId ??= extracted.rows[0]?.draftid;
+        if (!receiptDraftId)
+          throw new Error("The receipt draft has no line items.");
+        const newRows = extracted.rows.map((row) => ({
+          ...row,
+          draftid: receiptDraftId!,
+          sourcegroupid: groupId,
+          sourcefile: file.name,
+          sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+          supplier: singleSupplierMode ? sharedSupplier : row.supplier,
+        }));
+        appendedRows = [...appendedRows, ...newRows];
+        receiptFilename ??= response.filename;
+        setDraftHeaders(extracted.headers);
+        setDraftRows(appendedRows);
+        setPrepared({
+          lineCount: appendedRows.length,
+          filename: receiptFilename,
+        });
+        setReview(null);
+        setReviewCsv("");
+        setIssues([]);
+        setImported(null);
+        setProgressStep(6);
+        nextFileIndex = index + 1;
+        setFiles(selectedFiles.slice(nextFileIndex));
+        if (receiptInput.current) receiptInput.current.value = "";
       }
-      const groupId = crypto.randomUUID();
-      const groupName = files.map((file) => file.name).join(", ");
-      const previousGroupId = crypto.randomUUID();
-      const existingRows = prepared
-        ? draftRows.map((row) => ({
-            ...row,
-            sourcegroupid: row.sourcegroupid || previousGroupId,
-            sourcefile: row.sourcefile || prepared.filename,
-            sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
-          }))
-        : [];
-      const draftId = existingRows[0]?.draftid || extracted.rows[0]?.draftid;
-      if (!draftId) throw new Error("The receipt draft has no line items.");
-      const newRows = extracted.rows.map((row) => ({
-        ...row,
-        draftid: draftId,
-        sourcegroupid: groupId,
-        sourcefile: groupName,
-        sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
-        supplier: singleSupplierMode ? sharedSupplier : row.supplier,
-      }));
-      setDraftHeaders(extracted.headers);
-      setDraftRows([...existingRows, ...newRows]);
-      setPrepared({
-        lineCount: existingRows.length + newRows.length,
-        filename: prepared?.filename ?? response.filename,
-      });
-      setReview(null);
-      setReviewCsv("");
-      setIssues([]);
-      setImported(null);
       setFiles([]);
-      if (receiptInput.current) receiptInput.current.value = "";
       setError("");
     } catch (requestError) {
+      setFiles(selectedFiles.slice(nextFileIndex));
+      if (receiptInput.current) receiptInput.current.value = "";
       setError(errorText(requestError));
     } finally {
       setBusy(null);
       setProgressStep(0);
+      setProcessingFile(null);
     }
   }
 
@@ -920,7 +950,9 @@ export function ReceiptReceivingPage() {
                 <Upload size={16} />
               )}
               {busy === "prepare"
-                ? "Reading receipt…"
+                ? processingFile && processingFile.total > 1
+                  ? `Reading ${processingFile.number} of ${processingFile.total}…`
+                  : "Reading receipt…"
                 : prepared
                   ? "Extract and append pages"
                   : "Extract receipt with AI"}
@@ -929,6 +961,11 @@ export function ReceiptReceivingPage() {
               <ReceiptProgressChecklist
                 task="prepare"
                 activeStep={progressStep}
+                detail={
+                  processingFile
+                    ? `Reading file ${processingFile.number} of ${processingFile.total}: ${processingFile.name}`
+                    : undefined
+                }
               />
             )}
           </div>
