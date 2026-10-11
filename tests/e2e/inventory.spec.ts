@@ -333,9 +333,9 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   const saleHistoryRow = ownerPage.getByRole("row").filter({
     hasText: transactionId,
   });
-  await expect(saleHistoryRow).toContainText(productName);
-  await expect(saleHistoryRow).toContainText(productSku);
-  await expect(saleHistoryRow).toContainText("2 piece");
+  await expect(saleHistoryRow).toContainText(
+    `${productName} - ${productSku} - 2 piece`,
+  );
   await saleHistoryRow.getByRole("button", { name: "Review" }).click();
   await expect(
     ownerPage.getByRole("heading", { name: transactionId }),

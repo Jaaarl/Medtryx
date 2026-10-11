@@ -612,7 +612,7 @@ export function SalesHistoryPage() {
                         )}
                         {item.lines.map((line, index) => (
                           <small key={`${item.id}-${index}`}>
-                            {line.productName} Â· {line.sku} Â· {line.quantity}{" "}
+                            {line.productName} - {line.sku} - {line.quantity}{" "}
                             {line.unit}
                           </small>
                         ))}
