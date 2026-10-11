@@ -114,7 +114,7 @@ function businessDate(now: Date): string {
   return `${values.year}${values.month}${values.day}`;
 }
 
-const QUICK_ACTION_WINDOW_MS = 10 * 60 * 1000;
+const QUICK_ACTION_WINDOW_MS = 60 * 60 * 1000;
 
 function isWithinQuickActionWindow(createdAt: string): boolean {
   const elapsed = Date.now() - new Date(createdAt).getTime();
@@ -248,7 +248,7 @@ export function registerReversalRoutes(
   });
 
   router.get("/sales/recent", requireAuth, (req, res) => {
-    const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - QUICK_ACTION_WINDOW_MS).toISOString();
     const rows = db
       .prepare(
         `SELECT s.id, s.transaction_id, s.payment_method,

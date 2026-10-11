@@ -57,7 +57,7 @@ type SavedSaleForReceipt = {
   }>;
 };
 
-const ACTION_WINDOW_MS = 10 * 60 * 1000;
+const ACTION_WINDOW_MS = 60 * 60 * 1000;
 type ReasonChoice = "" | "Cashier Fault" | "Customer Fault" | "Custom";
 
 function recordedReason(choice: ReasonChoice, customReason: string): string {
@@ -69,8 +69,7 @@ function transactionError(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The cancellation could not be completed.";
   const messages: Record<string, string> = {
-    quick_action_window_expired:
-      "The 10-minute cancellation window has passed.",
+    quick_action_window_expired: "The 1-hour cancellation window has passed.",
     quick_cancel_refund_method_must_match:
       "The refund method must match the original payment.",
     qr_refund_confirmation_required:
@@ -331,8 +330,8 @@ export function RecentTransactions({
         <div>
           <h2>Recent transactions</h2>
           <p>
-            Correct a payment or cancel a sale within 10 minutes. These are
-            separate actions.
+            Correct a payment or cancel a sale within 1 hour. These are separate
+            actions.
           </p>
         </div>
         <span className="count-chip">{transactions.length} in window</span>
@@ -752,7 +751,7 @@ export function RecentTransactions({
         </div>
       ) : (
         <div className="table-loading">
-          No transactions are within the 10-minute cancellation window.
+          No transactions are within the 1-hour cancellation window.
         </div>
       )}
       {receipt && (

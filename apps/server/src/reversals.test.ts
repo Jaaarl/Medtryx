@@ -580,7 +580,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     );
   });
 
-  it("cancels a cash sale within ten minutes, refunds the drawer, restocks, and logs who changed it", async () => {
+  it("cancels a cash sale within one hour, refunds the drawer, restocks, and logs who changed it", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
     const product = await createProduct(owner, { sellingPrice: "112.13" });
@@ -592,6 +592,10 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     expect(shift.status).toBe(201);
     const sale = await sell(cashier, product.id, "CASH");
     expect(sale.amountDue).toBe("112.25");
+    db.prepare("UPDATE sales SET created_at = ? WHERE transaction_id = ?").run(
+      new Date(Date.now() - 59 * 60 * 1000).toISOString(),
+      sale.transactionId,
+    );
 
     const recent = await cashier.get("/api/sales/recent");
     expect(recent.status).toBe(200);
@@ -770,7 +774,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     ).toBe(0);
   });
 
-  it("hides and rejects cancellation and payment changes after the ten-minute window", async () => {
+  it("hides and rejects cancellation and payment changes after the one-hour window", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner);
     const product = await createProduct(owner);
@@ -781,7 +785,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     const shift = await openShift(cashier, "200.00");
     const sale = await sell(cashier, product.id, "CASH");
     db.prepare("UPDATE sales SET created_at = ? WHERE transaction_id = ?").run(
-      new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+      new Date(Date.now() - 61 * 60 * 1000).toISOString(),
       sale.transactionId,
     );
 

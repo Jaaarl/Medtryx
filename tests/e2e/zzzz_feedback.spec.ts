@@ -49,7 +49,7 @@ async function postApi(
   return response;
 }
 
-test("benefit report, ten-minute payment switch and cancellation, and transaction history work in the UI", async ({
+test("benefit report, one-hour payment switch and cancellation, and transaction history work in the UI", async ({
   browser,
 }) => {
   const ownerContext = await browser.newContext();
