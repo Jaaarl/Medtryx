@@ -417,6 +417,9 @@ export function ReceiptReceivingPage() {
   );
   const [reviewCsv, setReviewCsv] = useState("");
   const [review, setReview] = useState<ReviewResult | null>(null);
+  const [selectedReviewRows, setSelectedReviewRows] = useState<Set<number>>(
+    new Set(),
+  );
   const [issues, setIssues] = useState<RowIssue[]>([]);
   const [error, setError] = useState("");
   const [imported, setImported] = useState<ImportResult | null>(null);
@@ -492,6 +495,7 @@ export function ReceiptReceivingPage() {
   function clearReviewState() {
     setReview(null);
     setReviewCsv("");
+    setSelectedReviewRows(new Set());
     setIssues([]);
     setError("");
   }
@@ -748,6 +752,7 @@ export function ReceiptReceivingPage() {
       setProgressStep(2);
       setReviewCsv(csv);
       setReview(response);
+      setSelectedReviewRows(new Set(response.lines.map((_, index) => index)));
     } catch (requestError) {
       setError(errorText(requestError));
       setIssues(rowIssues(requestError));
@@ -798,8 +803,23 @@ export function ReceiptReceivingPage() {
     );
   }
 
-  async function importReviewedCsv() {
-    if (!review || !reviewCsv || busy) return;
+  async function importReviewedCsv(selectedOnly = false) {
+    if (
+      !review ||
+      !reviewCsv ||
+      busy ||
+      (selectedOnly && selectedReviewRows.size === 0)
+    )
+      return;
+    const rowsToImport = selectedOnly
+      ? draftRows.filter((_, index) => selectedReviewRows.has(index))
+      : draftRows;
+    const csvToImport = selectedOnly
+      ? serializeReceiptCsv(draftHeaders, rowsToImport)
+      : reviewCsv;
+    const remainingRows = selectedOnly
+      ? draftRows.filter((_, index) => !selectedReviewRows.has(index))
+      : [];
     setBusy("import");
     setProgressStep(1);
     setError("");
@@ -807,14 +827,27 @@ export function ReceiptReceivingPage() {
     try {
       const result = await api.postCsv<ImportResult>(
         "/stock/receipts/ai-import",
-        reviewCsv,
+        csvToImport,
       );
       setImported(result);
       setReview(null);
       setReviewCsv("");
-      setPrepared(null);
-      setDraftHeaders([]);
-      setDraftRows([]);
+      setSelectedReviewRows(new Set());
+      if (remainingRows.length > 0) {
+        const nextDraftId = crypto.randomUUID();
+        const nextRows = remainingRows.map((row) => ({
+          ...row,
+          draftid: nextDraftId,
+        }));
+        setPrepared((current) =>
+          current ? { ...current, lineCount: nextRows.length } : null,
+        );
+        setDraftRows(nextRows);
+      } else {
+        setPrepared(null);
+        setDraftHeaders([]);
+        setDraftRows([]);
+      }
       setProgressStep(2);
     } catch (requestError) {
       setError(errorText(requestError));
@@ -834,6 +867,7 @@ export function ReceiptReceivingPage() {
     setSharedSupplier("");
     setReview(null);
     setReviewCsv("");
+    setSelectedReviewRows(new Set());
     setIssues([]);
     setError("");
     setImported(null);
@@ -908,6 +942,13 @@ export function ReceiptReceivingPage() {
         <div className="banner banner-success" role="status">
           Received {imported.importedCount} lines across{" "}
           {imported.productsAffected} products. Receipt ID: {imported.receiptId}
+          {prepared && draftRows.length > 0 && (
+            <>
+              {" "}
+              {draftRows.length} unselected lines remain in the editor as a new
+              draft.
+            </>
+          )}
           {imported.createdProducts.length > 0 && (
             <>
               {" "}
@@ -1642,6 +1683,26 @@ export function ReceiptReceivingPage() {
                   <table className="receipt-review-table">
                     <thead>
                       <tr>
+                        <th className="receipt-review-select-column">
+                          <input
+                            className="receipt-review-select"
+                            type="checkbox"
+                            aria-label="Select all receipt lines"
+                            checked={
+                              review.lines.length > 0 &&
+                              selectedReviewRows.size === review.lines.length
+                            }
+                            onChange={(event) =>
+                              setSelectedReviewRows(
+                                event.currentTarget.checked
+                                  ? new Set(
+                                      review.lines.map((_, index) => index),
+                                    )
+                                  : new Set(),
+                              )
+                            }
+                          />
+                        </th>
                         <th>Product</th>
                         <th>Receive</th>
                         <th>Avg. unit cost</th>
@@ -1649,8 +1710,25 @@ export function ReceiptReceivingPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {review.lines.slice(0, 8).map((line) => (
+                      {review.lines.map((line, index) => (
                         <tr key={line.row}>
+                          <td className="receipt-review-select-column">
+                            <input
+                              className="receipt-review-select"
+                              type="checkbox"
+                              aria-label={`Select line ${line.row}: ${line.name}`}
+                              checked={selectedReviewRows.has(index)}
+                              onChange={(event) => {
+                                const checked = event.currentTarget.checked;
+                                setSelectedReviewRows((current) => {
+                                  const next = new Set(current);
+                                  if (checked) next.add(index);
+                                  else next.delete(index);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
                           <td>{line.name}</td>
                           <td>
                             {line.quantity}
@@ -1664,9 +1742,6 @@ export function ReceiptReceivingPage() {
                       ))}
                     </tbody>
                   </table>
-                  {review.lines.length > 8 && (
-                    <small>Showing 8 of {review.lines.length} lines.</small>
-                  )}
                   {review.lines.some((line) => line.unitCostRounded) && (
                     <small>
                       Average unit cost is rounded to centavos; line total
@@ -1674,21 +1749,42 @@ export function ReceiptReceivingPage() {
                     </small>
                   )}
                 </div>
-                <button
-                  className="button button-primary receipt-action"
-                  type="button"
-                  onClick={() => void importReviewedCsv()}
-                  disabled={busy !== null}
-                >
-                  {busy === "import" ? (
-                    <LoaderCircle className="receipt-spinner" size={16} />
-                  ) : (
-                    <Check size={16} />
-                  )}
-                  {busy === "import"
-                    ? "Recording stock…"
-                    : "Confirm and receive stock"}
-                </button>
+                <div className="receipt-review-import-actions">
+                  <span>
+                    {selectedReviewRows.size} of {review.lines.length} lines
+                    selected
+                  </span>
+                  <div>
+                    <button
+                      className="button receipt-action"
+                      type="button"
+                      onClick={() => void importReviewedCsv()}
+                      disabled={busy !== null}
+                    >
+                      {busy === "import" ? (
+                        <LoaderCircle className="receipt-spinner" size={16} />
+                      ) : (
+                        <Check size={16} />
+                      )}
+                      {busy === "import" ? "Recording stock..." : "Import all"}
+                    </button>
+                    <button
+                      className="button button-primary receipt-action"
+                      type="button"
+                      onClick={() => void importReviewedCsv(true)}
+                      disabled={busy !== null || selectedReviewRows.size === 0}
+                    >
+                      {busy === "import" ? (
+                        <LoaderCircle className="receipt-spinner" size={16} />
+                      ) : (
+                        <Check size={16} />
+                      )}
+                      {busy === "import"
+                        ? "Recording stock..."
+                        : `Import selected (${selectedReviewRows.size})`}
+                    </button>
+                  </div>
+                </div>
                 {busy === "import" && (
                   <ReceiptProgressChecklist
                     task="import"

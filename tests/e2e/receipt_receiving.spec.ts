@@ -673,11 +673,146 @@ test("owner can edit a receipt CSV in the app before receiving stock", async ({
 
   await page.getByRole("button", { name: "Validate receipt" }).click();
   await expect(page.getByText("Ready for confirmation")).toBeVisible();
-  await page.getByRole("button", { name: "Confirm and receive stock" }).click();
+  await page.getByRole("button", { name: "Import all" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Received 1 lines across 1 products",
   );
   await expect(page.getByRole("status")).toContainText("E2E-RECEIPT-EDIT");
+});
+
+test("owner can import selected receipt lines and keep the rest as a new draft", async ({
+  page,
+}) => {
+  await signInAsOwner(page);
+  const originalDraftId = randomUUID();
+  let importedCsv = "";
+  await page.route("**/api/stock/receipts/ai-review", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        valid: true,
+        lineCount: 2,
+        newProducts: 2,
+        existingProducts: 0,
+        conversions: 0,
+        lines: [
+          {
+            row: 2,
+            name: "Selected product",
+            quantity: 1,
+            unitCost: "3.00",
+            unitCostRounded: false,
+            lineTotal: "3.00",
+            conversionFactor: null,
+          },
+          {
+            row: 3,
+            name: "Remaining product",
+            quantity: 2,
+            unitCost: "5.00",
+            unitCostRounded: false,
+            lineTotal: "10.00",
+            conversionFactor: null,
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/stock/receipts/ai-import", async (route) => {
+    importedCsv = route.request().postData() ?? "";
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        receiptId: randomUUID(),
+        importedCount: 1,
+        productsAffected: 1,
+        createdProducts: [],
+      }),
+    });
+  });
+  await page.goto("/receipt-receiving");
+
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "matchstatus",
+    "selectedproductid",
+    "conversionapproved",
+  ];
+  const rows = [
+    [
+      "Selected product",
+      originalDraftId,
+      "Selected product",
+      "1",
+      "3.00",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+    [
+      "Remaining product",
+      originalDraftId,
+      "Remaining product",
+      "2",
+      "5.00",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+  ];
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [
+    columns.map(cell).join(","),
+    ...rows.map((row) => row.map(cell).join(",")),
+  ].join("\r\n");
+
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "selected-lines.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+  await page.getByRole("button", { name: "Validate receipt" }).click();
+  await expect(page.getByText("Ready for confirmation")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Import selected (2)" }),
+  ).toBeEnabled();
+
+  await page
+    .getByRole("checkbox", { name: "Select line 2: Selected product" })
+    .uncheck();
+  await page.getByRole("button", { name: "Import selected (1)" }).click();
+
+  await expect(page.getByRole("status")).toContainText(
+    "1 unselected lines remain in the editor as a new draft",
+  );
+  await expect(page.locator(".receipt-prepared-file")).toContainText(
+    "1 line items ready to edit",
+  );
+  expect(importedCsv).toContain("Remaining product");
+  expect(importedCsv).not.toContain("Selected product");
+
+  const savedDraft = await page.evaluate(() => {
+    const value = window.localStorage.getItem("medtryx-receipt-draft-v1");
+    return value
+      ? (JSON.parse(value) as {
+          rows: Array<{ originaldescription: string; draftid: string }>;
+        })
+      : null;
+  });
+  expect(savedDraft?.rows).toHaveLength(1);
+  expect(savedDraft?.rows[0]?.originaldescription).toBe("Selected product");
+  expect(savedDraft?.rows[0]?.draftid).not.toBe(originalDraftId);
 });
 
 test("shows converted unit cost only for high-confidence package suggestions", async ({
@@ -820,7 +955,7 @@ test("owner can search and select an existing catalog product in the editor", as
 
   await page.getByRole("button", { name: "Validate receipt" }).click();
   await expect(page.getByText("Ready for confirmation")).toBeVisible();
-  await page.getByRole("button", { name: "Confirm and receive stock" }).click();
+  await page.getByRole("button", { name: "Import all" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Received 1 lines across 1 products",
   );
