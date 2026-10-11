@@ -211,6 +211,23 @@ function SortableHeader({
   );
 }
 
+const PRODUCT_CATALOG_COLUMNS = [
+  { key: "onHand", label: "ON HAND", sortKey: "onHand" },
+  { key: "sellingPrice", label: "SELL PRICE", sortKey: "sellingPrice" },
+  { key: "latestCost", label: "LATEST COST", sortKey: "latestCost" },
+  { key: "averageCost", label: "AVG. COST", sortKey: "averageCost" },
+  { key: "priceSpread", label: "PRICE SPREAD", sortKey: "priceSpread" },
+  { key: "grossProfit", label: "EST. GROSS PROFIT", sortKey: "grossProfit" },
+  {
+    key: "inventoryValue",
+    label: "INVENTORY VALUE",
+    sortKey: "inventoryValue",
+  },
+  { key: "status", label: "STATUS", sortKey: "status" },
+] as const;
+
+type ProductCatalogColumnKey = (typeof PRODUCT_CATALOG_COLUMNS)[number]["key"];
+
 const EMPTY_FORM = {
   name: "",
   unit: "piece",
@@ -1022,6 +1039,21 @@ export function ProductsPage() {
     canScrollRight: false,
     isScrollable: false,
   });
+  const [visibleProductColumns, setVisibleProductColumns] = useState<
+    Record<ProductCatalogColumnKey, boolean>
+  >({
+    onHand: true,
+    sellingPrice: true,
+    latestCost: true,
+    averageCost: true,
+    priceSpread: true,
+    grossProfit: true,
+    inventoryValue: true,
+    status: true,
+  });
+  const visibleProductColumnCount = PRODUCT_CATALOG_COLUMNS.filter(
+    ({ key }) => visibleProductColumns[key],
+  ).length;
 
   function updateProductTableScroll() {
     const table = productTableRef.current;
@@ -1136,6 +1168,66 @@ export function ProductsPage() {
       direction:
         current.key === key && current.direction === "asc" ? "desc" : "asc",
     }));
+  }
+
+  function renderProductColumn(
+    product: Product,
+    column: ProductCatalogColumnKey,
+  ): ReactNode {
+    switch (column) {
+      case "onHand":
+        return (
+          <>
+            {product.quantityOnHand}
+            {product.tracksLots && (
+              <small>
+                {product.saleableQuantity} saleable ·{" "}
+                {product.unallocatedQuantity} unallocated
+              </small>
+            )}
+            {product.reorderLevel !== null &&
+              product.quantityOnHand <= product.reorderLevel && (
+                <span className="low-stock-tag">
+                  <AlertTriangle size={12} /> Low
+                </span>
+              )}
+          </>
+        );
+      case "sellingPrice":
+        return `₱${product.sellingPrice}`;
+      case "latestCost":
+        return `₱${product.latestAcquisitionCost ?? "—"}`;
+      case "averageCost":
+        return `₱${product.weightedAverageUnitCost}`;
+      case "priceSpread":
+        return `₱${product.unitPriceSpread}`;
+      case "grossProfit":
+        return `₱${product.estimatedUnitGrossProfit}`;
+      case "inventoryValue":
+        return `₱${product.inventoryValue}`;
+      case "status":
+        return (
+          <span
+            className={`product-state ${product.active ? "product-state-active" : ""}`}
+          >
+            {product.active ? "Active" : "Inactive"}
+          </span>
+        );
+    }
+  }
+
+  function toggleProductColumn(column: ProductCatalogColumnKey) {
+    const nextVisible = !visibleProductColumns[column];
+    setVisibleProductColumns((current) => ({
+      ...current,
+      [column]: nextVisible,
+    }));
+    const definition = PRODUCT_CATALOG_COLUMNS.find(
+      (option) => option.key === column,
+    );
+    if (!nextVisible && definition && sort.key === definition.sortKey) {
+      setSort({ key: "product", direction: "asc" });
+    }
   }
 
   function startEdit(product: Product) {
@@ -1319,6 +1411,25 @@ export function ProductsPage() {
               }}
             />
           </div>
+          <details className="product-column-picker">
+            <summary>Show or hide columns</summary>
+            <div
+              className="product-column-picker-options"
+              role="group"
+              aria-label="Product catalog columns"
+            >
+              {PRODUCT_CATALOG_COLUMNS.map(({ key, label }) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={visibleProductColumns[key]}
+                    onChange={() => toggleProductColumn(key)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </details>
           {productTableScroll.isScrollable && (
             <div className="inventory-table-scroll-controls">
               <span>Scroll to see more columns</span>
@@ -1358,61 +1469,27 @@ export function ProductsPage() {
                     direction={sort.direction}
                     onClick={() => selectSort("product")}
                   />
-                  <SortableHeader
-                    label="ON HAND"
-                    active={sort.key === "onHand"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("onHand")}
-                  />
-                  <SortableHeader
-                    label="SELL PRICE"
-                    active={sort.key === "sellingPrice"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("sellingPrice")}
-                  />
-                  <SortableHeader
-                    label="LATEST COST"
-                    active={sort.key === "latestCost"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("latestCost")}
-                  />
-                  <SortableHeader
-                    label="AVG. COST"
-                    active={sort.key === "averageCost"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("averageCost")}
-                  />
-                  <SortableHeader
-                    label="PRICE SPREAD"
-                    active={sort.key === "priceSpread"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("priceSpread")}
-                  />
-                  <SortableHeader
-                    label="EST. GROSS PROFIT"
-                    active={sort.key === "grossProfit"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("grossProfit")}
-                  />
-                  <SortableHeader
-                    label="INVENTORY VALUE"
-                    active={sort.key === "inventoryValue"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("inventoryValue")}
-                  />
-                  <SortableHeader
-                    label="STATUS"
-                    active={sort.key === "status"}
-                    direction={sort.direction}
-                    onClick={() => selectSort("status")}
-                  />
+                  {PRODUCT_CATALOG_COLUMNS.filter(
+                    ({ key }) => visibleProductColumns[key],
+                  ).map(({ key, label, sortKey }) => (
+                    <SortableHeader
+                      key={key}
+                      label={label}
+                      active={sort.key === sortKey}
+                      direction={sort.direction}
+                      onClick={() => selectSort(sortKey)}
+                    />
+                  ))}
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="table-loading">
+                    <td
+                      colSpan={visibleProductColumnCount + 2}
+                      className="table-loading"
+                    >
                       Loading products…
                     </td>
                   </tr>
@@ -1436,34 +1513,11 @@ export function ProductsPage() {
                           {product.unit}
                         </small>
                       </td>
-                      <td>
-                        {product.quantityOnHand}
-                        {product.tracksLots && (
-                          <small>
-                            {product.saleableQuantity} saleable ·{" "}
-                            {product.unallocatedQuantity} unallocated
-                          </small>
-                        )}
-                        {product.reorderLevel !== null &&
-                          product.quantityOnHand <= product.reorderLevel && (
-                            <span className="low-stock-tag">
-                              <AlertTriangle size={12} /> Low
-                            </span>
-                          )}
-                      </td>
-                      <td>₱{product.sellingPrice}</td>
-                      <td>₱{product.latestAcquisitionCost ?? "—"}</td>
-                      <td>₱{product.weightedAverageUnitCost}</td>
-                      <td>₱{product.unitPriceSpread}</td>
-                      <td>₱{product.estimatedUnitGrossProfit}</td>
-                      <td>₱{product.inventoryValue}</td>
-                      <td>
-                        <span
-                          className={`product-state ${product.active ? "product-state-active" : ""}`}
-                        >
-                          {product.active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
+                      {PRODUCT_CATALOG_COLUMNS.filter(
+                        ({ key }) => visibleProductColumns[key],
+                      ).map(({ key }) => (
+                        <td key={key}>{renderProductColumn(product, key)}</td>
+                      ))}
                       <td>
                         <button
                           className="text-action"
@@ -1476,7 +1530,10 @@ export function ProductsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="table-loading">
+                    <td
+                      colSpan={visibleProductColumnCount + 2}
+                      className="table-loading"
+                    >
                       {query
                         ? "No matching products."
                         : "No products yet. Add the first product using the form."}
