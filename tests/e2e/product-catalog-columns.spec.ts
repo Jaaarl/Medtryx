@@ -33,7 +33,7 @@ test("owner can hide and restore product catalog columns", async ({ page }) => {
   await expect(sellingPriceHeader).toHaveCount(1);
 });
 
-test("owner sees each product stock unit in its own catalog column", async ({
+test("owner sees stock units and reorder levels in the catalog", async ({
   page,
 }) => {
   await page.goto("/login");
@@ -48,6 +48,7 @@ test("owner sees each product stock unit in its own catalog column", async ({
   const productName = "Stock Unit Column Product";
   await page.getByLabel("Product name").fill(productName);
   await page.getByLabel("Stock unit", { exact: true }).fill("pack");
+  await page.getByLabel("Reorder level (optional)").fill("5");
   await page.getByLabel("Generic").check();
   await page.locator("#product-price").fill("25.00");
   await page.getByRole("button", { name: "Create product" }).click();
@@ -57,6 +58,11 @@ test("owner sees each product stock unit in its own catalog column", async ({
   await expect(
     page.getByRole("button", { name: "Sort by STOCK UNIT" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Sort by REORDER LEVEL" }),
+  ).toBeVisible();
   await expect(productRow.locator("td").nth(0)).not.toContainText("pack");
   await expect(productRow.locator("td").nth(1)).toHaveText("pack");
+  await expect(productRow.locator("td").nth(2)).toContainText("Low");
+  await expect(productRow.locator("td").nth(3)).toHaveText("5");
 });

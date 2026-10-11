@@ -214,6 +214,7 @@ function SortableHeader({
 const PRODUCT_CATALOG_COLUMNS = [
   { key: "unit", label: "STOCK UNIT", sortKey: "unit" },
   { key: "onHand", label: "ON HAND", sortKey: "onHand" },
+  { key: "reorderLevel", label: "REORDER LEVEL", sortKey: "reorderLevel" },
   { key: "sellingPrice", label: "SELL PRICE", sortKey: "sellingPrice" },
   { key: "latestCost", label: "LATEST COST", sortKey: "latestCost" },
   { key: "averageCost", label: "AVG. COST", sortKey: "averageCost" },
@@ -1045,6 +1046,7 @@ export function ProductsPage() {
   >({
     unit: true,
     onHand: true,
+    reorderLevel: true,
     sellingPrice: true,
     latestCost: true,
     averageCost: true,
@@ -1127,6 +1129,8 @@ export function ProductsPage() {
           return product.unit;
         case "onHand":
           return product.quantityOnHand;
+        case "reorderLevel":
+          return product.reorderLevel;
         case "sellingPrice":
           return Number(product.sellingPrice);
         case "latestCost":
@@ -1199,6 +1203,8 @@ export function ProductsPage() {
               )}
           </>
         );
+      case "reorderLevel":
+        return product.reorderLevel ?? "—";
       case "sellingPrice":
         return `₱${product.sellingPrice}`;
       case "latestCost":
