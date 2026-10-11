@@ -241,6 +241,13 @@ function convertedUnitCostCents(
   return Number(quotient + (remainder * 2n >= divisor ? 1n : 0n));
 }
 
+function receiptFileGroupId(row: ReceiptCsvRow): string {
+  const sourceFile = row.sourcefile.trim();
+  return sourceFile
+    ? `file:${sourceFile.toLowerCase()}`
+    : row.sourcegroupid || "receipt-lines";
+}
+
 function ReceiptField({
   label,
   value,
@@ -842,7 +849,7 @@ export function ReceiptReceivingPage() {
     { firstIndex: number; label: string; count: number; supplier: string }
   >();
   draftRows.forEach((row, index) => {
-    const id = row.sourcegroupid || row.sourcefile || "receipt-lines";
+    const id = receiptFileGroupId(row);
     const group = receiptGroups.get(id);
     if (group) {
       group.count += 1;
@@ -1086,8 +1093,7 @@ export function ReceiptReceivingPage() {
                 >
                   <div className="receipt-line-list">
                     {draftRows.map((row, index) => {
-                      const groupId =
-                        row.sourcegroupid || row.sourcefile || "receipt-lines";
+                      const groupId = receiptFileGroupId(row);
                       const group = receiptGroups.get(groupId)!;
                       const isNewProduct = row.matchstatus === "NEW_PRODUCT";
                       const conversionRecommended =

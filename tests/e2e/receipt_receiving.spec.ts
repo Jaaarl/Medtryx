@@ -249,6 +249,63 @@ test("owner can append a parsed image as a separate receipt group", async ({
   await expect(page.getByText("Second page medicine").first()).toBeVisible();
 });
 
+test("groups receipt rows by source PDF or image name", async ({ page }) => {
+  await signInAsOwner(page);
+  await page.goto("/receipt-receiving");
+
+  const columns = [
+    "originaldescription",
+    "draftid",
+    "sourcegroupid",
+    "sourcefile",
+    "rearrangedname",
+    "quantity",
+    "unitcost",
+    "matchstatus",
+    "selectedproductid",
+    "conversionapproved",
+  ];
+  const rows = [
+    ["First page line one", "group-one", "first-page.pdf"],
+    ["First page line two", "group-two", "first-page.pdf"],
+    ["Second page line", "group-three", "second-page.png"],
+  ].map(([description, groupId, sourceFile]) => [
+    description!,
+    randomUUID(),
+    groupId!,
+    sourceFile!,
+    description!,
+    "1",
+    "10.00",
+    "NEW_PRODUCT",
+    "",
+    "FALSE",
+  ]);
+  const cell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const csv = [
+    columns.map(cell).join(","),
+    ...rows.map((row) => row.map(cell).join(",")),
+  ].join("\r\n");
+
+  await page
+    .locator('input[type="file"][accept="text/csv,.csv"]')
+    .setInputFiles({
+      name: "receipt-review.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page
+    .getByRole("button", { name: "Load receipt CSV into editor" })
+    .click();
+
+  const groups = page.locator(".receipt-line-group-heading");
+  await expect(groups).toHaveCount(2);
+  await expect(groups.nth(0)).toContainText("first-page.pdf");
+  await expect(groups.nth(0)).toContainText("2 line items");
+  await expect(groups.nth(1)).toContainText("second-page.png");
+  await expect(groups.nth(1)).toContainText("1 line item");
+});
+
 test("owner can apply one supplier to every image group and restore group suppliers", async ({
   page,
 }) => {
