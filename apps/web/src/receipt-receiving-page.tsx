@@ -244,6 +244,17 @@ function formatReceiptMoney(cents: number): string {
   return `₱${wholePesos.toLocaleString("en-PH")}.${String(cents % 100).padStart(2, "0")}`;
 }
 
+function formatReceiptPeso(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "—";
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/u.exec(normalized);
+  if (!match) return value;
+  const cents =
+    BigInt(match[1]!) * 100n + BigInt((match[2] ?? "").padEnd(2, "0"));
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) return value;
+  return formatReceiptMoney(Number(cents));
+}
+
 function convertedUnitCostCents(
   packageCostCents: number,
   factor: number,
@@ -1881,9 +1892,13 @@ export function ReceiptReceivingPage() {
                               ? ` units (×${line.conversionFactor})`
                               : ""}
                           </td>
-                          <td>{line.unitCost}</td>
-                          <td>{draftRows[index]?.sellingprice || "—"}</td>
-                          <td>{line.lineTotal}</td>
+                          <td>{formatReceiptPeso(line.unitCost)}</td>
+                          <td>
+                            {formatReceiptPeso(
+                              draftRows[index]?.sellingprice ?? "",
+                            )}
+                          </td>
+                          <td>{formatReceiptPeso(line.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
