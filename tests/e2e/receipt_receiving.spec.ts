@@ -844,6 +844,16 @@ test("owner can edit a receipt CSV in the app before receiving stock", async ({
 
   await page.getByRole("button", { name: "Validate receipt" }).click();
   await expect(page.getByText("Ready for confirmation")).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "Selling price", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: "Edited in app product" })
+      .locator("td")
+      .nth(4),
+  ).toHaveText("25.00");
   await page.getByRole("button", { name: "Import all" }).click();
   await expect(page.getByRole("status")).toContainText(
     "Received 1 lines across 1 products",

@@ -313,6 +313,7 @@ describe("AI-assisted receipt receiving", () => {
       selectedproductid: product.id,
       sku: product.sku,
       unit: "tablet",
+      sellingprice: "70.00",
       trackslots: "TRUE",
       conversionapproved: "FALSE",
     });

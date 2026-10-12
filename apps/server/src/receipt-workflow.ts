@@ -188,6 +188,7 @@ type CatalogProduct = {
   sku: string;
   name: string;
   unit: string;
+  selling_price_centavos: number;
   tracks_lots: number;
   is_active: number;
 };
@@ -909,7 +910,7 @@ async function makeDraftCsv(
 
   const products = db
     .prepare(
-      "SELECT id, sku, name, unit, tracks_lots, is_active FROM products ORDER BY name COLLATE NOCASE LIMIT 5000",
+      "SELECT id, sku, name, unit, selling_price_centavos, tracks_lots, is_active FROM products ORDER BY name COLLATE NOCASE LIMIT 5000",
     )
     .all() as CatalogProduct[];
   const itemsForMatching = sourceLines.map((line) => {
@@ -996,7 +997,11 @@ async function makeDraftCsv(
       preselectedProduct?.id ?? "",
       preselectedProduct?.sku ?? "",
       preselectedProduct?.unit ?? "",
-      "",
+      preselectedProduct
+        ? new Decimal(preselectedProduct.selling_price_centavos)
+            .div(100)
+            .toFixed(2)
+        : "",
       "",
       "",
       "FALSE",

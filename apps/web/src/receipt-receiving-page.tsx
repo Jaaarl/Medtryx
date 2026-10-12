@@ -46,6 +46,7 @@ type ProductOption = {
   sku: string;
   name: string;
   unit: string;
+  sellingPrice: string;
   tracksLots: boolean;
 };
 
@@ -644,6 +645,7 @@ export function ReceiptReceivingPage() {
       rearrangedname: product.name,
       sku: product.sku,
       unit: product.unit,
+      sellingprice: product.sellingPrice,
       trackslots: product.tracksLots ? "TRUE" : "FALSE",
     });
     closeProductChooser();
@@ -1848,6 +1850,7 @@ export function ReceiptReceivingPage() {
                         <th>Product</th>
                         <th>Receive</th>
                         <th>Avg. unit cost</th>
+                        <th>Selling price</th>
                         <th>Line total</th>
                       </tr>
                     </thead>
@@ -1879,6 +1882,7 @@ export function ReceiptReceivingPage() {
                               : ""}
                           </td>
                           <td>{line.unitCost}</td>
+                          <td>{draftRows[index]?.sellingprice || "—"}</td>
                           <td>{line.lineTotal}</td>
                         </tr>
                       ))}
