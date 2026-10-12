@@ -913,11 +913,20 @@ a {
   gap: 12px;
 }
 .receipt-line-group-heading {
+  align-items: center;
   background: #edf4f0;
   border: 1px solid #d8e6de;
   border-radius: 8px;
   color: #2f5549;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
   padding: 10px 12px;
+}
+.receipt-line-group-heading > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 .receipt-line-group-heading strong {
   display: block;
@@ -940,12 +949,6 @@ a {
   min-width: 0;
   padding: 13px;
 }
-.receipt-line-hidden
-  > :not(.receipt-line-group-heading):not(.receipt-line-heading):not(
-    .receipt-hidden-line-note
-  ) {
-  display: none;
-}
 .receipt-line-heading {
   align-items: center;
   display: flex;
@@ -961,6 +964,26 @@ a {
   align-items: center;
   display: flex;
   gap: 8px;
+}
+.receipt-group-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #61746c;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 10px;
+  gap: 5px;
+  padding: 5px;
+}
+.receipt-group-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.receipt-group-collapsed-note {
+  color: #71847a;
 }
 .receipt-line-heading strong {
   color: #24483f;
@@ -983,31 +1006,9 @@ a {
   font-size: 10px;
   padding: 5px;
 }
-.receipt-hide-line {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: #61746c;
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-size: 10px;
-  gap: 5px;
-  padding: 5px;
-}
-.receipt-hide-line:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
 .receipt-remove-line:disabled {
   cursor: not-allowed;
   opacity: 0.5;
-}
-.receipt-hidden-line-note {
-  color: #71847a;
-  font-size: 10px;
-  line-height: 1.5;
-  margin: 0;
 }
 .receipt-source-description {
   background: #f3f7f5;

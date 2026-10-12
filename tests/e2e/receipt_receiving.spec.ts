@@ -91,7 +91,7 @@ test("owner receipt draft survives leaving and reopening the page", async ({
   );
 });
 
-test("owner can hide and restore a receipt line without removing it", async ({
+test("owner can collapse and restore a source receipt group", async ({
   page,
 }) => {
   await signInAsOwner(page);
@@ -110,11 +110,14 @@ test("owner can hide and restore a receipt line without removing it", async ({
     "selectedproductid",
     "conversionapproved",
   ];
+  const draftId = randomUUID();
+  const firstGroupId = randomUUID();
+  const secondGroupId = randomUUID();
   const rows = [
     [
       "First parsed medicine",
-      randomUUID(),
-      randomUUID(),
+      draftId,
+      firstGroupId,
       "first-page.pdf",
       "First parsed medicine",
       "1",
@@ -126,12 +129,25 @@ test("owner can hide and restore a receipt line without removing it", async ({
     ],
     [
       "Second parsed medicine",
-      randomUUID(),
-      randomUUID(),
-      "second-page.pdf",
+      draftId,
+      firstGroupId,
+      "first-page.pdf",
       "Second parsed medicine",
       "2",
       "12.00",
+      "Saved supplier",
+      "NEW_PRODUCT",
+      "",
+      "FALSE",
+    ],
+    [
+      "Third parsed medicine",
+      draftId,
+      secondGroupId,
+      "second-page.pdf",
+      "Third parsed medicine",
+      "3",
+      "14.00",
       "Saved supplier",
       "NEW_PRODUCT",
       "",
@@ -154,38 +170,39 @@ test("owner can hide and restore a receipt line without removing it", async ({
     .getByRole("button", { name: "Load receipt CSV into editor" })
     .click();
 
-  await page.getByRole("button", { name: "Hide line 2" }).click();
+  await page.getByRole("button", { name: "Hide group first-page.pdf" }).click();
+  await expect(
+    page.getByText("First parsed medicine", { exact: true }),
+  ).toBeHidden();
   await expect(
     page.getByText("Second parsed medicine", { exact: true }),
   ).toBeHidden();
   await expect(
-    page.getByText(
-      "Hidden from the editor. This line stays in the receipt and will be validated and imported.",
-    ),
+    page.getByText("Third parsed medicine", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("First parsed medicine", { exact: true }),
+    page.getByRole("button", { name: "Show group first-page.pdf" }),
   ).toBeVisible();
-  await expect(page.getByText("2 line items ready to edit")).toBeVisible();
-
-  await page.getByRole("button", { name: "Add missing line" }).click();
-  await expect(page.getByRole("button", { name: "Show line 3" })).toBeVisible();
-  await page.getByRole("button", { name: "Remove line 2" }).click();
-  await expect(page.getByRole("button", { name: "Show line 2" })).toBeVisible();
+  await expect(page.getByText("3 line items ready to edit")).toBeVisible();
 
   await page.goto("/checkout");
   await page.goto("/receipt-receiving");
-  await expect(page.getByRole("button", { name: "Show line 2" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Show group first-page.pdf" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Third parsed medicine", { exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Show group first-page.pdf" }).click();
   await expect(
     page.getByText("First parsed medicine", { exact: true }),
   ).toBeVisible();
-
-  await page.getByRole("button", { name: "Show line 2" }).click();
   await expect(
     page.getByText("Second parsed medicine", { exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Hide line 2" }).click();
+  await page.getByRole("button", { name: "Hide group first-page.pdf" }).click();
   let reviewedCsv = "";
   await page.route("**/api/stock/receipts/ai-review", async (route) => {
     reviewedCsv = route.request().postData() ?? "";
@@ -194,8 +211,8 @@ test("owner can hide and restore a receipt line without removing it", async ({
       contentType: "application/json",
       body: JSON.stringify({
         valid: true,
-        lineCount: 2,
-        newProducts: 2,
+        lineCount: 3,
+        newProducts: 3,
         existingProducts: 0,
         conversions: 0,
         lines: rows.map((row, index) => ({
@@ -214,6 +231,7 @@ test("owner can hide and restore a receipt line without removing it", async ({
   await expect(page.getByText("Ready for confirmation")).toBeVisible();
   expect(reviewedCsv).toContain("First parsed medicine");
   expect(reviewedCsv).toContain("Second parsed medicine");
+  expect(reviewedCsv).toContain("Third parsed medicine");
 
   let importedCsv = "";
   await page.route("**/api/stock/receipts/ai-import", async (route) => {
@@ -223,18 +241,19 @@ test("owner can hide and restore a receipt line without removing it", async ({
       contentType: "application/json",
       body: JSON.stringify({
         receiptId: randomUUID(),
-        importedCount: 2,
-        productsAffected: 2,
+        importedCount: 3,
+        productsAffected: 3,
         createdProducts: [],
       }),
     });
   });
   await page.getByRole("button", { name: "Import all" }).click();
   await expect(page.locator(".banner-success")).toContainText(
-    "Received 2 lines across 2 products.",
+    "Received 3 lines across 3 products.",
   );
   expect(importedCsv).toContain("First parsed medicine");
   expect(importedCsv).toContain("Second parsed medicine");
+  expect(importedCsv).toContain("Third parsed medicine");
 });
 
 test("owner sees specific AI receipt preparation activity while it loads", async ({
