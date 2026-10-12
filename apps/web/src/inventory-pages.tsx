@@ -1870,190 +1870,199 @@ export function ProductsPage() {
                 )}
               </div>
             )}
-            <Field id="product-unit" label="Stock unit">
-              <input
-                id="product-unit"
-                className="text-input"
-                value={form.unit}
-                onChange={(event) =>
-                  setForm({ ...form, unit: event.target.value })
-                }
-                required
-                maxLength={32}
-              />
-            </Field>
-            <Field id="product-price" label="Selling price (₱)">
-              <input
-                id="product-price"
-                className="text-input"
-                inputMode="decimal"
-                value={form.sellingPrice}
-                onChange={(event) =>
-                  setForm({ ...form, sellingPrice: event.target.value })
-                }
-                required={!duplicateProduct}
-                pattern="[0-9]+(\.[0-9]{1,2})?"
-              />
-            </Field>
-            <Field id="product-reorder-level" label="Reorder level (optional)">
-              <input
-                id="product-reorder-level"
-                className="text-input"
-                type="number"
-                min="0"
-                step="1"
-                value={form.reorderLevel}
-                onChange={(event) =>
-                  setForm({ ...form, reorderLevel: event.target.value })
-                }
-              />
-            </Field>
-            <Field id="product-tax-class" label="Tax class">
-              <select
-                id="product-tax-class"
-                className="text-input select-input"
-                value={form.taxClass}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    taxClass: event.target.value as Product["taxClass"],
-                  })
-                }
-              >
-                <option value="VATABLE">VATable</option>
-                <option value="VAT_EXEMPT">VAT exempt</option>
-                <option value="ZERO_RATED" disabled={!zeroRatedAllowed}>
-                  {zeroRatedAllowed
-                    ? "Zero rated"
-                    : "Zero rated (approval required)"}
-                </option>
-              </select>
-            </Field>
-            <fieldset className="inventory-radio-group">
-              <legend className="field-label">Product type</legend>
-              <div className="inventory-radio-options">
-                {(
-                  [
-                    ["GENERIC", "Generic"],
-                    ["BRANDED", "Branded"],
-                    ["NOT_APPLICABLE", "N/A"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <label className="inventory-radio-option" key={value}>
-                    <input
-                      type="radio"
-                      name="product-type"
-                      value={value}
-                      checked={form.productType === value}
-                      onChange={() => setForm({ ...form, productType: value })}
-                      required={
-                        !duplicateProduct &&
-                        (!editing || form.productType === "")
-                      }
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-              {editing && !form.productType && (
-                <small className="field-hint">
-                  This existing product is unclassified. Choose one to record
-                  its type.
-                </small>
-              )}
-            </fieldset>
-            <div
-              className="inventory-checkbox-group"
-              role="group"
-              aria-label="Discount eligibility"
-            >
-              <span className="field-label">Discount eligibility</span>
-              <label className="inventory-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.isScEligible}
-                  onChange={(event) =>
-                    setForm({ ...form, isScEligible: event.target.checked })
-                  }
-                />
-                <span>
-                  Senior Citizen 20% discount + VAT exemption eligible
-                </span>
-              </label>
-              <label className="inventory-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.isPwdEligible}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      isPwdEligible: event.target.checked,
-                    })
-                  }
-                />
-                <span>PWD 20% discount + VAT exemption eligible</span>
-              </label>
-              <label className="inventory-checkbox">
-                <input
-                  type="checkbox"
-                  checked={form.isBnpcEligible}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      isBnpcEligible: event.target.checked,
-                    })
-                  }
-                />
-                <span>BNPC 5% discount eligible</span>
-              </label>
-            </div>
-            {form.isBnpcEligible && (
-              <div
-                className="inventory-checkbox-group"
-                role="group"
-                aria-label="BNPC eligibility review"
-              >
-                <span className="field-label">BNPC eligibility review</span>
+            {!duplicateProduct && (
+              <>
+                <Field id="product-unit" label="Stock unit">
+                  <input
+                    id="product-unit"
+                    className="text-input"
+                    value={form.unit}
+                    onChange={(event) =>
+                      setForm({ ...form, unit: event.target.value })
+                    }
+                    required
+                    maxLength={32}
+                  />
+                </Field>
+                <Field id="product-price" label="Selling price (₱)">
+                  <input
+                    id="product-price"
+                    className="text-input"
+                    inputMode="decimal"
+                    value={form.sellingPrice}
+                    onChange={(event) =>
+                      setForm({ ...form, sellingPrice: event.target.value })
+                    }
+                    required
+                    pattern="[0-9]+(\.[0-9]{1,2})?"
+                  />
+                </Field>
                 <Field
-                  id="product-bnpc-category"
-                  label="Covered goods category"
+                  id="product-reorder-level"
+                  label="Reorder level (optional)"
                 >
+                  <input
+                    id="product-reorder-level"
+                    className="text-input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.reorderLevel}
+                    onChange={(event) =>
+                      setForm({ ...form, reorderLevel: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field id="product-tax-class" label="Tax class">
                   <select
-                    id="product-bnpc-category"
+                    id="product-tax-class"
                     className="text-input select-input"
-                    value={form.bnpcCategory}
+                    value={form.taxClass}
                     onChange={(event) =>
                       setForm({
                         ...form,
-                        bnpcCategory: event.target.value as NonNullable<
-                          Product["bnpcCategory"]
-                        >,
+                        taxClass: event.target.value as Product["taxClass"],
                       })
                     }
                   >
-                    <option value="">Choose category</option>
-                    <option value="BASIC_NECESSITY">Basic Necessity</option>
-                    <option value="PRIME_COMMODITY">Prime Commodity</option>
+                    <option value="VATABLE">VATable</option>
+                    <option value="VAT_EXEMPT">VAT exempt</option>
+                    <option value="ZERO_RATED" disabled={!zeroRatedAllowed}>
+                      {zeroRatedAllowed
+                        ? "Zero rated"
+                        : "Zero rated (approval required)"}
+                    </option>
                   </select>
                 </Field>
-                <small className="field-hint">
-                  The official list has two covered-goods sections. Both get 5%;
-                  choose the section that lists this product. Leave it blank
-                  while unclassified; BNPC discounts stay unavailable until a
-                  category is assigned.
-                </small>
-              </div>
+                <fieldset className="inventory-radio-group">
+                  <legend className="field-label">Product type</legend>
+                  <div className="inventory-radio-options">
+                    {(
+                      [
+                        ["GENERIC", "Generic"],
+                        ["BRANDED", "Branded"],
+                        ["NOT_APPLICABLE", "N/A"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <label className="inventory-radio-option" key={value}>
+                        <input
+                          type="radio"
+                          name="product-type"
+                          value={value}
+                          checked={form.productType === value}
+                          onChange={() =>
+                            setForm({ ...form, productType: value })
+                          }
+                          required={
+                            !duplicateProduct &&
+                            (!editing || form.productType === "")
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {editing && !form.productType && (
+                    <small className="field-hint">
+                      This existing product is unclassified. Choose one to
+                      record its type.
+                    </small>
+                  )}
+                </fieldset>
+                <div
+                  className="inventory-checkbox-group"
+                  role="group"
+                  aria-label="Discount eligibility"
+                >
+                  <span className="field-label">Discount eligibility</span>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.isScEligible}
+                      onChange={(event) =>
+                        setForm({ ...form, isScEligible: event.target.checked })
+                      }
+                    />
+                    <span>
+                      Senior Citizen 20% discount + VAT exemption eligible
+                    </span>
+                  </label>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.isPwdEligible}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          isPwdEligible: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>PWD 20% discount + VAT exemption eligible</span>
+                  </label>
+                  <label className="inventory-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.isBnpcEligible}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          isBnpcEligible: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>BNPC 5% discount eligible</span>
+                  </label>
+                </div>
+                {form.isBnpcEligible && (
+                  <div
+                    className="inventory-checkbox-group"
+                    role="group"
+                    aria-label="BNPC eligibility review"
+                  >
+                    <span className="field-label">BNPC eligibility review</span>
+                    <Field
+                      id="product-bnpc-category"
+                      label="Covered goods category"
+                    >
+                      <select
+                        id="product-bnpc-category"
+                        className="text-input select-input"
+                        value={form.bnpcCategory}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            bnpcCategory: event.target.value as NonNullable<
+                              Product["bnpcCategory"]
+                            >,
+                          })
+                        }
+                      >
+                        <option value="">Choose category</option>
+                        <option value="BASIC_NECESSITY">Basic Necessity</option>
+                        <option value="PRIME_COMMODITY">Prime Commodity</option>
+                      </select>
+                    </Field>
+                    <small className="field-hint">
+                      The official list has two covered-goods sections. Both get
+                      5%; choose the section that lists this product. Leave it
+                      blank while unclassified; BNPC discounts stay unavailable
+                      until a category is assigned.
+                    </small>
+                  </div>
+                )}
+                <label className="inventory-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.tracksLots}
+                    onChange={(event) =>
+                      setForm({ ...form, tracksLots: event.target.checked })
+                    }
+                  />
+                  <span>Track lots and expiry for this product</span>
+                </label>
+              </>
             )}
-            <label className="inventory-checkbox">
-              <input
-                type="checkbox"
-                checked={form.tracksLots}
-                onChange={(event) =>
-                  setForm({ ...form, tracksLots: event.target.checked })
-                }
-              />
-              <span>Track lots and expiry for this product</span>
-            </label>
             {!editing && (
               <>
                 <div className="inventory-form-divider">

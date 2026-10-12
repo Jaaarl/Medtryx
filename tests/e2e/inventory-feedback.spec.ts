@@ -192,6 +192,19 @@ test("owner can click a possible product match to receive stock into it", async 
   await expect(matchOption).toBeVisible();
   await matchOption.click();
   await expect(matchOption).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Product name")).toBeVisible();
+  await expect(page.getByLabel("Stock unit", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Selling price (₱)")).toHaveCount(0);
+  await expect(page.getByLabel("Reorder level (optional)")).toHaveCount(0);
+  await expect(page.getByLabel("Tax class")).toHaveCount(0);
+  await expect(page.getByText("Product type", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("group", { name: "Discount eligibility" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel("Track lots and expiry for this product"),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Quantity to receive")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Add stock to existing product" }),
   ).toBeDisabled();
