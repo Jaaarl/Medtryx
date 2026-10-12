@@ -156,6 +156,68 @@ test("adding a matching product from Products receives stock without duplicating
   );
 });
 
+test("owner can click a possible product match to receive stock into it", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const productName = "Synthetic Amoxicillin 500mg capsule";
+  const createResponse = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-POSSIBLE-MATCH",
+      name: productName,
+      unit: "capsule",
+      sellingPrice: "18.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 4,
+      openingUnitCost: "7.00",
+    },
+  });
+  expect(createResponse.status()).toBe(201);
+
+  await page.goto("/products");
+  await page
+    .getByLabel("Product name")
+    .fill("Synthetic Amoxicilin 500 mg capsule");
+  await page.getByLabel("Stock unit", { exact: true }).fill("capsule");
+  await expect(page.getByText("Possible matching products")).toBeVisible();
+  const matchOption = page
+    .locator(".duplicate-product-option")
+    .filter({ hasText: productName });
+  await expect(matchOption).toBeVisible();
+  await matchOption.click();
+  await expect(matchOption).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByRole("button", { name: "Add stock to existing product" }),
+  ).toBeDisabled();
+
+  await page.getByLabel("Quantity to receive").fill("2");
+  await page.locator("#opening-cost").fill("8.00");
+  await page
+    .getByRole("button", { name: "Add stock to existing product" })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Received 2 capsule for Synthetic Amoxicillin 500mg capsule; no new product was created.",
+  );
+
+  const productsResponse = await page.request.get(
+    "/api/products?q=SYN-POSSIBLE-MATCH",
+  );
+  const products = (await productsResponse.json()) as {
+    products: Array<{ id: string; sku: string; quantityOnHand: number }>;
+  };
+  expect(products.products).toHaveLength(1);
+  expect(products.products[0]).toMatchObject({
+    sku: "SYN-POSSIBLE-MATCH",
+    quantityOnHand: 6,
+  });
+});
+
 test("owners can search a batch and edit its quantity, unit cost, and product price", async ({
   page,
 }) => {

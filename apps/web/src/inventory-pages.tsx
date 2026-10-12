@@ -133,6 +133,79 @@ function normalizeProductIdentity(value: string): string {
     .toLowerCase();
 }
 
+function productMatchTokens(value: string): string[] {
+  return normalizeProductIdentity(value)
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean);
+}
+
+function productMatchTokensRelated(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (Math.min(left.length, right.length) >= 4) {
+    if (left.startsWith(right) || right.startsWith(left)) return true;
+    if (Math.abs(left.length - right.length) <= 1) {
+      let leftIndex = 0;
+      let rightIndex = 0;
+      let edits = 0;
+      while (leftIndex < left.length && rightIndex < right.length) {
+        if (left[leftIndex] === right[rightIndex]) {
+          leftIndex += 1;
+          rightIndex += 1;
+          continue;
+        }
+        edits += 1;
+        if (edits > 1) return false;
+        if (left.length > right.length) leftIndex += 1;
+        else if (right.length > left.length) rightIndex += 1;
+        else {
+          leftIndex += 1;
+          rightIndex += 1;
+        }
+      }
+      if (leftIndex < left.length || rightIndex < right.length) edits += 1;
+      if (edits <= 1) return true;
+    }
+  }
+  return false;
+}
+
+function productNameMatchScore(
+  query: string,
+  candidate: string,
+): number | null {
+  const normalizedQuery = normalizeProductIdentity(query).replace(
+    /[^\p{Letter}\p{Number}]+/gu,
+    " ",
+  );
+  const normalizedCandidate = normalizeProductIdentity(candidate).replace(
+    /[^\p{Letter}\p{Number}]+/gu,
+    " ",
+  );
+  if (!normalizedQuery || normalizedQuery.length < 4) return null;
+  if (normalizedQuery === normalizedCandidate) return 1;
+  if (normalizedCandidate.includes(normalizedQuery))
+    return 0.8 + normalizedQuery.length / normalizedCandidate.length / 5;
+
+  const queryTokens = productMatchTokens(query);
+  const candidateTokens = productMatchTokens(candidate);
+  if (queryTokens.length === 1 && queryTokens[0]!.length < 5) return null;
+  const matchedTokens = queryTokens.filter((queryToken) =>
+    candidateTokens.some((candidateToken) =>
+      productMatchTokensRelated(queryToken, candidateToken),
+    ),
+  ).length;
+  if (matchedTokens === 0) return null;
+  if (queryTokens.length === 1) return 0.65;
+
+  const queryCoverage = matchedTokens / queryTokens.length;
+  const candidateCoverage = matchedTokens / candidateTokens.length;
+  if (matchedTokens < 2 || queryCoverage < 0.6 || candidateCoverage < 0.5)
+    return null;
+  return queryCoverage * 0.6 + candidateCoverage * 0.4;
+}
+
 type StockEvent = {
   id: string;
   productId: string;
@@ -1097,8 +1170,39 @@ export function ProductsPage() {
             normalizeProductIdentity(product.unit) === normalizedFormUnit,
         )
       : [];
+  const productMatchOptions = useMemo(() => {
+    if (editing || !normalizedFormName || !normalizedFormUnit) return [];
+    const sameUnitProducts = products.filter(
+      (product) =>
+        normalizeProductIdentity(product.unit) === normalizedFormUnit,
+    );
+    const exactIds = new Set(
+      sameUnitProducts
+        .filter(
+          (product) =>
+            normalizeProductIdentity(product.name) === normalizedFormName,
+        )
+        .map((product) => product.id),
+    );
+    const exactMatches = sameUnitProducts.filter((product) =>
+      exactIds.has(product.id),
+    );
+    const possibleMatches = sameUnitProducts
+      .filter((product) => !exactIds.has(product.id))
+      .flatMap((product) => {
+        const score = productNameMatchScore(form.name, product.name);
+        return score === null ? [] : [{ product, score }];
+      })
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 5);
+    return [
+      ...exactMatches.map((product) => ({ product, exact: true })),
+      ...possibleMatches.map(({ product }) => ({ product, exact: false })),
+    ];
+  }, [editing, form.name, normalizedFormName, normalizedFormUnit, products]);
   const duplicateProduct =
-    duplicateCandidates.find((product) => product.id === duplicateProductId) ??
+    productMatchOptions.find(({ product }) => product.id === duplicateProductId)
+      ?.product ??
     (duplicateCandidates.length === 1 ? duplicateCandidates[0] : null) ??
     null;
 
@@ -1700,37 +1804,61 @@ export function ProductsPage() {
                 maxLength={160}
               />
             </Field>
-            {duplicateCandidates.length > 0 && (
+            {productMatchOptions.length > 0 && (
               <div className="duplicate-product-notice" role="note">
-                <strong>Matching product already in the catalog</strong>
+                <strong>
+                  {duplicateCandidates.length > 0
+                    ? "Matching product already in the catalog"
+                    : "Possible matching products"}
+                </strong>
                 <p>
-                  Only quantity, cost, supplier, and lot details will be
-                  recorded. The existing catalog details will stay unchanged.
+                  {duplicateCandidates.length > 0
+                    ? "Only quantity, cost, supplier, and lot details will be recorded. The existing catalog details will stay unchanged."
+                    : "These products have similar names and the same stock unit. Select a match to add stock to it, or create a new product if none is the same item."}
                 </p>
+                <div
+                  className="duplicate-product-options"
+                  role="group"
+                  aria-label="Possible matching products"
+                >
+                  {productMatchOptions.map(({ product, exact }) => {
+                    const selected = duplicateProduct?.id === product.id;
+                    return (
+                      <button
+                        className={`duplicate-product-option${selected ? " is-selected" : ""}`}
+                        key={product.id}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setDuplicateProductId(
+                            selected && duplicateCandidates.length === 0
+                              ? ""
+                              : product.id,
+                          );
+                          setError("");
+                        }}
+                      >
+                        <span className="duplicate-product-option-copy">
+                          <strong>{product.name}</strong>
+                          <small>
+                            {product.sku} · {product.unit} ·{" "}
+                            {product.quantityOnHand} on hand
+                            {!product.active && " · inactive"}
+                          </small>
+                        </span>
+                        <span className="duplicate-product-option-action">
+                          {selected
+                            ? "Selected"
+                            : exact
+                              ? "Use this product"
+                              : "Possible match"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
                 {duplicateProduct && Number(form.openingQuantity) < 1 && (
                   <p>Enter a quantity of at least 1 to receive stock.</p>
-                )}
-                {duplicateCandidates.length > 1 && (
-                  <Field
-                    id="duplicate-product-match"
-                    label="Choose the product to receive stock"
-                  >
-                    <select
-                      id="duplicate-product-match"
-                      className="text-input select-input"
-                      value={duplicateProduct?.id ?? ""}
-                      onChange={(event) =>
-                        setDuplicateProductId(event.target.value)
-                      }
-                    >
-                      <option value="">Choose a product</option>
-                      {duplicateCandidates.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name} · {product.sku} · {product.unit}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
                 )}
                 {duplicateProduct && (
                   <p className="duplicate-product-match-detail">

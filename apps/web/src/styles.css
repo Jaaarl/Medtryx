@@ -728,6 +728,55 @@ a {
 .duplicate-product-notice .inventory-field > span {
   color: #785d24;
 }
+.duplicate-product-options {
+  display: grid;
+  gap: 5px;
+}
+.duplicate-product-option {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e6d7b4;
+  border-radius: 6px;
+  color: #55451f;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+  width: 100%;
+}
+.duplicate-product-option:hover,
+.duplicate-product-option.is-selected {
+  background: #fffdf7;
+  border-color: #b89a5b;
+}
+.duplicate-product-option:focus-visible {
+  outline: 2px solid #527c68;
+  outline-offset: 2px;
+}
+.duplicate-product-option-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.duplicate-product-option-copy strong {
+  overflow-wrap: anywhere;
+}
+.duplicate-product-option-copy small {
+  color: #786a4b;
+  font-size: 9px;
+}
+.duplicate-product-option-action {
+  flex: 0 0 auto;
+  font-weight: 700;
+  text-align: right;
+}
+.duplicate-product-option.is-selected .duplicate-product-option-action {
+  color: #34745d;
+}
 .duplicate-product-match-detail {
   border-top: 1px solid rgb(120 93 36 / 18%);
   padding-top: 6px;
