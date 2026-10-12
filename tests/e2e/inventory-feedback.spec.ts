@@ -81,7 +81,7 @@ test("product and stock headers sort their rows in both directions", async ({
   await expect(stockRows.first()).toContainText("Synthetic Sort Alpha");
 });
 
-test("owners can search a batch and edit its quantity and product price", async ({
+test("owners can search a batch and edit its quantity, unit cost, and product price", async ({
   page,
 }) => {
   await signInOwner(page);
@@ -148,7 +148,11 @@ test("owners can search a batch and edit its quantity and product price", async 
   await expect(page.getByLabel("Product selling price (₱)")).toHaveValue(
     "10.00",
   );
+  await expect(lotRow.getByLabel("Unit acquisition cost (₱)")).toHaveValue(
+    "5.00",
+  );
   await page.getByLabel("Physical quantity").fill("5");
+  await lotRow.getByLabel("Unit acquisition cost (₱)").fill("5.50");
   await page.getByLabel("Product selling price (₱)").fill("12.50");
   await page.getByLabel("Expiry date", { exact: true }).fill("2032-12-31");
   await page
@@ -158,6 +162,7 @@ test("owners can search a batch and edit its quantity and product price", async 
   await expect(page.getByText("Lot details updated.")).toBeVisible();
   await expect(lotRow).toContainText("2032-12-31");
   await expect(lotRow).toContainText("12.50");
+  await expect(lotRow).toContainText("5.50");
   await expect(lotRow).toContainText("5");
 
   const catalogResponse = await page.request.get("/api/products");

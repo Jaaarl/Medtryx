@@ -468,6 +468,7 @@ const lotEditSchema = z
   .object({
     quantity: z.number().int().min(0).max(MAX_QUANTITY),
     sellingPrice: moneySchema,
+    unitCost: moneySchema.optional(),
     expiryDate: expiryDateSchema,
     reason: reasonSchema,
   })
@@ -863,9 +864,13 @@ function getStockEvents(
          SELECT c.id, 'COST_CORRECTION' AS event_type, 0 AS quantity_delta,
                 c.new_unit_cost_centavos AS unit_cost_centavos,
                 c.inventory_value_delta_centavos, NULL AS reference, NULL AS supplier,
-                'Average acquisition cost corrected: ' ||
+                CASE WHEN c.reason LIKE 'LOT_COST: %'
+                  THEN 'Lot acquisition cost corrected: '
+                  ELSE 'Average acquisition cost corrected: ' END ||
                   printf('%.2f', c.old_unit_cost_centavos / 100.0) || ' to ' ||
-                  printf('%.2f', c.new_unit_cost_centavos / 100.0) || '. ' || c.reason AS reason,
+                  printf('%.2f', c.new_unit_cost_centavos / 100.0) || '. ' ||
+                  CASE WHEN c.reason LIKE 'LOT_COST: %'
+                    THEN substr(c.reason, 11) ELSE c.reason END AS reason,
                 c.created_at, p.id AS product_id, p.sku, p.name AS product_name,
                 u.email AS actor_email
          FROM stock_cost_corrections c JOIN products p ON p.id = c.product_id
@@ -1936,20 +1941,30 @@ export function registerInventoryRoutes(
       selling_price_centavos: number;
     }>;
     const lots = products.flatMap((product) =>
-      getLotBalances(db, product.id, today).map((lot) => ({
-        ...lot,
-        sku: product.sku,
-        productName: product.name,
-        sellingPrice: money(product.selling_price_centavos),
-        alert:
-          lot.quantity <= 0
-            ? null
-            : lot.expiryDate < today
-              ? "EXPIRED"
-              : lot.expiryDate <= alertDate
-                ? "NEAR_EXPIRY"
-                : null,
-      })),
+      getLotBalances(db, product.id, today).map(
+        ({ inventoryValueCentavos, ...lot }) => ({
+          ...lot,
+          unitCost:
+            lot.quantity === 0
+              ? null
+              : money(
+                  roundedInteger(
+                    new Decimal(inventoryValueCentavos).div(lot.quantity),
+                  ),
+                ),
+          sku: product.sku,
+          productName: product.name,
+          sellingPrice: money(product.selling_price_centavos),
+          alert:
+            lot.quantity <= 0
+              ? null
+              : lot.expiryDate < today
+                ? "EXPIRED"
+                : lot.expiryDate <= alertDate
+                  ? "NEAR_EXPIRY"
+                  : null,
+        }),
+      ),
     );
     res.json({
       asOf: today,
@@ -2194,6 +2209,10 @@ export function registerInventoryRoutes(
           if (!balance) throw new InventoryError(404, "lot_not_found");
 
           const priceCents = parseMoney(parsed.data.sellingPrice);
+          const requestedUnitCostCents =
+            parsed.data.unitCost === undefined
+              ? null
+              : parseMoney(parsed.data.unitCost);
           const quantityDelta = parsed.data.quantity - balance.quantity;
           const nextQuantity = lot.quantity_on_hand + quantityDelta;
           if (nextQuantity < 0 || nextQuantity > MAX_QUANTITY)
@@ -2214,41 +2233,109 @@ export function registerInventoryRoutes(
           if (conflictingLot)
             throw new InventoryError(409, "lot_expiry_conflict");
 
+          const now = new Date().toISOString();
+          const currentLotUnitCostCents =
+            balance.quantity === 0
+              ? null
+              : roundedInteger(
+                  new Decimal(balance.inventoryValueCentavos).div(
+                    balance.quantity,
+                  ),
+                );
           let valueDelta = 0;
           let unitCostCents: number | null = null;
           if (quantityDelta > 0) {
             unitCostCents =
-              lot.quantity_on_hand === 0
+              requestedUnitCostCents ??
+              (lot.quantity_on_hand === 0
                 ? 0
                 : roundedInteger(
                     new Decimal(lot.inventory_value_centavos).div(
                       lot.quantity_on_hand,
                     ),
-                  );
+                  ));
             valueDelta = roundedInteger(
               new Decimal(unitCostCents).mul(quantityDelta),
             );
           } else if (quantityDelta < 0) {
             const removedQuantity = Math.abs(quantityDelta);
-            if (removedQuantity > lot.quantity_on_hand)
+            if (removedQuantity > balance.quantity)
               throw new InventoryError(409, "insufficient_stock");
             const removedValue = roundedInteger(
-              removedQuantity === lot.quantity_on_hand
-                ? new Decimal(lot.inventory_value_centavos)
-                : new Decimal(lot.inventory_value_centavos)
+              removedQuantity === balance.quantity
+                ? new Decimal(balance.inventoryValueCentavos)
+                : new Decimal(balance.inventoryValueCentavos)
                     .mul(removedQuantity)
-                    .div(lot.quantity_on_hand),
+                    .div(balance.quantity),
             );
             unitCostCents = roundedInteger(
               new Decimal(removedValue).div(removedQuantity),
             );
             valueDelta = -removedValue;
           }
-          const nextValue = lot.inventory_value_centavos + valueDelta;
+          const lotValueAfterQuantityEdit =
+            balance.inventoryValueCentavos + valueDelta;
+          let costCorrectionDelta = 0;
+          let costCorrectionId: string | null = null;
+          const lotCostChanged =
+            requestedUnitCostCents !== null &&
+            requestedUnitCostCents !== currentLotUnitCostCents;
+          if (
+            lotCostChanged &&
+            requestedUnitCostCents !== null &&
+            parsed.data.quantity > 0
+          ) {
+            const correctedLotValue = roundedInteger(
+              new Decimal(requestedUnitCostCents).mul(parsed.data.quantity),
+            );
+            costCorrectionDelta = correctedLotValue - lotValueAfterQuantityEdit;
+            if (costCorrectionDelta !== 0) {
+              costCorrectionId = randomUUID();
+              const previousUnitCostCents = roundedInteger(
+                new Decimal(lotValueAfterQuantityEdit).div(
+                  parsed.data.quantity,
+                ),
+              );
+              db.prepare(
+                `INSERT INTO stock_cost_corrections
+                  (id, product_id, quantity_basis, old_unit_cost_centavos,
+                   new_unit_cost_centavos, old_inventory_value_centavos,
+                   new_inventory_value_centavos, inventory_value_delta_centavos,
+                   reason, actor_user_id, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              ).run(
+                costCorrectionId,
+                lot.product_id,
+                parsed.data.quantity,
+                previousUnitCostCents,
+                requestedUnitCostCents,
+                lotValueAfterQuantityEdit,
+                correctedLotValue,
+                costCorrectionDelta,
+                `LOT_COST: ${lot.lot_code}. ${parsed.data.reason}`,
+                req.user!.id,
+                now,
+              );
+              writeLotMovement(db, {
+                productId: lot.product_id,
+                lotId: lot.id,
+                type: "ADJUSTMENT",
+                quantityDelta: 0,
+                inventoryValueDeltaCentavos: costCorrectionDelta,
+                unitCostCentavos: requestedUnitCostCents,
+                costCorrectionId,
+                reason: `LOT_ACQUISITION_COST_CORRECTION: ${parsed.data.reason}`,
+                actorUserId: req.user!.id,
+                createdAt: now,
+              });
+            }
+          }
+          const nextValue =
+            lot.inventory_value_centavos + valueDelta + costCorrectionDelta;
+          const nextLotValue = lotValueAfterQuantityEdit + costCorrectionDelta;
           if (nextValue < 0 || !Number.isSafeInteger(nextValue))
             throw new InventoryError(409, "invalid_inventory_adjustment");
 
-          const now = new Date().toISOString();
           if (quantityDelta !== 0) {
             const reason = `COUNT_CORRECTION: ${parsed.data.reason}`;
             const stockEventId = writeStockEvent(db, {
@@ -2278,7 +2365,12 @@ export function registerInventoryRoutes(
 
           const priceChanged = priceCents !== lot.selling_price_centavos;
           const expiryChanged = parsed.data.expiryDate !== lot.expiry_date;
-          if (quantityDelta !== 0 || priceChanged || expiryChanged) {
+          if (
+            quantityDelta !== 0 ||
+            costCorrectionDelta !== 0 ||
+            priceChanged ||
+            expiryChanged
+          ) {
             db.prepare(
               `UPDATE products
                SET quantity_on_hand = ?, inventory_value_centavos = ?,
@@ -2303,14 +2395,33 @@ export function registerInventoryRoutes(
                   expiryDate: lot.expiry_date,
                   quantity: balance.quantity,
                   sellingPrice: money(lot.selling_price_centavos),
+                  unitCost:
+                    balance.quantity === 0
+                      ? null
+                      : money(
+                          roundedInteger(
+                            new Decimal(balance.inventoryValueCentavos).div(
+                              balance.quantity,
+                            ),
+                          ),
+                        ),
                 },
                 new: {
                   expiryDate: parsed.data.expiryDate,
                   quantity: parsed.data.quantity,
                   sellingPrice: money(priceCents),
+                  unitCost:
+                    parsed.data.quantity === 0
+                      ? null
+                      : money(
+                          roundedInteger(
+                            new Decimal(nextLotValue).div(parsed.data.quantity),
+                          ),
+                        ),
                 },
                 quantityDelta,
-                inventoryValueDeltaCentavos: valueDelta,
+                inventoryValueDeltaCentavos: valueDelta + costCorrectionDelta,
+                costCorrectionDeltaCentavos: costCorrectionDelta,
                 at: now,
               },
             });
@@ -2320,6 +2431,14 @@ export function registerInventoryRoutes(
             expiryDate: parsed.data.expiryDate,
             quantity: parsed.data.quantity,
             sellingPrice: money(priceCents),
+            unitCost:
+              parsed.data.quantity === 0
+                ? null
+                : money(
+                    roundedInteger(
+                      new Decimal(nextLotValue).div(parsed.data.quantity),
+                    ),
+                  ),
           };
         })();
         res.json(result);

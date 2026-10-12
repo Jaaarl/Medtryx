@@ -831,12 +831,37 @@ describe("owner catalog and stock operations", () => {
     });
     expect(created.status).toBe(201);
     activeProductId = created.body.product.id as string;
-    const lot = (await owner.get("/api/stock/lots")).body.lots[0] as {
+    const receiptToken = await csrfFor(owner);
+    const secondReceipt = await owner
+      .post("/api/stock/receipts")
+      .set("x-csrf-token", receiptToken)
+      .send({
+        productId: activeProductId,
+        quantity: 2,
+        unitCost: "60.00",
+        lotCode: "SYN-LOT-DETAIL-SECOND-BATCH",
+        expiryDate: manilaDayAfter(60),
+      });
+    expect(secondReceipt.status, JSON.stringify(secondReceipt.body)).toBe(201);
+    const allLots = (await owner.get("/api/stock/lots")).body.lots as Array<{
       id: string;
+      lotCode: string;
       quantity: number;
+      unitCost: string | null;
       sellingPrice: string;
-    };
-    expect(lot).toMatchObject({ quantity: 10, sellingPrice: "70.00" });
+    }>;
+    const lot = allLots.find(
+      (entry) => entry.lotCode === "SYN-LOT-DETAIL-BATCH",
+    )!;
+    const secondLot = allLots.find(
+      (entry) => entry.lotCode === "SYN-LOT-DETAIL-SECOND-BATCH",
+    )!;
+    expect(lot).toMatchObject({
+      quantity: 10,
+      unitCost: "40.00",
+      sellingPrice: "70.00",
+    });
+    expect(secondLot).toMatchObject({ quantity: 2, unitCost: "60.00" });
 
     const cashier = await signIn(
       "cashier.inventory@example.test",
@@ -861,6 +886,7 @@ describe("owner catalog and stock operations", () => {
       .send({
         quantity: 7,
         sellingPrice: "75.00",
+        unitCost: "45.00",
         expiryDate: updatedExpiry,
         reason: "Corrected physical batch count and shelf price",
       });
@@ -870,11 +896,12 @@ describe("owner catalog and stock operations", () => {
       expiryDate: updatedExpiry,
       quantity: 7,
       sellingPrice: "75.00",
+      unitCost: "45.00",
     });
     expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
       id: activeProductId,
-      quantityOnHand: 7,
-      inventoryValue: "280.00",
+      quantityOnHand: 9,
+      inventoryValue: "435.00",
       sellingPrice: "75.00",
     });
 
@@ -884,22 +911,35 @@ describe("owner catalog and stock operations", () => {
       .send({
         quantity: 9,
         sellingPrice: "75.00",
+        unitCost: "45.00",
         expiryDate: updatedExpiry,
         reason: "Verified two additional units on the shelf",
       });
     expect(increased.status, JSON.stringify(increased.body)).toBe(200);
     expect((await owner.get("/api/products")).body.products[0]).toMatchObject({
       id: activeProductId,
-      quantityOnHand: 9,
-      inventoryValue: "360.00",
+      quantityOnHand: 11,
+      inventoryValue: "525.00",
       sellingPrice: "75.00",
     });
-    expect((await owner.get("/api/stock/lots")).body.lots[0]).toMatchObject({
+    const updatedLots = (await owner.get("/api/stock/lots")).body
+      .lots as Array<{
+      id: string;
+      quantity: number;
+      unitCost: string | null;
+      expiryDate: string;
+      sellingPrice: string;
+    }>;
+    expect(updatedLots.find((entry) => entry.id === lot.id)).toMatchObject({
       id: lot.id,
       quantity: 9,
+      unitCost: "45.00",
       expiryDate: updatedExpiry,
       sellingPrice: "75.00",
     });
+    expect(
+      updatedLots.find((entry) => entry.id === secondLot.id),
+    ).toMatchObject({ quantity: 2, unitCost: "60.00" });
     expect(
       db
         .prepare(
@@ -908,14 +948,23 @@ describe("owner catalog and stock operations", () => {
            FROM lot_stock_movements WHERE product_id = ? AND lot_id = ?`,
         )
         .get(activeProductId, lot.id),
-    ).toEqual({ quantity: 9, value: 36_000 });
+    ).toEqual({ quantity: 9, value: 40_500 });
+    expect(
+      db
+        .prepare(
+          `SELECT sum(quantity_delta) AS quantity,
+                  sum(inventory_value_delta_centavos) AS value
+           FROM lot_stock_movements WHERE product_id = ? AND lot_id = ?`,
+        )
+        .get(activeProductId, secondLot.id),
+    ).toEqual({ quantity: 2, value: 12_000 });
     expect(
       (await owner.get(`/api/stock/events?productId=${activeProductId}`)).body
         .events[0],
     ).toMatchObject({
       type: "ADJUSTMENT",
       quantityDelta: 2,
-      inventoryValueDelta: "80.00",
+      inventoryValueDelta: "90.00",
       reason: "COUNT_CORRECTION: Verified two additional units on the shelf",
     });
     expect(
@@ -925,8 +974,16 @@ describe("owner catalog and stock operations", () => {
       entityId: lot.id,
       details: {
         reason: "Verified two additional units on the shelf",
-        old: expect.objectContaining({ quantity: 7, sellingPrice: "75.00" }),
-        new: expect.objectContaining({ quantity: 9, sellingPrice: "75.00" }),
+        old: expect.objectContaining({
+          quantity: 7,
+          sellingPrice: "75.00",
+          unitCost: "45.00",
+        }),
+        new: expect.objectContaining({
+          quantity: 9,
+          sellingPrice: "75.00",
+          unitCost: "45.00",
+        }),
       },
     });
   });

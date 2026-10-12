@@ -94,6 +94,7 @@ type InventoryLot = {
   expiryDate: string;
   quarantined: boolean;
   quantity: number;
+  unitCost: string | null;
   saleableQuantity: number;
   sku: string;
   productName: string;
@@ -2007,6 +2008,7 @@ export function StockPage() {
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
   const [lotQuantityInput, setLotQuantityInput] = useState("");
   const [lotSellingPriceInput, setLotSellingPriceInput] = useState("");
+  const [lotUnitCostInput, setLotUnitCostInput] = useState("");
   const [expiryDateInput, setExpiryDateInput] = useState("");
   const [lotEditReason, setLotEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
@@ -2402,6 +2404,7 @@ export function StockPage() {
       await api.patch(`/stock/lots/${lot.id}`, {
         quantity: Number(lotQuantityInput),
         sellingPrice: lotSellingPriceInput,
+        unitCost: lotUnitCostInput,
         expiryDate: expiryDateInput,
         reason: lotEditReason.trim(),
       });
@@ -3103,6 +3106,7 @@ export function StockPage() {
                 <th>EXPIRY</th>
                 <th>PHYSICAL</th>
                 <th>SALEABLE</th>
+                <th>UNIT COST</th>
                 <th>SELL PRICE</th>
                 <th>STATUS</th>
                 <th>CONTROL</th>
@@ -3123,6 +3127,7 @@ export function StockPage() {
                     <td>{lot.expiryDate}</td>
                     <td>{lot.quantity}</td>
                     <td>{lot.saleableQuantity}</td>
+                    <td>{lot.unitCost === null ? "—" : `₱${lot.unitCost}`}</td>
                     <td>₱{lot.sellingPrice}</td>
                     <td>
                       <span
@@ -3154,6 +3159,7 @@ export function StockPage() {
                             setEditingLotId(lot.id);
                             setLotQuantityInput(String(lot.quantity));
                             setLotSellingPriceInput(lot.sellingPrice);
+                            setLotUnitCostInput(lot.unitCost ?? "0.00");
                             setExpiryDateInput(lot.expiryDate);
                             setLotEditReason("");
                           }}
@@ -3183,6 +3189,25 @@ export function StockPage() {
                               }
                               required
                             />
+                          </Field>
+                          <Field
+                            id={`lot-unit-cost-${lot.id}`}
+                            label="Unit acquisition cost (₱)"
+                          >
+                            <input
+                              id={`lot-unit-cost-${lot.id}`}
+                              className="text-input"
+                              inputMode="decimal"
+                              value={lotUnitCostInput}
+                              onChange={(event) =>
+                                setLotUnitCostInput(event.target.value)
+                              }
+                              pattern="[0-9]+(\.[0-9]{1,2})?"
+                              required
+                            />
+                            <small className="field-hint">
+                              Revalues this lot's remaining stock only.
+                            </small>
                           </Field>
                           <Field
                             id={`lot-price-${lot.id}`}

@@ -23,6 +23,10 @@ const appendOnlyTriggers = [
    BEGIN SELECT RAISE(ABORT, 'lot_stock_movements_are_append_only'); END`,
   `CREATE TRIGGER lot_stock_movements_no_delete BEFORE DELETE ON lot_stock_movements
    BEGIN SELECT RAISE(ABORT, 'lot_stock_movements_are_append_only'); END`,
+  `CREATE TRIGGER stock_cost_corrections_no_update BEFORE UPDATE ON stock_cost_corrections
+   BEGIN SELECT RAISE(ABORT, 'stock_cost_corrections_are_append_only'); END`,
+  `CREATE TRIGGER stock_cost_corrections_no_delete BEFORE DELETE ON stock_cost_corrections
+   BEGIN SELECT RAISE(ABORT, 'stock_cost_corrections_are_append_only'); END`,
   `CREATE TRIGGER lot_stock_movements_no_negative_balance
    BEFORE INSERT ON lot_stock_movements
    WHEN coalesce((SELECT sum(quantity_delta) FROM lot_stock_movements existing
@@ -54,6 +58,8 @@ export function clearLotLedgerForTest(db: Database.Database): void {
       "checkout_stock_override_reviews_immutable_delete",
       "lot_stock_movements_no_update",
       "lot_stock_movements_no_delete",
+      "stock_cost_corrections_no_update",
+      "stock_cost_corrections_no_delete",
       "lot_stock_movements_no_negative_balance",
       "lot_reconciliations_no_update",
       "lot_reconciliations_no_delete",
@@ -70,6 +76,7 @@ export function clearLotLedgerForTest(db: Database.Database): void {
        DELETE FROM checkout_stock_override_records;
        DELETE FROM sale_line_lot_allocations;
        DELETE FROM lot_stock_movements;
+       DELETE FROM stock_cost_corrections;
        DELETE FROM lot_reconciliations;
        DELETE FROM inventory_lots;`,
     );

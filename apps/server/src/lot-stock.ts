@@ -10,6 +10,7 @@ export type LotBalance = {
   expiryDate: string;
   quarantined: boolean;
   quantity: number;
+  inventoryValueCentavos: number;
   saleableQuantity: number;
 };
 
@@ -43,7 +44,8 @@ export function getLotBalances(
   const rows = db
     .prepare(
       `SELECT l.id, l.product_id, l.lot_code, l.expiry_date, l.quarantined,
-              coalesce(sum(m.quantity_delta), 0) AS quantity
+              coalesce(sum(m.quantity_delta), 0) AS quantity,
+              coalesce(sum(m.inventory_value_delta_centavos), 0) AS inventory_value_centavos
        FROM inventory_lots l
        LEFT JOIN lot_stock_movements m ON m.lot_id = l.id
        WHERE l.product_id = ?
@@ -57,6 +59,7 @@ export function getLotBalances(
     expiry_date: string;
     quarantined: number;
     quantity: number;
+    inventory_value_centavos: number;
   }>;
   return rows.map((row) => ({
     id: row.id,
@@ -65,6 +68,7 @@ export function getLotBalances(
     expiryDate: row.expiry_date,
     quarantined: row.quarantined === 1,
     quantity: row.quantity,
+    inventoryValueCentavos: row.inventory_value_centavos,
     saleableQuantity:
       row.expiry_date >= asOf && row.quarantined === 0
         ? Math.max(0, row.quantity)
