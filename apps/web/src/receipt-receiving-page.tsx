@@ -282,6 +282,16 @@ function isHighConfidenceConversion(row: ReceiptCsvRow): boolean {
   );
 }
 
+function preselectHighConfidenceConversions(
+  rows: ReceiptCsvRow[],
+): ReceiptCsvRow[] {
+  return rows.map((row) =>
+    isHighConfidenceConversion(row)
+      ? { ...row, conversionapproved: "TRUE" }
+      : row,
+  );
+}
+
 function hasPreviewableConversionCost(row: ReceiptCsvRow): boolean {
   return (
     row.conversionrecommended?.trim().toUpperCase() === "TRUE" &&
@@ -645,7 +655,7 @@ export function ReceiptReceivingPage() {
     const fallbackGroupId = crypto.randomUUID();
     setDraftRows(
       groupReceiptRows(
-        document.rows.map((row) => ({
+        preselectHighConfidenceConversions(document.rows).map((row) => ({
           ...row,
           sourcegroupid: row.sourcegroupid || fallbackGroupId,
           sourcefile: row.sourcefile || filename,
@@ -739,7 +749,9 @@ export function ReceiptReceivingPage() {
         receiptDraftId ??= extracted.rows[0]?.draftid;
         if (!receiptDraftId)
           throw new Error("The receipt draft has no line items.");
-        const newRows = extracted.rows.map((row) => ({
+        const newRows = preselectHighConfidenceConversions(
+          extracted.rows,
+        ).map((row) => ({
           ...row,
           draftid: receiptDraftId!,
           sourcegroupid: groupId,

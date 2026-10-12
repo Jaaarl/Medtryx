@@ -1075,6 +1075,16 @@ test("shows converted unit cost for high- and medium-confidence suggestions", as
     .getByRole("button", { name: "Load receipt CSV into editor" })
     .click();
 
+  const conversionApprovals = page.getByRole("checkbox", {
+    name: "Convert packages into sellable units",
+  });
+  await expect(conversionApprovals).toHaveCount(3);
+  await expect(conversionApprovals.nth(0)).toBeChecked();
+  await expect(conversionApprovals.nth(1)).not.toBeChecked();
+  await expect(conversionApprovals.nth(2)).not.toBeChecked();
+  await conversionApprovals.nth(0).click();
+  await expect(conversionApprovals.nth(0)).not.toBeChecked();
+
   const preview = page.locator(".receipt-conversion-preview");
   await expect(preview).toHaveCount(2);
   await expect(preview.nth(0)).toContainText("5.00 per sellable unit");
