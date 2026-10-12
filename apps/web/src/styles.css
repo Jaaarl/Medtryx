@@ -711,6 +711,27 @@ a {
   background: #edf7f1;
   color: #34745d;
 }
+.duplicate-product-notice {
+  background: #fff8e8;
+  border: 1px solid #f0dfb4;
+  border-radius: 7px;
+  color: #785d24;
+  display: grid;
+  font-size: 10px;
+  gap: 6px;
+  line-height: 1.45;
+  padding: 10px;
+}
+.duplicate-product-notice p {
+  margin: 0;
+}
+.duplicate-product-notice .inventory-field > span {
+  color: #785d24;
+}
+.duplicate-product-match-detail {
+  border-top: 1px solid rgb(120 93 36 / 18%);
+  padding-top: 6px;
+}
 
 .receipt-steps {
   display: grid;

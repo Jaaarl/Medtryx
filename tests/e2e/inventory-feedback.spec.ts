@@ -81,6 +81,81 @@ test("product and stock headers sort their rows in both directions", async ({
   await expect(stockRows.first()).toContainText("Synthetic Sort Alpha");
 });
 
+test("adding a matching product from Products receives stock without duplicating it", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const productName = "Synthetic Duplicate Stock Product";
+  const createResponse = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-DUPLICATE-FLOW",
+      name: productName,
+      unit: "box",
+      sellingPrice: "14.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 2,
+      openingUnitCost: "5.00",
+    },
+  });
+  expect(createResponse.status()).toBe(201);
+
+  await page.goto("/products");
+  await page.getByLabel("Product name").fill(productName.toUpperCase());
+  await page.getByLabel("Stock unit", { exact: true }).fill("BOX");
+  await expect(
+    page.getByText("Matching product already in the catalog"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add stock to existing product" }),
+  ).toBeDisabled();
+  await page.getByLabel("Quantity to receive").fill("3");
+  await page.locator("#opening-cost").fill("7.00");
+  await expect(
+    page.getByRole("button", { name: "Add stock to existing product" }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Add stock to existing product" })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Received 3 box for Synthetic Duplicate Stock Product; no new product was created.",
+  );
+
+  const productsResponse = await page.request.get(
+    `/api/products?q=${encodeURIComponent(productName)}`,
+  );
+  const products = (await productsResponse.json()) as {
+    products: Array<{
+      id: string;
+      sku: string;
+      quantityOnHand: number;
+      sellingPrice: string;
+    }>;
+  };
+  expect(products.products).toHaveLength(1);
+  expect(products.products[0]).toMatchObject({
+    sku: "SYN-DUPLICATE-FLOW",
+    quantityOnHand: 5,
+    sellingPrice: "14.00",
+  });
+  const stockEventsResponse = await page.request.get(
+    `/api/stock/events?productId=${encodeURIComponent(products.products[0]!.id)}`,
+  );
+  const stockEvents = (await stockEventsResponse.json()) as {
+    events: Array<{ type: string; quantityDelta: number }>;
+  };
+  expect(stockEvents.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "RECEIPT", quantityDelta: 3 }),
+    ]),
+  );
+});
+
 test("owners can search a batch and edit its quantity, unit cost, and product price", async ({
   page,
 }) => {

@@ -711,6 +711,44 @@ function findProduct(
     | undefined;
 }
 
+type ProductIdentityRow = {
+  id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  tracks_lots: number;
+  is_active: number;
+};
+
+function normalizeProductIdentity(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("en");
+}
+
+function findProductIdentityMatches(
+  db: Database.Database,
+  name: string,
+  unit: string,
+): ProductIdentityRow[] {
+  const normalizedName = normalizeProductIdentity(name);
+  const normalizedUnit = normalizeProductIdentity(unit);
+  return (
+    db
+      .prepare(
+        "SELECT id, sku, name, unit, tracks_lots, is_active FROM products",
+      )
+      .all() as ProductIdentityRow[]
+  ).filter(
+    (product) =>
+      normalizeProductIdentity(product.name) === normalizedName &&
+      normalizeProductIdentity(product.unit) === normalizedUnit,
+  );
+}
+
 function listProducts(
   db: Database.Database,
   query: string,
@@ -1211,6 +1249,35 @@ export function receiveStockRecord(
   return product.id;
 }
 
+function receiveOpeningStockForExistingProduct(
+  db: Database.Database,
+  productId: string,
+  input: CreateProductInput,
+  actorUserId: string,
+  now: string,
+): void {
+  if (input.openingQuantity < 1 || input.openingUnitCost === undefined) {
+    throw new InventoryError(409, "product_already_exists");
+  }
+  receiveStockRecord(
+    db,
+    {
+      productId,
+      quantity: input.openingQuantity,
+      unitCost: input.openingUnitCost,
+      ...(input.openingReference ? { reference: input.openingReference } : {}),
+      ...(input.openingSupplier ? { supplier: input.openingSupplier } : {}),
+      ...(input.openingLotCode ? { lotCode: input.openingLotCode } : {}),
+      ...(input.openingExpiryDate
+        ? { expiryDate: input.openingExpiryDate }
+        : {}),
+      ...(input.zeroCostReason ? { zeroCostReason: input.zeroCostReason } : {}),
+    },
+    actorUserId,
+    now,
+  );
+}
+
 export function registerInventoryRoutes(
   router: express.Router,
   db: Database.Database,
@@ -1667,44 +1734,57 @@ export function registerInventoryRoutes(
           }
           continue;
         }
-        try {
-          productFromBody(db, parsed.data);
-        } catch (error) {
-          if (error instanceof InventoryError) {
-            rowErrors.push({ row: row.row, message: error.code });
-          } else {
-            throw error;
+        const identityMatches = findProductIdentityMatches(
+          db,
+          parsed.data.name,
+          parsed.data.unit,
+        );
+        const duplicateProduct =
+          identityMatches.length === 1 ? identityMatches[0] : undefined;
+        if (identityMatches.length > 1) {
+          rowErrors.push({
+            row: row.row,
+            message: "Multiple matching products already exist.",
+          });
+        } else if (!duplicateProduct) {
+          try {
+            productFromBody(db, parsed.data);
+          } catch (error) {
+            if (error instanceof InventoryError) {
+              rowErrors.push({ row: row.row, message: error.code });
+            } else {
+              throw error;
+            }
           }
         }
         if (parsed.data.sku) {
           const sku = parsed.data.sku.toUpperCase();
+          const existingSku = db
+            .prepare("SELECT id FROM products WHERE sku = ? COLLATE NOCASE")
+            .get(sku) as { id: string } | undefined;
           if (seenSkus.has(sku)) {
             rowErrors.push({
               row: row.row,
               message: "SKU repeats in this file.",
             });
-          } else if (
-            db
-              .prepare("SELECT 1 FROM products WHERE sku = ? COLLATE NOCASE")
-              .get(sku)
-          ) {
+          } else if (existingSku && existingSku.id !== duplicateProduct?.id) {
             rowErrors.push({ row: row.row, message: "SKU already exists." });
           }
           seenSkus.add(sku);
         }
         if (parsed.data.barcode) {
           const barcode = parsed.data.barcode.toLowerCase();
+          const existingBarcode = db
+            .prepare("SELECT id FROM products WHERE barcode = ? COLLATE NOCASE")
+            .get(parsed.data.barcode) as { id: string } | undefined;
           if (seenBarcodes.has(barcode)) {
             rowErrors.push({
               row: row.row,
               message: "Barcode repeats in this file.",
             });
           } else if (
-            db
-              .prepare(
-                "SELECT 1 FROM products WHERE barcode = ? COLLATE NOCASE",
-              )
-              .get(parsed.data.barcode)
+            existingBarcode &&
+            existingBarcode.id !== duplicateProduct?.id
           ) {
             rowErrors.push({
               row: row.row,
@@ -1722,14 +1802,46 @@ export function registerInventoryRoutes(
 
       try {
         const now = new Date().toISOString();
-        const created = db.transaction(() =>
-          productRows.map(({ input }) =>
-            createProductRecord(db, input, req.user!.id, now),
-          ),
+        const imported = db.transaction(() =>
+          productRows.map(({ input }) => {
+            const matches = findProductIdentityMatches(
+              db,
+              input.name,
+              input.unit,
+            );
+            if (matches.length > 1) {
+              throw new InventoryError(409, "duplicate_product_ambiguous");
+            }
+            const existing = matches[0];
+            if (existing) {
+              if (!existing.is_active) {
+                throw new InventoryError(409, "product_inactive");
+              }
+              receiveOpeningStockForExistingProduct(
+                db,
+                existing.id,
+                input,
+                req.user!.id,
+                now,
+              );
+              return { id: existing.id, sku: existing.sku, stockAdded: true };
+            }
+            return {
+              ...createProductRecord(db, input, req.user!.id, now),
+              stockAdded: false,
+            };
+          }),
         )();
         res.status(201).json({
-          createdCount: created.length,
-          products: created.map(({ id, sku }) => ({ id, sku })),
+          createdCount: imported.filter((product) => !product.stockAdded)
+            .length,
+          receivedCount: imported.filter((product) => product.stockAdded)
+            .length,
+          products: imported.map(({ id, sku, stockAdded }) => ({
+            id,
+            sku,
+            stockAdded,
+          })),
         });
       } catch (error) {
         if (!handleInventoryError(error, res)) throw error;
@@ -1743,6 +1855,54 @@ export function registerInventoryRoutes(
     if (!req.user)
       return res.status(401).json({ error: "authentication_required" });
     try {
+      const identityMatches = findProductIdentityMatches(
+        db,
+        parsed.data.name,
+        parsed.data.unit,
+      );
+      if (identityMatches.length > 1) {
+        throw new InventoryError(409, "duplicate_product_ambiguous");
+      }
+      const duplicateProduct = identityMatches[0];
+      if (duplicateProduct) {
+        if (parsed.data.sku) {
+          const existingSku = db
+            .prepare("SELECT id FROM products WHERE sku = ? COLLATE NOCASE")
+            .get(parsed.data.sku) as { id: string } | undefined;
+          if (existingSku && existingSku.id !== duplicateProduct.id) {
+            throw new InventoryError(409, "sku_already_exists");
+          }
+        }
+        if (parsed.data.barcode) {
+          const existingBarcode = db
+            .prepare("SELECT id FROM products WHERE barcode = ? COLLATE NOCASE")
+            .get(parsed.data.barcode) as { id: string } | undefined;
+          if (existingBarcode && existingBarcode.id !== duplicateProduct.id) {
+            throw new InventoryError(409, "barcode_already_exists");
+          }
+        }
+        if (!duplicateProduct.is_active) {
+          throw new InventoryError(409, "product_inactive");
+        }
+        const now = new Date().toISOString();
+        db.transaction(() =>
+          receiveOpeningStockForExistingProduct(
+            db,
+            duplicateProduct.id,
+            parsed.data,
+            req.user!.id,
+            now,
+          ),
+        )();
+        const product = findProduct(db, duplicateProduct.id);
+        if (!product) throw new InventoryError(500, "product_create_failed");
+        res.status(200).json({
+          product: presentProduct(db, product),
+          generatedSku: false,
+          stockAdded: true,
+        });
+        return;
+      }
       productFromBody(db, parsed.data);
       const sellingPriceCents = parseMoney(parsed.data.sellingPrice);
       const openingCostCents =
@@ -1877,6 +2037,7 @@ export function registerInventoryRoutes(
         product: presentProduct(db, product),
         generatedSku: !parsed.data.sku,
         sku,
+        stockAdded: false,
       });
     } catch (error) {
       if (!handleInventoryError(error, res)) throw error;

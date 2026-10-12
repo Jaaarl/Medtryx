@@ -431,6 +431,7 @@ describe("owner catalog and stock operations", () => {
     const regular = await createOpeningProduct(owner, {
       sku: "SYN-CSV-RECEIPT-REGULAR",
       barcode: "SYN-CSV-RECEIPT-REG-BC",
+      name: "Synthetic Regular Receipt Product",
       tracksLots: false,
     });
     expect(tracked.status).toBe(201);
@@ -1374,5 +1375,144 @@ describe("owner catalog and stock operations", () => {
     });
     expect(duplicateBarcode.status).toBe(409);
     expect(duplicateBarcode.body.error).toBe("barcode_already_exists");
+  });
+
+  it("receives stock into a matching product instead of creating a duplicate", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const original = await createOpeningProduct(owner, {
+      sku: "SYN-DUPLICATE-001",
+      barcode: "SYN-DUPLICATE-BC-001",
+      name: "Synthetic Duplicate Stock Product",
+      unit: "box",
+      sellingPrice: "14.00",
+      tracksLots: true,
+      openingQuantity: 2,
+      openingUnitCost: "5.00",
+      openingLotCode: "SYN-DUP-ORIGINAL-LOT",
+      openingExpiryDate: manilaDayAfter(30),
+    });
+    expect(original.status).toBe(201);
+
+    const duplicate = await createOpeningProduct(owner, {
+      sku: "SYN-DUPLICATE-002",
+      barcode: "SYN-DUPLICATE-BC-002",
+      name: "  synthetic   duplicate stock product  ",
+      unit: " BOX ",
+      sellingPrice: "99.00",
+      tracksLots: true,
+      openingQuantity: 3,
+      openingUnitCost: "7.00",
+      openingLotCode: "SYN-DUP-RECEIVED-LOT",
+      openingExpiryDate: manilaDayAfter(60),
+    });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.stockAdded).toBe(true);
+    expect(duplicate.body.product).toMatchObject({
+      id: original.body.product.id,
+      sku: "SYN-DUPLICATE-001",
+      name: "Synthetic Duplicate Stock Product",
+      sellingPrice: "14.00",
+      quantityOnHand: 5,
+      inventoryValue: "31.00",
+    });
+    expect(
+      (
+        db.prepare("SELECT count(*) AS count FROM products").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+    expect(
+      db
+        .prepare(
+          "SELECT event_type, quantity_delta FROM stock_events WHERE product_id = ? ORDER BY sequence",
+        )
+        .all(original.body.product.id as string),
+    ).toEqual([
+      { event_type: "OPENING", quantity_delta: 2 },
+      { event_type: "RECEIPT", quantity_delta: 3 },
+    ]);
+    expect(
+      db
+        .prepare(
+          `SELECT l.lot_code, m.movement_type, m.quantity_delta
+           FROM inventory_lots l
+           JOIN lot_stock_movements m ON m.lot_id = l.id
+           WHERE m.product_id = ? ORDER BY m.sequence`,
+        )
+        .all(original.body.product.id as string),
+    ).toEqual([
+      {
+        lot_code: "SYN-DUP-ORIGINAL-LOT",
+        movement_type: "OPENING",
+        quantity_delta: 2,
+      },
+      {
+        lot_code: "SYN-DUP-RECEIVED-LOT",
+        movement_type: "RECEIPT",
+        quantity_delta: 3,
+      },
+    ]);
+
+    const emptyDuplicate = await createOpeningProduct(owner, {
+      sku: "SYN-DUPLICATE-003",
+      name: "Synthetic Duplicate Stock Product",
+      unit: "box",
+      openingQuantity: 0,
+      openingUnitCost: undefined,
+    });
+    expect(emptyDuplicate.status).toBe(409);
+    expect(emptyDuplicate.body.error).toBe("product_already_exists");
+    expect(
+      (
+        db.prepare("SELECT count(*) AS count FROM products").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+  });
+
+  it("receives matching product CSV rows as stock without duplicating the catalog entry", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const original = await createOpeningProduct(owner, {
+      sku: "SYN-CSV-DUPLICATE-001",
+      name: "Synthetic CSV Duplicate Product",
+      unit: "capsule",
+      openingQuantity: 2,
+      openingUnitCost: "5.00",
+    });
+    expect(original.status).toBe(201);
+
+    const token = await csrfFor(owner);
+    const imported = await owner
+      .post("/api/products/import-csv")
+      .set("Content-Type", "text/csv")
+      .set("x-csrf-token", token)
+      .send(
+        [
+          "sku,name,unit,sellingPrice,taxClass,productType,openingQuantity,openingUnitCost",
+          "SYN-CSV-DUPLICATE-001,synthetic csv duplicate product,CAPSULE,99.00,VATABLE,GENERIC,3,7.00",
+        ].join("\n"),
+      );
+    expect(imported.status, JSON.stringify(imported.body)).toBe(201);
+    expect(imported.body).toMatchObject({
+      createdCount: 0,
+      receivedCount: 1,
+      products: [
+        {
+          id: original.body.product.id,
+          sku: "SYN-CSV-DUPLICATE-001",
+          stockAdded: true,
+        },
+      ],
+    });
+    const products = await owner.get("/api/products?q=SYN-CSV-DUPLICATE-001");
+    expect(products.body.products).toHaveLength(1);
+    expect(products.body.products[0]).toMatchObject({
+      name: "Synthetic CSV Duplicate Product",
+      sellingPrice: "70.00",
+      quantityOnHand: 5,
+      inventoryValue: "31.00",
+    });
   });
 });

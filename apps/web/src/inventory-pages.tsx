@@ -124,6 +124,15 @@ function normalizeLotSearch(value: string): string {
     .toLowerCase();
 }
 
+function normalizeProductIdentity(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 type StockEvent = {
   id: string;
   productId: string;
@@ -264,6 +273,11 @@ function errorMessage(error: unknown): string {
       "Zero-rated products are unavailable until tax settings are approved.",
     product_not_found:
       "That product could not be found. Refresh and try again.",
+    product_already_exists:
+      "This product is already in the catalog. Enter a quantity to add stock instead.",
+    duplicate_product_ambiguous:
+      "More than one matching product exists. Choose the correct product before adding stock.",
+    product_inactive: "Reactivate this product before adding stock to it.",
     receipt_lot_required:
       "Enter the lot or batch code and expiry date for this tracked product.",
     adjustment_lot_required:
@@ -652,6 +666,16 @@ function productCsvErrorMessage(error: unknown): string {
     return "A SKU already exists. No products were imported.";
   if (error.code === "barcode_already_exists")
     return "A barcode already exists. No products were imported.";
+  if (error.code === "product_already_exists")
+    return "A matching product already exists. Add a positive quantity to receive stock instead.";
+  if (error.code === "duplicate_product_ambiguous")
+    return "More than one matching product exists. No products were imported.";
+  if (error.code === "product_inactive")
+    return "A matching product is inactive. Reactivate it before receiving stock.";
+  if (error.code === "receipt_lot_required")
+    return "A matching product tracks lots. Include its lot code and expiry date; no products were imported.";
+  if (error.code === "expired_lot_not_allowed")
+    return "A matching product has an expired lot date. No products were imported.";
   if (error.code === "zero_rated_not_approved")
     return "Zero-rated products are unavailable until tax settings are approved. No products were imported.";
   return "The CSV import failed. Check the product rows and try again.";
@@ -681,12 +705,15 @@ function ProductCsvImportPanel({
     setSaving(true);
     setNotice("");
     try {
-      const result = await api.postCsv<{ createdCount: number }>(
-        "/products/import-csv",
-        await file.text(),
-      );
+      const result = await api.postCsv<{
+        createdCount: number;
+        receivedCount?: number;
+      }>("/products/import-csv", await file.text());
+      const receivedCount = result.receivedCount ?? 0;
       setNotice(
-        `Imported ${result.createdCount} product${result.createdCount === 1 ? "" : "s"} with opening stock.`,
+        receivedCount === 0
+          ? `Imported ${result.createdCount} product${result.createdCount === 1 ? "" : "s"} with opening stock.`
+          : `${result.createdCount > 0 ? `${result.createdCount} new product${result.createdCount === 1 ? "" : "s"} imported; ` : ""}stock received for ${receivedCount} existing product${receivedCount === 1 ? "" : "s"}.`,
       );
       setFile(null);
       if (inputRef.current) inputRef.current.value = "";
@@ -1034,6 +1061,7 @@ export function ProductsPage() {
   }>({ key: "product", direction: "asc" });
   const [form, setForm] = useState(EMPTY_FORM);
   const [editing, setEditing] = useState<Product | null>(null);
+  const [duplicateProductId, setDuplicateProductId] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [zeroRatedAllowed, setZeroRatedAllowed] = useState(false);
@@ -1059,6 +1087,20 @@ export function ProductsPage() {
   const visibleProductColumnCount = PRODUCT_CATALOG_COLUMNS.filter(
     ({ key }) => visibleProductColumns[key],
   ).length;
+  const normalizedFormName = normalizeProductIdentity(form.name);
+  const normalizedFormUnit = normalizeProductIdentity(form.unit);
+  const duplicateCandidates =
+    !editing && normalizedFormName && normalizedFormUnit
+      ? products.filter(
+          (product) =>
+            normalizeProductIdentity(product.name) === normalizedFormName &&
+            normalizeProductIdentity(product.unit) === normalizedFormUnit,
+        )
+      : [];
+  const duplicateProduct =
+    duplicateCandidates.find((product) => product.id === duplicateProductId) ??
+    (duplicateCandidates.length === 1 ? duplicateCandidates[0] : null) ??
+    null;
 
   function updateProductTableScroll() {
     const table = productTableRef.current;
@@ -1247,6 +1289,7 @@ export function ProductsPage() {
     setNotice("");
     setError("");
     setEditing(product);
+    setDuplicateProductId("");
     setForm({
       ...EMPTY_FORM,
       name: product.name,
@@ -1295,12 +1338,25 @@ export function ProductsPage() {
 
   function cancelEdit() {
     setEditing(null);
+    setDuplicateProductId("");
     setForm(EMPTY_FORM);
     setError("");
   }
 
   async function saveProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (duplicateCandidates.length > 0 && !duplicateProduct) {
+      setError("Choose which matching product should receive this stock.");
+      return;
+    }
+    if (duplicateProduct && !duplicateProduct.active) {
+      setError("Reactivate this product before adding stock to it.");
+      return;
+    }
+    if (duplicateProduct && Number(form.openingQuantity) < 1) {
+      setError("Enter a quantity of at least 1 to add stock to this product.");
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -1325,6 +1381,30 @@ export function ProductsPage() {
       if (editing) {
         await api.patch(`/products/${editing.id}`, common);
         setNotice("Product changes saved.");
+      } else if (duplicateProduct) {
+        await api.post("/stock/receipts", {
+          productId: duplicateProduct.id,
+          quantity: Number(form.openingQuantity),
+          unitCost: form.openingUnitCost,
+          ...(form.openingReference.trim()
+            ? { reference: form.openingReference.trim() }
+            : {}),
+          ...(form.openingSupplier.trim()
+            ? { supplier: form.openingSupplier.trim() }
+            : {}),
+          ...(duplicateProduct.tracksLots
+            ? {
+                lotCode: form.openingLotCode.trim(),
+                expiryDate: form.openingExpiryDate,
+              }
+            : {}),
+          ...(centsFromMoney(form.openingUnitCost) === 0n
+            ? { zeroCostReason: form.openingZeroCostReason.trim() }
+            : {}),
+        });
+        setNotice(
+          `Received ${form.openingQuantity} ${duplicateProduct.unit} for ${duplicateProduct.name}; no new product was created.`,
+        );
       } else {
         const body = {
           ...common,
@@ -1350,11 +1430,14 @@ export function ProductsPage() {
         const result = await api.post<{
           product: Product;
           generatedSku: boolean;
+          stockAdded?: boolean;
         }>("/products", body);
         setNotice(
-          result.generatedSku
-            ? `Product created with SKU ${result.product.sku}.`
-            : "Product created.",
+          result.stockAdded
+            ? `Received ${form.openingQuantity} ${result.product.unit} for ${result.product.name}; no new product was created.`
+            : result.generatedSku
+              ? `Product created with SKU ${result.product.sku}.`
+              : "Product created.",
         );
       }
       await refresh();
@@ -1587,11 +1670,19 @@ export function ProductsPage() {
           <span className="create-card-icon">
             <Package size={17} />
           </span>
-          <h2>{editing ? "Edit product" : "Add a product"}</h2>
+          <h2>
+            {editing
+              ? "Edit product"
+              : duplicateProduct
+                ? "Add stock to existing product"
+                : "Add a product"}
+          </h2>
           <p>
             {editing
               ? "Unit changes relabel the current stock count; they do not convert quantity, price, or costs. Past sales keep their saved unit."
-              : "Set a single selling price and optional opening stock."}
+              : duplicateProduct
+                ? "The existing catalog details will be kept. Enter the received quantity and unit cost below."
+                : "Set a single selling price and optional opening stock."}
           </p>
           <form
             className="form-stack inventory-form"
@@ -1609,6 +1700,48 @@ export function ProductsPage() {
                 maxLength={160}
               />
             </Field>
+            {duplicateCandidates.length > 0 && (
+              <div className="duplicate-product-notice" role="note">
+                <strong>Matching product already in the catalog</strong>
+                <p>
+                  Only quantity, cost, supplier, and lot details will be
+                  recorded. The existing catalog details will stay unchanged.
+                </p>
+                {duplicateProduct && Number(form.openingQuantity) < 1 && (
+                  <p>Enter a quantity of at least 1 to receive stock.</p>
+                )}
+                {duplicateCandidates.length > 1 && (
+                  <Field
+                    id="duplicate-product-match"
+                    label="Choose the product to receive stock"
+                  >
+                    <select
+                      id="duplicate-product-match"
+                      className="text-input select-input"
+                      value={duplicateProduct?.id ?? ""}
+                      onChange={(event) =>
+                        setDuplicateProductId(event.target.value)
+                      }
+                    >
+                      <option value="">Choose a product</option>
+                      {duplicateCandidates.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name} · {product.sku} · {product.unit}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {duplicateProduct && (
+                  <p className="duplicate-product-match-detail">
+                    Receiving into <strong>{duplicateProduct.name}</strong> ·{" "}
+                    {duplicateProduct.sku} · {duplicateProduct.quantityOnHand}{" "}
+                    {duplicateProduct.unit} on hand
+                    {!duplicateProduct.active && " · inactive"}
+                  </p>
+                )}
+              </div>
+            )}
             <Field id="product-unit" label="Stock unit">
               <input
                 id="product-unit"
@@ -1630,7 +1763,7 @@ export function ProductsPage() {
                 onChange={(event) =>
                   setForm({ ...form, sellingPrice: event.target.value })
                 }
-                required
+                required={!duplicateProduct}
                 pattern="[0-9]+(\.[0-9]{1,2})?"
               />
             </Field>
@@ -1685,7 +1818,10 @@ export function ProductsPage() {
                       value={value}
                       checked={form.productType === value}
                       onChange={() => setForm({ ...form, productType: value })}
-                      required={!editing || form.productType === ""}
+                      required={
+                        !duplicateProduct &&
+                        (!editing || form.productType === "")
+                      }
                     />
                     <span>{label}</span>
                   </label>
@@ -1721,7 +1857,10 @@ export function ProductsPage() {
                   type="checkbox"
                   checked={form.isPwdEligible}
                   onChange={(event) =>
-                    setForm({ ...form, isPwdEligible: event.target.checked })
+                    setForm({
+                      ...form,
+                      isPwdEligible: event.target.checked,
+                    })
                   }
                 />
                 <span>PWD 20% discount + VAT exemption eligible</span>
@@ -1731,7 +1870,10 @@ export function ProductsPage() {
                   type="checkbox"
                   checked={form.isBnpcEligible}
                   onChange={(event) =>
-                    setForm({ ...form, isBnpcEligible: event.target.checked })
+                    setForm({
+                      ...form,
+                      isBnpcEligible: event.target.checked,
+                    })
                   }
                 />
                 <span>BNPC 5% discount eligible</span>
@@ -1786,9 +1928,18 @@ export function ProductsPage() {
             </label>
             {!editing && (
               <>
-                <div className="inventory-form-divider">OPENING STOCK</div>
+                <div className="inventory-form-divider">
+                  {duplicateProduct ? "STOCK RECEIPT" : "OPENING STOCK"}
+                </div>
                 <div className="inventory-two-fields">
-                  <Field id="opening-quantity" label="Counted quantity">
+                  <Field
+                    id="opening-quantity"
+                    label={
+                      duplicateProduct
+                        ? "Quantity to receive"
+                        : "Counted quantity"
+                    }
+                  >
                     <input
                       id="opening-quantity"
                       className="text-input"
@@ -1851,7 +2002,7 @@ export function ProductsPage() {
                     />
                   </Field>
                 ) : null}
-                {form.tracksLots && Number(form.openingQuantity) > 0 && (
+                {duplicateProduct && Number(form.openingQuantity) > 0 && (
                   <>
                     <Field
                       id="opening-reference"
@@ -1870,45 +2021,6 @@ export function ProductsPage() {
                         maxLength={200}
                       />
                     </Field>
-                    <Field
-                      id="opening-lot-code"
-                      label="Opening lot / batch code"
-                    >
-                      <input
-                        id="opening-lot-code"
-                        className="text-input"
-                        value={form.openingLotCode}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            openingLotCode: event.target.value,
-                          })
-                        }
-                        required
-                        maxLength={100}
-                      />
-                    </Field>
-                    <Field
-                      id="opening-expiry-date"
-                      label="Expiry date (last saleable day)"
-                    >
-                      <input
-                        id="opening-expiry-date"
-                        className="text-input"
-                        type="date"
-                        min={new Date().toLocaleDateString("en-CA", {
-                          timeZone: "Asia/Manila",
-                        })}
-                        value={form.openingExpiryDate}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            openingExpiryDate: event.target.value,
-                          })
-                        }
-                        required
-                      />
-                    </Field>
                     <Field id="opening-supplier" label="Supplier (optional)">
                       <input
                         id="opening-supplier"
@@ -1925,15 +2037,119 @@ export function ProductsPage() {
                     </Field>
                   </>
                 )}
+                {(duplicateProduct?.tracksLots ?? form.tracksLots) &&
+                  Number(form.openingQuantity) > 0 && (
+                    <>
+                      {!duplicateProduct && (
+                        <Field
+                          id="opening-reference"
+                          label="Reference / supplier note"
+                        >
+                          <input
+                            id="opening-reference"
+                            className="text-input"
+                            value={form.openingReference}
+                            onChange={(event) =>
+                              setForm({
+                                ...form,
+                                openingReference: event.target.value,
+                              })
+                            }
+                            maxLength={200}
+                          />
+                        </Field>
+                      )}
+                      <Field
+                        id="opening-lot-code"
+                        label={
+                          duplicateProduct
+                            ? "Lot / batch code"
+                            : "Opening lot / batch code"
+                        }
+                      >
+                        <input
+                          id="opening-lot-code"
+                          className="text-input"
+                          value={form.openingLotCode}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              openingLotCode: event.target.value,
+                            })
+                          }
+                          required
+                          maxLength={100}
+                        />
+                      </Field>
+                      <Field
+                        id="opening-expiry-date"
+                        label="Expiry date (last saleable day)"
+                      >
+                        <input
+                          id="opening-expiry-date"
+                          className="text-input"
+                          type="date"
+                          min={new Date().toLocaleDateString("en-CA", {
+                            timeZone: "Asia/Manila",
+                          })}
+                          value={form.openingExpiryDate}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              openingExpiryDate: event.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </Field>
+                      {!duplicateProduct && (
+                        <Field
+                          id="opening-supplier"
+                          label="Supplier (optional)"
+                        >
+                          <input
+                            id="opening-supplier"
+                            className="text-input"
+                            value={form.openingSupplier}
+                            onChange={(event) =>
+                              setForm({
+                                ...form,
+                                openingSupplier: event.target.value,
+                              })
+                            }
+                            maxLength={160}
+                          />
+                        </Field>
+                      )}
+                    </>
+                  )}
               </>
             )}
             <button
               className="button button-primary create-submit"
               type="submit"
-              disabled={saving}
+              disabled={
+                saving ||
+                loading ||
+                (duplicateCandidates.length > 0 && !duplicateProduct) ||
+                (duplicateProduct !== null &&
+                  duplicateProduct !== undefined &&
+                  (!duplicateProduct.active ||
+                    Number(form.openingQuantity) < 1))
+              }
             >
-              {saving ? "Saving…" : editing ? "Save product" : "Create product"}
-              <CirclePlus size={16} />
+              {saving
+                ? "Saving…"
+                : editing
+                  ? "Save product"
+                  : duplicateProduct
+                    ? "Add stock to existing product"
+                    : "Create product"}
+              {duplicateProduct ? (
+                <ArrowDownToLine size={16} />
+              ) : (
+                <CirclePlus size={16} />
+              )}
             </button>
             {editing && (
               <>
