@@ -56,7 +56,7 @@ const navigation = [
     to: "/manual-checkout",
     label: "Manual checkout",
     icon: CalendarDays,
-    ownerOnly: true,
+    ownerOnly: false,
   },
   {
     to: "/daily-sales",
@@ -917,13 +917,13 @@ export function App() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/checkout" replace />} />
           <Route path="checkout" element={<CheckoutPage />} />
+          <Route
+            path="manual-checkout"
+            element={<CheckoutPage manualEntry />}
+          />
           <Route path="daily-sales" element={<DailySalesSummaryPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route element={<Guard ownerOnly />}>
-            <Route
-              path="manual-checkout"
-              element={<CheckoutPage manualEntry />}
-            />
             <Route path="products" element={<ProductsPage />} />
             <Route path="stock" element={<StockPage />} />
             <Route

@@ -382,8 +382,6 @@ function errorMessage(error: unknown): string {
     tax_policy_not_approved:
       "Checkout is locked until the owner records accountant-approved tax and cost-basis settings.",
     open_shift_required: "Open a cashier shift before finalizing a sale.",
-    manual_date_owner_only:
-      "Only an owner can record a sale with a custom business date.",
     invalid_business_date:
       "Choose a valid business date that is not in the future.",
     shift_already_open:
@@ -5352,7 +5350,7 @@ export function CheckoutPage({
   return (
     <section className="page-section inventory-page checkout-page">
       <PageHeading
-        eyebrow={manualEntry ? "OWNER WORKSPACE" : "CASHIER WORKSPACE"}
+        eyebrow={manualEntry ? "MANUAL SALES" : "CASHIER WORKSPACE"}
         title={manualEntry ? "Manual checkout" : "Checkout"}
         description={
           manualEntry

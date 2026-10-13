@@ -2920,9 +2920,6 @@ export function registerSalesRoutes(
   router.post("/sales/preview", requireAuth, csrf, (req, res) => {
     const parsed = checkoutBaseSchema.safeParse(req.body);
     if (!parsed.success) return validationFailure(res);
-    if (parsed.data.businessDate && req.user!.role !== "owner") {
-      return res.status(403).json({ error: "manual_date_owner_only" });
-    }
     if (
       parsed.data.businessDate &&
       ((parsed.data.countOverrides?.length ?? 0) > 0 ||
@@ -2980,9 +2977,6 @@ export function registerSalesRoutes(
   router.post("/sales", requireAuth, csrf, (req, res) => {
     const parsed = saleRequestSchema.safeParse(req.body);
     if (!parsed.success || !req.user) return validationFailure(res);
-    if (parsed.data.businessDate && req.user.role !== "owner") {
-      return res.status(403).json({ error: "manual_date_owner_only" });
-    }
     if (
       parsed.data.businessDate &&
       ((parsed.data.countOverrides?.length ?? 0) > 0 ||

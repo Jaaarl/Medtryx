@@ -33,7 +33,7 @@ Suggested description:
 - Only the owner can enable or disable the setting. Record the old value, new value, owner, and timestamp in the audit log.
 - Enabling it authorizes active cashiers to use this specific checkout workflow. No owner password is required for each routine override.
 - Cashiers can read whether the feature is available, but cannot edit the setting or access general inventory adjustment permissions.
-- Keep the existing owner-only stock adjustment routes owner-only. The new cashier capability applies only to a correction attached to a successfully completed sale.
+- Keep the existing owner-only stock adjustment routes owner-only. The new cashier capability applies only to a correction attached to a successfully completed live sale.
 - Show a small checkout status indicator when enabled. Require explicit confirmation only when stock is insufficient.
 - If the setting is missing or cannot be validated, apply the existing stock limits. The server is authoritative.
 - Turning it off blocks new override sales, including carts previously previewed while it was on. Already completed transactions retain their history.
@@ -73,7 +73,7 @@ Canceling the dialog keeps the cart unchanged. Removing the product removes its 
 - Changing product quantities, bundle quantities, or confirmed lot selections invalidates the preview and affected override confirmation. Reconfirm before completing the sale. This prevents obsolete confirmations from silently authorizing changed demand.
 - Resolve multiple insufficient products individually, then show them together in the final summary. If any required confirmation fails, the entire sale remains unsaved.
 - Keep bundle purchase limits, pricing, discounts, active-product checks, approved tax policy, payment checks, and register/shift requirements in force.
-- Initial scope is live Checkout, including its bundle component demand. Owner-only backdated Manual checkout retains its existing stock rules; historical count corrections need a separate design.
+- Initial scope is live Checkout, including its bundle component demand. Backdated Manual checkout remains limited to recorded saleable stock; historical count corrections need a separate design.
 
 ## Batch, expiry, and quarantine workflow
 

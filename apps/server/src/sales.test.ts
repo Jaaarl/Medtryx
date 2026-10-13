@@ -2064,19 +2064,42 @@ describe("checkout, sales, and cashier shifts", () => {
       ).quantityOnHand,
     ).toBe(product.quantityOnHand - 1);
 
+    const cashierBusinessDate = manilaDayAfter(-2);
     const cashierPreviewCsrf = await csrfFor(cashier);
+    const cashierPreview = await cashier
+      .post("/api/sales/preview")
+      .set("x-csrf-token", cashierPreviewCsrf)
+      .send({
+        benefitType: "REGULAR",
+        businessDate: cashierBusinessDate,
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(cashierPreview.status, JSON.stringify(cashierPreview.body)).toBe(
+      200,
+    );
+    const cashierSaleCsrf = await csrfFor(cashier);
+    const cashierSale = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", cashierSaleCsrf)
+      .send({
+        benefitType: "REGULAR",
+        businessDate: cashierBusinessDate,
+        paymentMethod: "CASH",
+        requestKey: randomUUID(),
+        items: [{ productId: product.id, quantity: 1 }],
+      });
+    expect(cashierSale.status, JSON.stringify(cashierSale.body)).toBe(201);
+    expect(cashierSale.body.sale).toMatchObject({
+      businessDate: cashierBusinessDate,
+      transactionId: `MTX-${cashierBusinessDate.replaceAll("-", "")}-000001`,
+      cashierEmail: "cashier.sales@example.test",
+    });
     expect(
-      (
-        await cashier
-          .post("/api/sales/preview")
-          .set("x-csrf-token", cashierPreviewCsrf)
-          .send({
-            benefitType: "REGULAR",
-            businessDate,
-            items: [{ productId: product.id, quantity: 1 }],
-          })
-      ).status,
-    ).toBe(403);
+      db
+        .prepare("SELECT shift_id FROM sales WHERE transaction_id = ?")
+        .get(cashierSale.body.sale.transactionId),
+    ).toEqual({ shift_id: null });
+    expect((await cashier.get("/api/shifts/current")).body.shift).toBeNull();
     const futureDateCsrf = await csrfFor(owner);
     expect(
       (

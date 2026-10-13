@@ -468,6 +468,34 @@ test("daily sales, Journal lock, and report summary cover the current business d
       .getByText(`Business date: ${manualSaleDate}`),
   ).toBeVisible();
 
+  await expect(
+    cashierPage.getByRole("link", { name: "Manual checkout" }),
+  ).toBeVisible();
+  await cashierPage.goto("/manual-checkout");
+  await expect(
+    cashierPage.getByRole("heading", { name: "Manual checkout" }),
+  ).toBeVisible();
+  await cashierPage.getByLabel("Sale business date").fill(manualSaleDate);
+  await cashierPage.getByLabel("Search catalog").fill(productName);
+  const cashierManualCatalogRow = cashierPage
+    .locator(".catalog-result")
+    .filter({ hasText: productName });
+  await cashierManualCatalogRow
+    .getByRole("button", { name: "Add to cart" })
+    .click();
+  await cashierPage.getByLabel("Quantity to add").fill("1");
+  await cashierPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "Add to cart" })
+    .click();
+  await cashierPage
+    .getByRole("button", { name: "Calculate line taxes and discounts" })
+    .click();
+  await cashierPage.getByRole("button", { name: "Save manual sale" }).click();
+  await expect(
+    cashierPage.getByText(`Manual sale saved for ${manualSaleDate}.`),
+  ).toBeVisible();
+
   await cashierPage.goto("/daily-sales");
   await expect(
     cashierPage.getByRole("heading", { name: "Daily sales" }),
