@@ -1169,23 +1169,14 @@ export function ProductsPage() {
         )
       : [];
   const productMatchOptions = useMemo(() => {
-    if (editing || !normalizedFormName || !normalizedFormUnit) return [];
-    const sameUnitProducts = products.filter(
+    if (editing || !normalizedFormName) return [];
+    const exactMatches = products.filter(
       (product) =>
+        normalizeProductIdentity(product.name) === normalizedFormName &&
         normalizeProductIdentity(product.unit) === normalizedFormUnit,
     );
-    const exactIds = new Set(
-      sameUnitProducts
-        .filter(
-          (product) =>
-            normalizeProductIdentity(product.name) === normalizedFormName,
-        )
-        .map((product) => product.id),
-    );
-    const exactMatches = sameUnitProducts.filter((product) =>
-      exactIds.has(product.id),
-    );
-    const possibleMatches = sameUnitProducts
+    const exactIds = new Set(exactMatches.map((product) => product.id));
+    const possibleMatches = products
       .filter((product) => !exactIds.has(product.id))
       .flatMap((product) => {
         const score = productNameMatchScore(form.name, product.name);
@@ -1545,6 +1536,7 @@ export function ProductsPage() {
       await refresh();
       setProductPage(1);
       setEditing(null);
+      setDuplicateProductId("");
       setForm(EMPTY_FORM);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -1812,7 +1804,7 @@ export function ProductsPage() {
                 <p>
                   {duplicateCandidates.length > 0
                     ? "Only quantity, cost, supplier, and lot details will be recorded. The existing catalog details will stay unchanged."
-                    : "These products have similar names and the same stock unit. Select a match to add stock to it, or create a new product if none is the same item."}
+                    : "Select a match to add stock in its existing stock unit, or create a new product if none is the same item."}
                 </p>
                 <div
                   className="duplicate-product-options"

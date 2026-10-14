@@ -117,6 +117,45 @@ afterAll(() => {
 });
 
 describe("owner catalog and stock operations", () => {
+  it("returns products beyond the first 500 for duplicate matching", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const now = new Date().toISOString();
+    const insertProduct = db.prepare(
+      `INSERT INTO products
+         (id, sku, name, unit, selling_price_centavos, tax_class,
+          sc_pwd_eligible, created_at, updated_at)
+       VALUES (?, ?, ?, 'tablet', 100, 'VATABLE', 0, ?, ?)`,
+    );
+    const insertCatalog = db.transaction(() => {
+      for (let index = 1; index <= 500; index += 1) {
+        const suffix = String(index).padStart(4, "0");
+        insertProduct.run(
+          randomUUID(),
+          `SYN-CATALOG-${suffix}`,
+          `A Imported Product ${suffix}`,
+          now,
+          now,
+        );
+      }
+      insertProduct.run(randomUUID(), "SYN-BINIRIBID", "BINIRIBID", now, now);
+    });
+    insertCatalog();
+
+    const response = await owner.get("/api/products");
+
+    expect(response.status).toBe(200);
+    expect(response.body.products).toHaveLength(501);
+    expect(response.body.products).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sku: "SYN-BINIRIBID",
+          name: "BINIRIBID",
+          unit: "tablet",
+        }),
+      ]),
+    );
+  });
+
   it("imports new products with opening lot stock and validates the full CSV before saving", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const headers =

@@ -753,6 +753,7 @@ function listProducts(
   db: Database.Database,
   query: string,
   activeOnly = false,
+  limit: number | null = 500,
 ): ProductRow[] {
   const conditions: string[] = [];
   const values: (string | number)[] = [];
@@ -764,11 +765,13 @@ function listProducts(
     values.push(query, query, query);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const limitClause = limit === null ? "" : " LIMIT ?";
+  const parameters = limit === null ? values : [...values, limit];
   return db
     .prepare(
-      `${baseProductSelect()} ${where} ORDER BY p.name COLLATE NOCASE LIMIT 500`,
+      `${baseProductSelect()} ${where} ORDER BY p.name COLLATE NOCASE${limitClause}`,
     )
-    .all(...values) as ProductRow[];
+    .all(...parameters) as ProductRow[];
 }
 
 function productFromBody(
@@ -1342,7 +1345,7 @@ export function registerInventoryRoutes(
       .safeParse(req.query.q ?? "");
     if (!parsed.success) return bodyValidation(res);
     res.json({
-      products: listProducts(db, parsed.data).map((product) =>
+      products: listProducts(db, parsed.data, false, null).map((product) =>
         presentProduct(db, product),
       ),
     });
