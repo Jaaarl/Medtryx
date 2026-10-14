@@ -3501,6 +3501,10 @@ a {
   border-color: #1d4ed8;
   box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
 }
+.manual-checkout-page .checkout-search .text-input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
 .manual-checkout-page .inventory-checkbox input,
 .manual-checkout-page .inventory-radio-option input {
   accent-color: #1d4ed8;
