@@ -3470,6 +3470,53 @@ a {
   font-size: 8px;
   letter-spacing: 0.45px;
 }
+.manual-checkout-page .button-primary {
+  background: #1d4ed8;
+}
+.manual-checkout-page .button-primary:hover {
+  background: #1e40af;
+}
+.manual-checkout-page .banner-success {
+  background: #eff6ff;
+  color: #1e40af;
+}
+.manual-checkout-page .sale-saved-card {
+  background: #eff6ff;
+  border-top-color: #bfdbfe;
+  color: #1e40af;
+}
+.manual-checkout-page .sale-saved-card strong {
+  color: #1d4ed8;
+}
+.manual-checkout-page .manual-checkout-date-icon {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.manual-checkout-page .activity-icon {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.manual-checkout-page .text-input:focus {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+}
+.manual-checkout-page .inventory-checkbox input,
+.manual-checkout-page .inventory-radio-option input {
+  accent-color: #1d4ed8;
+}
+.manual-checkout-page .catalog-product-copy span,
+.manual-checkout-page .cart-line .checkout-cart-price,
+.manual-checkout-page .cart-total strong,
+.manual-checkout-page .checkout-preview-lines .checkout-line-price,
+.manual-checkout-page .bundle-preview-summary .checkout-line-price,
+.manual-checkout-page .checkout-preview-total strong {
+  color: #1d4ed8;
+}
+.manual-checkout-page .cart-card .cart-quantity-input:hover,
+.manual-checkout-page .cart-card .cart-quantity-input:focus {
+  border-color: #1d4ed8;
+}
 .checkout-page .cart-line {
   flex-wrap: wrap;
   padding: 9px 0;

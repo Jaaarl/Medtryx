@@ -5348,7 +5348,13 @@ export function CheckoutPage({
   );
 
   return (
-    <section className="page-section inventory-page checkout-page">
+    <section
+      className={
+        manualEntry
+          ? "page-section inventory-page checkout-page manual-checkout-page"
+          : "page-section inventory-page checkout-page"
+      }
+    >
       <PageHeading
         eyebrow={manualEntry ? "MANUAL SALES" : "CASHIER WORKSPACE"}
         title={manualEntry ? "Manual checkout" : "Checkout"}
