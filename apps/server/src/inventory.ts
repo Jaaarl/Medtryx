@@ -390,6 +390,7 @@ export const receiptSchema = z
     productId: z.uuid(),
     quantity: z.number().int().min(1).max(MAX_QUANTITY),
     unitCost: moneySchema,
+    sellingPrice: moneySchema.optional(),
     reference: optionalNoteSchema,
     supplier: supplierSchema,
     lotCode: lotCodeSchema.optional(),
@@ -398,6 +399,16 @@ export const receiptSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (
+      value.sellingPrice !== undefined &&
+      parseMoney(value.sellingPrice) <= 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sellingPrice"],
+        message: "selling_price_must_be_positive",
+      });
+    }
     if (parseMoney(value.unitCost) === 0 && !value.zeroCostReason) {
       context.addIssue({
         code: "custom",
@@ -2875,7 +2886,7 @@ export function registerInventoryRoutes(
         const receipt = db.transaction(() => {
           const product = db
             .prepare(
-              "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+              "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos, selling_price_centavos FROM products WHERE id = ?",
             )
             .get(parsed.data.productId) as
             | {
@@ -2885,6 +2896,7 @@ export function registerInventoryRoutes(
                 tracks_lots: number;
                 quantity_on_hand: number;
                 inventory_value_centavos: number;
+                selling_price_centavos: number;
               }
             | undefined;
           if (!product) throw new InventoryError(404, "product_not_found");
@@ -2896,6 +2908,10 @@ export function registerInventoryRoutes(
           }
           const quantity = product.quantity_on_hand + parsed.data.quantity;
           const inventoryValue = product.inventory_value_centavos + valueDelta;
+          const sellingPriceCents =
+            parsed.data.sellingPrice === undefined
+              ? product.selling_price_centavos
+              : parseMoney(parsed.data.sellingPrice);
           if (
             quantity > MAX_QUANTITY ||
             !Number.isSafeInteger(inventoryValue)
@@ -2903,8 +2919,8 @@ export function registerInventoryRoutes(
             throw new InventoryError(400, "inventory_value_overflow");
           }
           db.prepare(
-            "UPDATE products SET quantity_on_hand = ?, inventory_value_centavos = ?, updated_at = ? WHERE id = ?",
-          ).run(quantity, inventoryValue, now, product.id);
+            "UPDATE products SET quantity_on_hand = ?, inventory_value_centavos = ?, selling_price_centavos = ?, updated_at = ? WHERE id = ?",
+          ).run(quantity, inventoryValue, sellingPriceCents, now, product.id);
           const stockEventId = writeStockEvent(db, {
             productId: product.id,
             type: "RECEIPT",
@@ -2948,6 +2964,8 @@ export function registerInventoryRoutes(
               sku: product.sku,
               quantity: parsed.data.quantity,
               unitCostCentavos: costCents,
+              oldSellingPriceCentavos: product.selling_price_centavos,
+              sellingPriceCentavos: sellingPriceCents,
               reference: parsed.data.reference ?? null,
               supplier: parsed.data.supplier ?? null,
               lotCode: parsed.data.lotCode ?? null,

@@ -2325,6 +2325,7 @@ export function StockPage() {
   const [stockQuery, setStockQuery] = useState("");
   const [receiptQty, setReceiptQty] = useState("1");
   const [receiptCost, setReceiptCost] = useState("");
+  const [receiptSellingPrice, setReceiptSellingPrice] = useState("");
   const [zeroCostReason, setZeroCostReason] = useState("");
   const [reference, setReference] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -2454,6 +2455,11 @@ export function StockPage() {
     setCostCorrectionReason("");
   }, [selectedId, selected?.weightedAverageUnitCost]);
 
+  useEffect(() => {
+    if (!selected) return;
+    setReceiptSellingPrice(selected.sellingPrice);
+  }, [selectedId, selected?.sellingPrice]);
+
   function selectStockSort(key: string) {
     setStockPage(1);
     setStockSort((current) => ({
@@ -2560,6 +2566,10 @@ export function StockPage() {
         productId: selected.id,
         quantity: Number(receiptQty),
         unitCost: receiptCost,
+        ...(centsFromMoney(receiptSellingPrice) !==
+        centsFromMoney(selected.sellingPrice)
+          ? { sellingPrice: receiptSellingPrice }
+          : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
         ...(selected.tracksLots
@@ -2989,8 +2999,7 @@ export function StockPage() {
             </span>
             <h2>Receive stock</h2>
             <p>
-              Each receipt keeps its own acquisition cost; selling price remains
-              separate.
+              Set a new selling price here when the product price changes.
             </p>
             {selected ? (
               <form
@@ -3027,6 +3036,22 @@ export function StockPage() {
                     required
                     pattern="[0-9]+(\.[0-9]{1,2})?"
                   />
+                </Field>
+                <Field id="receipt-selling-price" label="Selling price (₱)">
+                  <input
+                    id="receipt-selling-price"
+                    className="text-input"
+                    inputMode="decimal"
+                    value={receiptSellingPrice}
+                    onChange={(event) =>
+                      setReceiptSellingPrice(event.target.value)
+                    }
+                    required
+                    pattern="[0-9]+(\.[0-9]{1,2})?"
+                  />
+                  <small className="field-hint">
+                    Applies to this product for future sales.
+                  </small>
                 </Field>
                 <Field id="receipt-reference" label="Reference / supplier note">
                   <input
