@@ -231,6 +231,93 @@ test("owner can click a possible product match to receive stock into it", async 
   });
 });
 
+test("imported product matches remain visible across stock units and successive imports", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  await page.goto("/products");
+  const headers =
+    "sku,name,unit,sellingPrice,taxClass,productType,openingQuantity,openingUnitCost";
+  const rows = [
+    "SYN-MATCH-IMPORT-SYRINGE,1cc syringe 100's,piece,12.00,VATABLE,GENERIC,2,5.00",
+    "SYN-MATCH-IMPORT-BINIRIBID,BINIRIBID,tablet,14.00,VATABLE,GENERIC,2,5.00",
+  ];
+  for (const [index, row] of rows.entries()) {
+    await page.getByLabel("New products CSV file").setInputFiles({
+      name: `matching-products-${index + 1}.csv`,
+      mimeType: "text/csv",
+      buffer: Buffer.from(`${headers}\r\n${row}`),
+    });
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/products") &&
+        response.request().method() === "GET",
+    );
+    await page.getByRole("button", { name: "Import products" }).click();
+    expect((await refreshed).status()).toBe(200);
+  }
+
+  await expect(page.getByLabel("Stock unit", { exact: true })).toHaveValue(
+    "piece",
+  );
+  await page.getByLabel("Product name").fill("1cc syringe 100's");
+  await expect(
+    page.locator(".duplicate-product-option").filter({
+      hasText: "SYN-MATCH-IMPORT-SYRINGE",
+    }),
+  ).toBeVisible();
+
+  await page.getByLabel("Product name").fill("BINIRIBID");
+  const matchOption = page.locator(".duplicate-product-option").filter({
+    hasText: "SYN-MATCH-IMPORT-BINIRIBID",
+  });
+  await expect(matchOption).toBeVisible();
+  await expect(matchOption).toHaveAttribute("aria-pressed", "false");
+  await expect(matchOption).toContainText("tablet");
+  await expect(page.getByLabel("Stock unit", { exact: true })).toHaveValue(
+    "piece",
+  );
+  await page.getByLabel("Stock unit", { exact: true }).fill("");
+  await expect(matchOption).toBeVisible();
+  await matchOption.click();
+  await expect(matchOption).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Stock unit", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Quantity to receive").fill("2");
+  await page.locator("#opening-cost").fill("6.00");
+  await page
+    .getByRole("button", { name: "Add stock to existing product" })
+    .click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Received 2 tablet for BINIRIBID" }),
+  ).toBeVisible();
+
+  const response = await page.request.get("/api/products");
+  const { products } = (await response.json()) as {
+    products: Array<{
+      sku: string;
+      name: string;
+      unit: string;
+      quantityOnHand: number;
+      sellingPrice: string;
+    }>;
+  };
+  const matches = products.filter((product) => product.name === "BINIRIBID");
+  expect(matches).toHaveLength(1);
+  expect(matches[0]).toMatchObject({
+    sku: "SYN-MATCH-IMPORT-BINIRIBID",
+    unit: "tablet",
+    quantityOnHand: 4,
+    sellingPrice: "14.00",
+  });
+  await page.getByLabel("Product name").fill("BINIRIBID");
+  await expect(matchOption).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByLabel("Stock unit", { exact: true })).toHaveValue(
+    "piece",
+  );
+});
+
 test("owners can search a batch and edit its quantity, unit cost, and product price", async ({
   page,
 }) => {
