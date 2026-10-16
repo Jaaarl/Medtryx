@@ -7,16 +7,25 @@ export const expenseLabels = {
   STOCK_PURCHASE: "Stock purchase / COD",
 };
 
-export function ExpenseHistory({ expenses }: { expenses: ExpenseEntry[] }) {
+export function ExpenseHistory({
+  expenses,
+  className = "",
+  description,
+}: {
+  expenses: ExpenseEntry[];
+  className?: string;
+  description?: string;
+}) {
   return (
-    <section className="settings-main-card report-low-stock expense-history">
+    <section
+      className={`settings-main-card report-low-stock expense-history ${className}`}
+    >
       <div className="card-heading">
         <div>
           <h2>Payments and expenses</h2>
           <p>
-            Stock purchases / COD and fees already included in unit cost are
-            payments, excluded from operating expenses. Payment totals show
-            money paid, not profit deductions.
+            {description ??
+              "Stock purchases / COD and fees already included in unit cost are payments, excluded from operating expenses. Payment totals show money paid, not profit deductions."}
           </p>
         </div>
         <span className="count-chip">{expenses.length} entries</span>
@@ -66,22 +75,24 @@ export function ExpenseHistory({ expenses }: { expenses: ExpenseEntry[] }) {
                       <small>Already in inventory unit cost</small>
                     )}
                   </td>
-                  <td>₱{expense.amount}</td>
-                  <td>₱{expense.operatingExpense}</td>
-                  <td>
+                  <td data-label="Payment">₱{expense.amount}</td>
+                  <td data-label="Operating expense">
+                    ₱{expense.operatingExpense}
+                  </td>
+                  <td data-label="Paid by">
                     {expense.paymentSource === "OWNER" ? "Owner" : "Cashier"}
                     {expense.cashierEmail && (
                       <small>{expense.cashierEmail}</small>
                     )}
                   </td>
-                  <td>
+                  <td data-label="Recorded">
                     {new Date(expense.createdAt).toLocaleString("en-PH", {
                       timeZone: "Asia/Manila",
                       dateStyle: "medium",
                       timeStyle: "short",
                     })}
                   </td>
-                  <td>{expense.recordedByEmail}</td>
+                  <td data-label="Recorded by">{expense.recordedByEmail}</td>
                 </tr>
               ))}
             </tbody>

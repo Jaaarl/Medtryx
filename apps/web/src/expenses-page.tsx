@@ -193,8 +193,8 @@ export function ExpensesPage() {
           <div className="eyebrow">STORE PAYMENTS</div>
           <h1>Payments &amp; Expenses</h1>
           <p>
-            Record stock purchases / COD, lunch, delivery fees, and other store
-            payments. Cashier payments come from the open register.
+            Track stock purchases, daily expenses, and payments from the owner
+            or cashier.
           </p>
         </div>
         <div className="daily-sales-actions">
@@ -235,7 +235,7 @@ export function ExpensesPage() {
         </div>
       )}
       {data && !loading && (
-        <div className="report-summary-strip">
+        <div className="report-summary-strip expense-summary-strip">
           <div>
             <span>OPERATING EXPENSES</span>
             <strong>₱{data.totals.operatingExpenses}</strong>
@@ -266,34 +266,36 @@ export function ExpensesPage() {
         </div>
       )}
       <div className="expense-layout">
-        <div className="create-card inventory-form-card">
-          <h2>Record payment or expense</h2>
-          <p>New payments are recorded for today’s Manila business date.</p>
+        <section className="create-card expense-form-card">
+          <div className="expense-section-heading">
+            <h2>Record payment or expense</h2>
+            <p>New payments are recorded for today’s Manila business date.</p>
+          </div>
           <form
-            className="form-stack inventory-form"
+            className="expense-payment-form"
             onSubmit={(event) => void recordExpense(event)}
           >
-            <fieldset className="expense-form-fields" disabled={saving}>
-              <label className="inventory-field">
-                <span>Category</span>
-                <select
-                  className="text-input"
-                  value={category}
-                  onChange={(event) => {
-                    draftChanged();
-                    setCategory(event.target.value as ExpenseCategory);
-                    setPaymentSource("CASHIER");
-                    setIncludedInUnitCost(false);
-                  }}
-                >
-                  <option value="LUNCH">Lunch</option>
-                  <option value="STOCK_PURCHASE">Stock purchase / COD</option>
-                  <option value="DELIVERY">Delivery fee only</option>
-                  <option value="OTHER">Other</option>
-                </select>
-              </label>
-              {choosesPayer && (
-                <>
+            <div className="expense-form-layout">
+              <fieldset className="expense-form-fields" disabled={saving}>
+                <label className="inventory-field">
+                  <span>Category</span>
+                  <select
+                    className="text-input"
+                    value={category}
+                    onChange={(event) => {
+                      draftChanged();
+                      setCategory(event.target.value as ExpenseCategory);
+                      setPaymentSource("CASHIER");
+                      setIncludedInUnitCost(false);
+                    }}
+                  >
+                    <option value="LUNCH">Lunch</option>
+                    <option value="STOCK_PURCHASE">Stock purchase / COD</option>
+                    <option value="DELIVERY">Delivery fee only</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </label>
+                {choosesPayer && (
                   <label className="inventory-field">
                     <span>
                       {stockPurchase
@@ -316,190 +318,224 @@ export function ExpensesPage() {
                       <option value="OWNER">Already paid by the owner</option>
                     </select>
                   </label>
-                </>
-              )}
-              {category === "DELIVERY" && (
-                <>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={includedInUnitCost}
-                      onChange={(event) => {
-                        draftChanged();
-                        setIncludedInUnitCost(event.target.checked);
-                      }}
-                    />
-                    <span>
-                      This delivery fee is already included in product unit cost
-                    </span>
-                  </label>
-                  <p className="field-hint">
-                    Enter the delivery fee only. Use Stock purchase / COD for
-                    the full product invoice.
-                    {includedInUnitCost &&
-                      " This payment will be excluded from operating expenses."}
-                  </p>
-                </>
-              )}
-              <label className="inventory-field">
-                <span>
+                )}
+                {category === "DELIVERY" && (
+                  <div className="expense-field-wide expense-delivery-options">
+                    <label className="inventory-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={includedInUnitCost}
+                        onChange={(event) => {
+                          draftChanged();
+                          setIncludedInUnitCost(event.target.checked);
+                        }}
+                      />
+                      <span>
+                        This delivery fee is already included in product unit
+                        cost
+                      </span>
+                    </label>
+                    <p className="field-hint">
+                      Enter the delivery fee only. Use Stock purchase / COD for
+                      the full product invoice.
+                    </p>
+                  </div>
+                )}
+                <label className="inventory-field">
+                  <span>
+                    {stockPurchase
+                      ? "Product amount (₱)"
+                      : category === "DELIVERY"
+                        ? "Delivery fee (₱)"
+                        : "Amount (₱)"}
+                  </span>
+                  <input
+                    className="text-input"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={(event) => {
+                      draftChanged();
+                      setAmount(event.target.value);
+                    }}
+                    pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                    required
+                  />
+                </label>
+                {stockPurchase && (
+                  <>
+                    <div className="inventory-field">
+                      <label htmlFor="expense-delivery-fee">
+                        Separate delivery fee (₱, optional)
+                      </label>
+                      <input
+                        id="expense-delivery-fee"
+                        aria-describedby="expense-delivery-fee-hint"
+                        className="text-input"
+                        inputMode="decimal"
+                        value={deliveryFee}
+                        placeholder="0.00"
+                        pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                        onChange={(event) => {
+                          draftChanged();
+                          setDeliveryFee(event.target.value);
+                        }}
+                      />
+                      <small
+                        id="expense-delivery-fee-hint"
+                        className="field-hint"
+                      >
+                        Leave at zero if delivery is included in the product
+                        amount.
+                      </small>
+                    </div>
+                    <label className="inventory-field">
+                      <span>Supplier (optional)</span>
+                      <input
+                        className="text-input"
+                        value={supplier}
+                        maxLength={200}
+                        onChange={(event) => {
+                          draftChanged();
+                          setSupplier(event.target.value);
+                        }}
+                      />
+                    </label>
+                    <label className="inventory-field">
+                      <span>Invoice / receipt reference (optional)</span>
+                      <input
+                        className="text-input"
+                        value={invoiceReference}
+                        maxLength={200}
+                        onChange={(event) => {
+                          draftChanged();
+                          setInvoiceReference(event.target.value);
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+                <label className="inventory-field expense-field-wide">
+                  <span>
+                    {category === "OTHER"
+                      ? "Description"
+                      : "Description (optional)"}
+                  </span>
+                  <textarea
+                    className="text-input expense-description"
+                    rows={3}
+                    value={description}
+                    maxLength={500}
+                    minLength={category === "OTHER" ? 3 : undefined}
+                    required={category === "OTHER"}
+                    onChange={(event) => {
+                      draftChanged();
+                      setDescription(event.target.value);
+                    }}
+                  />
+                </label>
+              </fieldset>
+              <aside
+                className="expense-payment-review"
+                aria-label="Payment summary"
+              >
+                <h3>Review payment</h3>
+                {stockPurchase && (
+                  <dl className="expense-payment-breakdown">
+                    <div>
+                      <dt>Products</dt>
+                      <dd>₱{paymentTotal(amount, "0") || "0.00"}</dd>
+                    </div>
+                    <div>
+                      <dt>Delivery fee</dt>
+                      <dd>
+                        ₱{paymentTotal(deliveryFee || "0", "0") || "0.00"}
+                      </dd>
+                    </div>
+                  </dl>
+                )}
+                <strong className="expense-payment-total">
+                  Total payment: ₱{totalPayment || "0.00"}
+                </strong>
+                <p className="expense-review-note">
                   {stockPurchase
-                    ? "Product amount (₱)"
-                    : category === "DELIVERY"
-                      ? "Delivery fee (₱)"
-                      : "Amount (₱)"}
-                </span>
-                <input
-                  className="text-input"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(event) => {
-                    draftChanged();
-                    setAmount(event.target.value);
-                  }}
-                  pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
-                  required
-                />
-              </label>
-              {stockPurchase && (
-                <>
-                  <label className="inventory-field">
-                    <span>Separate delivery fee (₱, optional)</span>
-                    <input
-                      className="text-input"
-                      inputMode="decimal"
-                      value={deliveryFee}
-                      placeholder="0.00"
-                      pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
-                      onChange={(event) => {
-                        draftChanged();
-                        setDeliveryFee(event.target.value);
-                      }}
-                    />
-                  </label>
-                  <label className="inventory-field">
-                    <span>Supplier (optional)</span>
-                    <input
-                      className="text-input"
-                      value={supplier}
-                      maxLength={200}
-                      onChange={(event) => {
-                        draftChanged();
-                        setSupplier(event.target.value);
-                      }}
-                    />
-                  </label>
-                  <label className="inventory-field">
-                    <span>Invoice / receipt reference (optional)</span>
-                    <input
-                      className="text-input"
-                      value={invoiceReference}
-                      maxLength={200}
-                      onChange={(event) => {
-                        draftChanged();
-                        setInvoiceReference(event.target.value);
-                      }}
-                    />
-                  </label>
-                  <div className="expense-drawer-note">
-                    <strong>Total payment: ₱{totalPayment || "0.00"}</strong>
+                    ? "Stock purchase payments are excluded from operating expenses."
+                    : category === "DELIVERY" && includedInUnitCost
+                      ? "This fee is already in unit cost and is excluded from operating expenses."
+                      : "This payment is included in operating expenses."}
+                </p>
+                <div className="expense-drawer-note">
+                  {cashierPaid ? (
+                    data?.registerShift ? (
+                      <>
+                        <strong>
+                          Charged to {data.registerShift.cashierEmail}
+                        </strong>
+                        <span>
+                          Expected drawer cash: ₱
+                          {data.registerShift.expectedCash}
+                        </span>
+                        <span>
+                          Payments can be recorded even if this balance goes
+                          below zero.
+                        </span>
+                        {!data.registerShift.canCharge && (
+                          <span>
+                            This register belongs to another cashier. The owner
+                            can record its expenses.
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span>
+                        <Link to="/checkout">Open a cashier shift</Link> to pay
+                        from the drawer.
+                      </span>
+                    )
+                  ) : (
                     <span>
-                      Product amount + separate delivery fee. If your product
-                      amount already includes delivery, leave the separate fee
-                      at zero.
+                      Already paid by the owner. This payment will not be taken
+                      from the cashier’s drawer.
                     </span>
-                    <span>
-                      This is a stock purchase payment, excluded from operating
-                      expenses.
-                    </span>
-                    <span>
-                      The owner should receive the products separately in
-                      Receive Stock and include this purchase’s delivery fee in
-                      the products’ unit cost. These costs reach cost of goods
+                  )}
+                </div>
+                <button
+                  className="button button-primary create-submit"
+                  type="submit"
+                  disabled={!canSubmit}
+                >
+                  <Plus size={16} />{" "}
+                  {saving
+                    ? "Recording…"
+                    : stockPurchase
+                      ? "Record stock payment"
+                      : "Record expense"}
+                </button>
+                {stockPurchase && (
+                  <details className="expense-cost-guidance">
+                    <summary>Receiving this stock</summary>
+                    <p>
+                      Receive the products separately in Receive Stock. Include
+                      delivery in their unit cost so it reaches cost of goods
                       sold when sold. Recording this payment does not add stock
                       or change unit costs.
-                    </span>
-                  </div>
-                </>
-              )}
-              <label className="inventory-field">
-                <span>
-                  {category === "OTHER"
-                    ? "Description"
-                    : "Description (optional)"}
-                </span>
-                <input
-                  className="text-input"
-                  value={description}
-                  maxLength={500}
-                  minLength={category === "OTHER" ? 3 : undefined}
-                  required={category === "OTHER"}
-                  onChange={(event) => {
-                    draftChanged();
-                    setDescription(event.target.value);
-                  }}
-                />
-              </label>
-            </fieldset>
-            <div className="expense-drawer-note">
-              {cashierPaid ? (
-                data?.registerShift ? (
-                  <>
-                    <strong>
-                      Charged to {data.registerShift.cashierEmail}
-                    </strong>
-                    <span>
-                      Expected drawer cash: ₱{data.registerShift.expectedCash}
-                    </span>
-                    <span>
-                      Payments can be recorded even if this balance goes below
-                      zero.
-                    </span>
-                    {!data.registerShift.canCharge && (
-                      <span>
-                        This register belongs to another cashier. The owner can
-                        record its expenses.
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span>
-                    <Link to="/checkout">Open a cashier shift</Link> to pay from
-                    the drawer.
-                  </span>
-                )
-              ) : (
-                <span>
-                  Already paid by the owner. This payment will not be taken from
-                  the cashier’s drawer.
-                </span>
-              )}
+                    </p>
+                  </details>
+                )}
+              </aside>
             </div>
-            <button
-              className="button button-primary create-submit"
-              type="submit"
-              disabled={!canSubmit}
-            >
-              <Plus size={16} />{" "}
-              {saving
-                ? "Recording…"
-                : stockPurchase
-                  ? "Record stock payment"
-                  : "Record expense"}
-            </button>
           </form>
-        </div>
+        </section>
         <div className="expense-records">
-          <p className="field-hint">
-            {user?.role === "owner"
-              ? "All store payments"
-              : "Payments charged to your shifts and owner-paid payments you recorded"}{" "}
-            for {date}.
-          </p>
           {loading ? (
             <div className="table-loading">Loading expenses…</div>
           ) : (
-            data && <ExpenseHistory expenses={data.expenses} />
+            data && (
+              <ExpenseHistory
+                expenses={data.expenses}
+                className="expense-page-history"
+                description={`${user?.role === "owner" ? "All store payments" : "Payments charged to your shifts and owner-paid payments you recorded"} for ${date}.`}
+              />
+            )
           )}
         </div>
       </div>

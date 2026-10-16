@@ -2926,72 +2926,395 @@ a {
   font-size: 14px;
   height: 44px;
 }
+.expenses-page {
+  display: grid;
+  gap: 28px;
+}
+.expenses-page .page-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 20px 28px;
+  margin: 0;
+}
+.expenses-page .page-heading > div:first-child {
+  flex: 1 1 480px;
+  min-width: 0;
+}
+.expenses-page .page-heading p {
+  font-size: 13px;
+  line-height: 1.65;
+  max-width: 660px;
+}
+.expenses-page .daily-sales-actions {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.expenses-page .daily-sales-actions .text-input {
+  height: 42px;
+  min-width: 160px;
+}
+.expenses-page .expense-summary-strip {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: visible;
+}
+.expenses-page .expense-summary-strip > div:nth-child(n) {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  gap: 14px;
+  grid-template-rows: 1fr auto;
+  min-width: 0;
+  min-height: 112px;
+  padding: 20px;
+}
+.expenses-page .expense-summary-strip > div > span {
+  color: #71857b;
+  font-size: 10px;
+  letter-spacing: 0.65px;
+  line-height: 1.6;
+}
+.expenses-page .expense-summary-strip > div > strong {
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.daily-sales-page .report-summary-strip strong {
+  overflow-wrap: anywhere;
+}
 .expense-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1fr);
 }
 .expense-records {
   min-width: 0;
 }
-.expenses-page .report-summary-strip {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.expense-form-card {
+  min-width: 0;
+  padding: 26px;
 }
-.expenses-page .report-summary-strip > div:nth-child(3n + 1) {
-  border-left: 0;
+.expense-section-heading {
+  margin-bottom: 24px;
 }
-.expenses-page .report-summary-strip > div:nth-child(n + 4) {
-  border-top: 1px solid var(--line);
+.expense-section-heading h2 {
+  font-size: 17px;
+  margin: 0 0 8px;
 }
-.expenses-page .report-summary-strip strong,
-.daily-sales-page .report-summary-strip strong {
-  overflow-wrap: anywhere;
+.expense-section-heading p {
+  color: #7a8b82;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+}
+.expense-form-layout {
+  align-items: start;
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
 }
 .expense-form-fields {
+  align-items: start;
   border: 0;
-  padding: 0;
-  margin: 0;
   display: grid;
-  gap: 12px;
+  gap: 20px 24px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
   min-width: 0;
+  padding: 0;
+}
+.expense-form-fields .inventory-field {
+  align-content: start;
+  gap: 8px;
+}
+.expense-form-fields .inventory-field > span,
+.expense-form-fields .inventory-field > label {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.expense-form-fields .text-input {
+  font-size: 13px;
+  height: 44px;
+  min-width: 0;
+  padding: 0 12px;
+}
+.expense-form-fields .expense-description {
+  height: auto;
+  line-height: 1.6;
+  min-height: 96px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.expense-field-wide {
+  grid-column: 1 / -1;
+}
+.expense-form-fields .field-hint {
+  color: #7a8b82;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+}
+.expense-delivery-options {
+  background: #f7faf8;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+.expense-delivery-options .inventory-checkbox {
+  align-items: flex-start;
+  font-size: 12px;
+  gap: 10px;
+  line-height: 1.6;
+}
+.expense-delivery-options .inventory-checkbox input {
+  flex: 0 0 auto;
+  height: 16px;
+  margin-top: 2px;
+  width: 16px;
+}
+.expense-payment-review {
+  background: #f5f9f7;
+  border: 1px solid #e0eae5;
+  border-radius: 10px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
+}
+.expense-payment-review h3 {
+  color: #496558;
+  font-size: 13px;
+  margin: 0;
+}
+.expense-payment-breakdown {
+  display: grid;
+  font-size: 12px;
+  gap: 10px;
+  margin: 0;
+}
+.expense-payment-breakdown > div {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+.expense-payment-breakdown dt {
+  color: #71857b;
+}
+.expense-payment-breakdown dd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.expense-payment-total {
+  border-bottom: 1px solid #dce7e1;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  padding-bottom: 16px;
+}
+.expense-review-note {
+  color: #6e8276;
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 0;
 }
 .expense-drawer-note {
+  background: #fff;
+  border: 1px solid #e2ebe6;
+  border-radius: 8px;
   display: grid;
-  gap: 5px;
-  padding: 12px;
-  background: #f4f8f6;
-  border-radius: 6px;
   font-size: 12px;
+  gap: 8px;
+  line-height: 1.6;
+  padding: 14px;
+}
+.expense-drawer-note strong {
+  overflow-wrap: anywhere;
+}
+.expense-drawer-note a {
+  text-decoration: underline;
+}
+.expense-payment-review .create-submit {
+  font-size: 13px;
+  margin: 0;
+  min-height: 44px;
+  width: 100%;
+}
+.expense-cost-guidance {
+  color: #6e8276;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.expense-cost-guidance summary {
+  color: #426b57;
+  cursor: pointer;
+  font-weight: 600;
+}
+.expense-cost-guidance p {
+  margin: 10px 0 0;
+}
+.expenses-page .expense-page-history .card-heading {
+  align-items: flex-start;
+  gap: 18px;
+  padding: 24px;
+}
+.expenses-page .expense-page-history .card-heading h2 {
+  font-size: 17px;
+  margin-bottom: 8px;
+}
+.expenses-page .expense-page-history .card-heading p {
+  font-size: 12px;
+  line-height: 1.65;
+}
+.expenses-page .expense-page-history .count-chip {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+.expenses-page .expense-page-history .inventory-table {
+  min-width: 920px;
+  table-layout: fixed;
+}
+.expenses-page .expense-page-history .inventory-table th {
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 14px 18px;
+  white-space: normal;
+  width: 14%;
+}
+.expenses-page .expense-page-history .inventory-table th:first-child {
+  width: 30%;
+}
+.expenses-page .expense-page-history .inventory-table td {
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  padding: 18px;
+  vertical-align: top;
+  white-space: normal;
+}
+.expenses-page .expense-page-history .inventory-table td strong {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.expenses-page .expense-page-history .inventory-table td small {
+  color: #7d8f84;
+  font-size: 11px;
+  line-height: 1.65;
+  margin-top: 5px;
+}
+.expenses-page .expense-page-history .inventory-table td:nth-child(2),
+.expenses-page .expense-page-history .inventory-table td:nth-child(3) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 1200px) {
+  .expense-form-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 1000px) {
-  .expense-layout {
-    grid-template-columns: 1fr;
+  .expenses-page .expense-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 640px) {
-  .expenses-page .report-summary-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .expenses-page {
+    gap: 22px;
   }
-  .expenses-page .report-summary-strip > div:nth-child(n) {
-    border-left: 1px solid var(--line);
-  }
-  .expenses-page .report-summary-strip > div:nth-child(2n + 1) {
-    border-left: 0;
-  }
-  .expenses-page .report-summary-strip > div:nth-child(n + 3) {
-    border-top: 1px solid var(--line);
-  }
-  .expenses-page .page-heading {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
+  .expenses-page .page-heading > div:first-child {
+    flex-basis: 100%;
   }
   .expenses-page .daily-sales-actions {
-    display: flex;
-    align-items: end;
-    flex-wrap: wrap;
+    width: 100%;
+  }
+  .expenses-page .expense-summary-strip {
     gap: 12px;
+  }
+  .expenses-page .expense-summary-strip > div:nth-child(n) {
+    padding: 16px;
+  }
+  .expenses-page .expense-summary-strip > div > strong {
+    font-size: 20px;
+  }
+  .expense-form-card {
+    padding: 20px;
+  }
+  .expense-form-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .expense-form-layout {
+    gap: 24px;
+  }
+  .expense-payment-review {
+    padding: 18px;
+  }
+  .expenses-page .expense-page-history .card-heading {
+    padding: 20px;
+  }
+  .expenses-page .expense-page-history .inventory-table-wrap {
+    overflow: visible;
+  }
+  .expenses-page .expense-page-history .inventory-table {
+    display: block;
+    min-width: 0;
+  }
+  .expenses-page .expense-page-history .inventory-table thead {
+    border: 0;
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+  .expenses-page .expense-page-history .inventory-table tbody {
+    display: grid;
+    gap: 14px;
+    padding: 0 16px 16px;
+  }
+  .expenses-page .expense-page-history .inventory-table tbody tr {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 18px;
+  }
+  .expenses-page .expense-page-history .inventory-table td {
+    border: 0;
+    min-width: 0;
+    padding: 0;
+    white-space: normal;
+  }
+  .expenses-page .expense-page-history .inventory-table td:first-child {
+    border-bottom: 1px solid var(--line);
+    grid-column: 1 / -1;
+    min-width: 0;
+    padding-bottom: 14px;
+  }
+  .expenses-page .expense-page-history .inventory-table td:last-child {
+    grid-column: 1 / -1;
+  }
+  .expenses-page .expense-page-history .inventory-table td[data-label]::before {
+    color: #87948c;
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 5px;
   }
 }
 .checkout-search {
