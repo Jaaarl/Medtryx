@@ -899,7 +899,7 @@ export function registerReversalRoutes(
           const expected = shift.expected_cash_centavos + delta;
           if (!Number.isSafeInteger(expected))
             throw new ReversalError(409, "cash_amount_overflow");
-          if (expected < 0)
+          if (delta < 0 && expected < 0)
             throw new ReversalError(409, "insufficient_shift_cash");
           const id = randomUUID();
           const now = new Date().toISOString();

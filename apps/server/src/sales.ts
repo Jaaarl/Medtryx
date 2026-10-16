@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { getExpenseEntries, summarizeExpenses } from "./expenses.js";
 import type { NextFunction, Request, Response } from "express";
 import type Database from "better-sqlite3";
 import express from "express";
@@ -2359,6 +2360,13 @@ export function registerSalesRoutes(
     if (!parsedDate.success)
       return res.status(400).json({ error: "invalid_report_date" });
     const date = parsedDate.data;
+    const expenses = getExpenseEntries(
+      db,
+      date,
+      date,
+      req.user!.role === "owner" ? undefined : req.user!.id,
+    );
+    const expenseTotals = summarizeExpenses(expenses);
     const cashierOnly =
       req.user!.role === "owner" ? "" : "AND s.cashier_user_id = ?";
     const activeSaleOnly = `AND NOT EXISTS (
@@ -2530,6 +2538,8 @@ export function registerSalesRoutes(
       summary: {
         businessDate: date,
         scope: req.user!.role === "owner" ? "STORE" : "CASHIER",
+        expenses,
+        expenseTotals,
         ...(ownerSalesBreakdown
           ? {
               salesBreakdown: {
@@ -2641,22 +2651,47 @@ export function registerSalesRoutes(
         net_sales_centavos: number;
       }>;
 
+      const expenseEntries = getExpenseEntries(db, start.data, end.data);
+      const expenseDays = new Map<string, typeof expenseEntries>();
+      for (const expense of expenseEntries) {
+        const day = expenseDays.get(expense.businessDate) ?? [];
+        day.push(expense);
+        expenseDays.set(expense.businessDate, day);
+      }
+      const salesDays = new Map(rows.map((row) => [row.business_date, row]));
+      const dates = [
+        ...new Set([...salesDays.keys(), ...expenseDays.keys()]),
+      ].sort();
       res.json({
-        entries: rows.map((row) => ({
-          businessDate: row.business_date,
-          month: row.business_date.slice(0, 7),
-          date: row.business_date,
-          invoiceNumberRange:
-            row.first_invoice === row.last_invoice
-              ? row.first_invoice
-              : `${row.first_invoice} – ${row.last_invoice}`,
-          seniorDiscount: money(row.senior_discount_centavos),
-          nonVat: money(row.non_vat_centavos),
-          vatableSales: money(row.vatable_sales_centavos),
-          totalVat: money(row.total_vat_centavos),
-          grossSales: money(row.gross_sales_centavos),
-          netSales: money(row.net_sales_centavos),
-        })),
+        entries: dates.map((date) => {
+          const row = salesDays.get(date);
+          const totals = summarizeExpenses(expenseDays.get(date) ?? []);
+          return {
+            businessDate: date,
+            month: date.slice(0, 7),
+            date,
+            invoiceNumberRange: !row
+              ? "—"
+              : row.first_invoice === row.last_invoice
+                ? row.first_invoice
+                : `${row.first_invoice} – ${row.last_invoice}`,
+            seniorDiscount: money(row?.senior_discount_centavos ?? 0),
+            nonVat: money(row?.non_vat_centavos ?? 0),
+            vatableSales: money(row?.vatable_sales_centavos ?? 0),
+            totalVat: money(row?.total_vat_centavos ?? 0),
+            grossSales: money(row?.gross_sales_centavos ?? 0),
+            netSales: money(row?.net_sales_centavos ?? 0),
+            operatingExpenses: totals.operatingExpenses,
+            cashierPaidExpenses: totals.cashierPaid,
+            ownerPaidExpenses: totals.ownerPaid,
+            inventoryCostPayments: totals.includedInUnitCost,
+            stockPurchasePayments: totals.stockPurchasePayments,
+            stockProductPayments: totals.stockProductPayments,
+            stockDeliveryFees: totals.stockDeliveryFees,
+            cashierPaidStockPurchases: totals.cashierPaidStockPurchases,
+            ownerPaidStockPurchases: totals.ownerPaidStockPurchases,
+          };
+        }),
       });
     },
   );

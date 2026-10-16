@@ -29,3 +29,42 @@ export const createUserSchema = z
 export type UserRole = z.infer<typeof userRoleSchema>;
 export type User = z.infer<typeof userSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+export type ExpenseCategory = "LUNCH" | "DELIVERY" | "OTHER" | "STOCK_PURCHASE";
+export type ExpensePaymentSource = "CASHIER" | "OWNER";
+
+export type ExpenseEntry = {
+  id: string;
+  businessDate: string;
+  category: ExpenseCategory;
+  amount: string;
+  productAmount: string;
+  deliveryFee: string;
+  supplier: string;
+  invoiceReference: string;
+  description: string;
+  paymentSource: ExpensePaymentSource;
+  includedInUnitCost: boolean;
+  operatingExpense: string;
+  recordedByEmail: string;
+  cashierEmail: string | null;
+  shiftId: string | null;
+  createdAt: string;
+};
+
+export type ExpenseTotals = {
+  paymentCount: number;
+  totalPayments: string;
+  operatingExpenses: string;
+  cashierPaid: string;
+  ownerPaid: string;
+  includedInUnitCost: string;
+  stockPurchasePayments: string;
+  stockProductPayments: string;
+  stockDeliveryFees: string;
+  cashierPaidStockPurchases: string;
+  ownerPaidStockPurchases: string;
+  lunch: string;
+  delivery: string;
+  other: string;
+};

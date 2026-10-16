@@ -27,6 +27,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PackageSearch,
+  Receipt,
   ShieldCheck,
   Tag,
   TrendingUp,
@@ -49,6 +50,7 @@ import { ProductMovementPage } from "./product-movement-page";
 import { DailySalesSummaryPage } from "./daily-sales-summary";
 import { JournalPage } from "./journal-page";
 import { ReceiptReceivingPage } from "./receipt-receiving-page";
+import { ExpensesPage } from "./expenses-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -65,6 +67,12 @@ const navigation = [
     ownerOnly: false,
   },
   { to: "/journal", label: "Journal", icon: BookOpen, ownerOnly: true },
+  {
+    to: "/expenses",
+    label: "Payments & Expenses",
+    icon: Receipt,
+    ownerOnly: false,
+  },
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
@@ -922,6 +930,7 @@ export function App() {
             element={<CheckoutPage manualEntry />}
           />
           <Route path="daily-sales" element={<DailySalesSummaryPage />} />
+          <Route path="expenses" element={<ExpensesPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route element={<Guard ownerOnly />}>
             <Route path="products" element={<ProductsPage />} />

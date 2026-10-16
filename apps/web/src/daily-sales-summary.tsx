@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "./api";
+import type { ExpenseEntry, ExpenseTotals } from "@medtryx/shared";
+import { ExpenseHistory } from "./expense-history";
 
 type DailySalesSummary = {
   businessDate: string;
   scope: "STORE" | "CASHIER";
+  expenses: ExpenseEntry[];
+  expenseTotals: ExpenseTotals;
   salesBreakdown?: {
     month: string;
     invoiceNumberRange: string;
@@ -84,7 +88,6 @@ export function DailySalesSummaryPage() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
     void api
       .get<{ summary: DailySalesSummary }>(
         `/shifts/daily-sales-summary?date=${encodeURIComponent(date)}`,
@@ -114,8 +117,8 @@ export function DailySalesSummaryPage() {
           <div className="eyebrow">REGISTER SUMMARY</div>
           <h1>Daily sales</h1>
           <p>
-            Review sales by shift and the products sold for a Manila business
-            date.
+            Review sales, stock purchase payments, and operating expenses for a
+            Manila business date.
           </p>
         </div>
         <div className="daily-sales-actions">
@@ -126,13 +129,19 @@ export function DailySalesSummaryPage() {
               className="text-input"
               type="date"
               value={date}
-              onChange={(event) => setDate(event.target.value)}
+              onChange={(event) => {
+                setLoading(true);
+                setDate(event.target.value);
+              }}
             />
           </label>
           <button
             className="button button-secondary"
             type="button"
-            onClick={() => setRefreshKey((value) => value + 1)}
+            onClick={() => {
+              setLoading(true);
+              setRefreshKey((value) => value + 1);
+            }}
             disabled={loading}
           >
             <RefreshCw size={16} /> Refresh
@@ -169,6 +178,62 @@ export function DailySalesSummaryPage() {
             </div>
           </div>
 
+          <div className="report-summary-strip">
+            <div>
+              <span>OPERATING EXPENSES</span>
+              <strong>₱{summary.expenseTotals.operatingExpenses}</strong>
+            </div>
+            <div>
+              <span>PAID FROM CASHIER</span>
+              <strong>₱{summary.expenseTotals.cashierPaid}</strong>
+            </div>
+            <div>
+              <span>PAID BY OWNER</span>
+              <strong>₱{summary.expenseTotals.ownerPaid}</strong>
+            </div>
+            <div>
+              <span>SEPARATE FEES ALREADY IN UNIT COST</span>
+              <strong>₱{summary.expenseTotals.includedInUnitCost}</strong>
+            </div>
+          </div>
+          <section className="settings-main-card report-low-stock">
+            <div className="card-heading">
+              <div>
+                <h2>Stock purchase / COD payments</h2>
+                <p>
+                  Money paid for stock, excluded from operating expenses. Stock
+                  costs affect profit through cost of goods sold.
+                </p>
+              </div>
+            </div>
+            <div className="report-summary-strip">
+              <div>
+                <span>TOTAL STOCK PAYMENTS</span>
+                <strong>₱{summary.expenseTotals.stockPurchasePayments}</strong>
+              </div>
+              <div>
+                <span>PRODUCTS / DELIVERY FEES</span>
+                <strong>
+                  ₱{summary.expenseTotals.stockProductPayments} / ₱
+                  {summary.expenseTotals.stockDeliveryFees}
+                </strong>
+              </div>
+              <div>
+                <span>STOCK PAID FROM CASHIER</span>
+                <strong>
+                  ₱{summary.expenseTotals.cashierPaidStockPurchases}
+                </strong>
+              </div>
+              <div>
+                <span>STOCK PAID BY OWNER</span>
+                <strong>
+                  ₱{summary.expenseTotals.ownerPaidStockPurchases}
+                </strong>
+              </div>
+            </div>
+          </section>
+          <ExpenseHistory expenses={summary.expenses} />
+
           {summary.scope === "STORE" && summary.salesBreakdown && (
             <section className="settings-main-card report-low-stock daily-sales-journal-summary">
               <div className="card-heading">
@@ -189,6 +254,8 @@ export function DailySalesSummaryPage() {
                       <th>TOTAL VAT</th>
                       <th>GROSS SALES</th>
                       <th>NET SALES</th>
+                      <th>OPERATING EXPENSES</th>
+                      <th>STOCK PURCHASE / COD PAYMENTS</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -208,6 +275,8 @@ export function DailySalesSummaryPage() {
                       <td>₱{summary.salesBreakdown.totalVat}</td>
                       <td>₱{summary.salesBreakdown.grossSales}</td>
                       <td>₱{summary.salesBreakdown.netSales}</td>
+                      <td>₱{summary.expenseTotals.operatingExpenses}</td>
+                      <td>₱{summary.expenseTotals.stockPurchasePayments}</td>
                     </tr>
                   </tbody>
                 </table>

@@ -110,6 +110,39 @@ If a restore fails validation, Medtryx leaves the current database unchanged and
 5. Stop the service, deploy the new build, run the migration against live, and start the service. Confirm health and owner/cashier permissions.
 6. If the release fails, stop the service. Restore the pre-upgrade backup with a compatible application release, then investigate before reopening checkout.
 
+## Upgrading an existing schema 0026 installation
+
+Ship one new migration, `database/migrations/0027_payments_and_expenses.sql`,
+with this release. Keep migrations 0001–0026 unchanged. The unreleased drafts
+0027/0028/0029 have been consolidated into this single migration.
+
+The new migration copies all existing cashier shifts, balances, counts,
+identifiers, and variance approvals into a table that permits negative expected
+cash, then creates the complete payments ledger, including stock purchase / COD
+breakdowns. Opening cash and actual cash counts remain nonnegative. Historical
+cash movements are preserved without inventing expense records for them.
+
+The migration runner executes the whole file and its foreign-key check in one
+transaction. A failure rolls back both the shift rebuild and the ledger creation;
+the migration is recorded as applied only when the whole transaction succeeds.
+Repeated startup skips the applied migration.
+
+Follow the update and rollback procedure above: verify a backup **before starting
+the new application**, stop the existing service, and run `npm run db:migrate`
+with Node.js 24 and the service's existing environment and data path. Startup also
+runs migrations automatically. Keep the service stopped while a separate
+migration command runs. The same file applies to development and production;
+select the intended database through `APP_ENV` and `MEDTRYX_DATA_DIR`.
+
+The regression suite upgrades populated 0026 databases in development, test, and
+live modes using isolated synthetic paths. It checks record preservation, repeat
+startup, rollback halfway through or after the migration, ledger constraints, and
+restore of a 0026 backup with stock receipts, journal edits, payment corrections,
+and stock override history. Rehearse against an owner-controlled copy of the
+actual production backup before deployment. For rollback, retain the verified
+pre-upgrade database snapshot, matching customer-data key, and previous release
+together.
+
 ## Physical release checks
 
 The following require the owner's actual site and cannot be inferred from repository tests:

@@ -2926,6 +2926,74 @@ a {
   font-size: 14px;
   height: 44px;
 }
+.expense-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.expense-records {
+  min-width: 0;
+}
+.expenses-page .report-summary-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.expenses-page .report-summary-strip > div:nth-child(3n + 1) {
+  border-left: 0;
+}
+.expenses-page .report-summary-strip > div:nth-child(n + 4) {
+  border-top: 1px solid var(--line);
+}
+.expenses-page .report-summary-strip strong,
+.daily-sales-page .report-summary-strip strong {
+  overflow-wrap: anywhere;
+}
+.expense-form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.expense-drawer-note {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  background: #f4f8f6;
+  border-radius: 6px;
+  font-size: 12px;
+}
+@media (max-width: 1000px) {
+  .expense-layout {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .expenses-page .report-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .expenses-page .report-summary-strip > div:nth-child(n) {
+    border-left: 1px solid var(--line);
+  }
+  .expenses-page .report-summary-strip > div:nth-child(2n + 1) {
+    border-left: 0;
+  }
+  .expenses-page .report-summary-strip > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+  .expenses-page .page-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+  .expenses-page .daily-sales-actions {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}
 .checkout-search {
   padding-bottom: 14px;
   padding-top: 14px;

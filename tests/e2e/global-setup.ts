@@ -4,12 +4,14 @@ import { openDatabase } from "../../apps/server/src/db.js";
 import {
   clearBundleLedgerForTest,
   clearLotLedgerForTest,
+  clearExpenseLedgerForTest,
 } from "../../apps/server/src/test-ledger.js";
 
 export default async function globalSetup(): Promise<void> {
   process.env.APP_ENV = "test";
   const db = openDatabase("test");
   try {
+    clearExpenseLedgerForTest(db);
     clearBundleLedgerForTest(db);
     clearLotLedgerForTest(db);
     db.exec(

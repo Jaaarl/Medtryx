@@ -482,6 +482,10 @@ function centsFromMoney(value: string): bigint {
   return negative ? -cents : cents;
 }
 
+function cashCountDefault(expectedCash: string): string {
+  return centsFromMoney(expectedCash) < 0n ? "0.00" : expectedCash;
+}
+
 function parseCashTenderAmount(value: string): bigint | null {
   if (!/^\d+(?:\.\d{0,2})?$/.test(value)) return null;
   try {
@@ -2998,9 +3002,7 @@ export function StockPage() {
               <ArrowDownToLine size={17} />
             </span>
             <h2>Receive stock</h2>
-            <p>
-              Set a new selling price here when the product price changes.
-            </p>
+            <p>Set a new selling price here when the product price changes.</p>
             {selected ? (
               <form
                 className="form-stack inventory-form"
@@ -4341,7 +4343,8 @@ export function CheckoutPage({
           setBundleOffers(bundleResult.bundles);
           setBnpcPolicy(bnpcResult.policy);
           setCheckoutInventorySetting(inventorySettingResult);
-          if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
+          if (shiftResult.shift)
+            setClosingCash(cashCountDefault(shiftResult.shift.expectedCash));
         },
       )
       .catch(() => {
@@ -4876,7 +4879,8 @@ export function CheckoutPage({
     setShift(result.shift);
     setRegisterShift(result.registerShift);
     setRegisterOpen(result.registerOpen);
-    if (result.shift) setClosingCash(result.shift.expectedCash);
+    if (result.shift)
+      setClosingCash(cashCountDefault(result.shift.expectedCash));
   }
 
   async function openCurrentShift(event: FormEvent<HTMLFormElement>) {
@@ -4891,7 +4895,7 @@ export function CheckoutPage({
       setShift(result.shift);
       setRegisterShift(null);
       setRegisterOpen(true);
-      setClosingCash(result.shift.expectedCash);
+      setClosingCash(cashCountDefault(result.shift.expectedCash));
       setNotice("Cashier shift opened.");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -5221,7 +5225,8 @@ export function CheckoutPage({
       setShift(shiftResult.shift);
       setRegisterShift(shiftResult.registerShift);
       setRegisterOpen(shiftResult.registerOpen);
-      if (shiftResult.shift) setClosingCash(shiftResult.shift.expectedCash);
+      if (shiftResult.shift)
+        setClosingCash(cashCountDefault(shiftResult.shift.expectedCash));
       setProducts(catalogResult.products);
       setBundleOffers(bundleResult.bundles);
       setNotice(

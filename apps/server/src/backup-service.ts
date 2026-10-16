@@ -856,6 +856,8 @@ const restoreTables = [
   "stock_events",
   "stock_cost_corrections",
   "inventory_lots",
+  "stock_receipts",
+  "stock_receipt_lines",
   "lot_reconciliations",
   "shifts",
   "sales",
@@ -867,11 +869,18 @@ const restoreTables = [
   "sale_lines",
   "sale_bundle_component_snapshots",
   "sale_reversals",
+  "sale_payment_switches",
   "bnpc_usage_events",
   "sale_reversal_lines",
   "cash_movements",
+  "expenses",
   "lot_stock_movements",
   "sale_line_lot_allocations",
+  "daily_sales_ledger",
+  "daily_sales_journal",
+  "checkout_stock_override_records",
+  "checkout_stock_override_lots",
+  "checkout_stock_override_reviews",
   "audit_events",
 ] as const;
 
@@ -887,54 +896,14 @@ function applyRestoredDatabase(
     db.pragma("foreign_keys = OFF");
     const appendOnlyTriggerSql = db
       .prepare(
-        `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name IN (
-           'lot_stock_movements_no_update', 'lot_stock_movements_no_delete',
-           'lot_stock_movements_no_negative_balance',
-           'lot_reconciliations_no_update', 'lot_reconciliations_no_delete',
-           'inventory_lots_identity_immutable', 'inventory_lots_no_delete',
-           'sale_line_lot_allocations_no_update', 'sale_line_lot_allocations_no_delete',
-           'sales_bundle_versions_no_update', 'sales_bundle_versions_no_delete',
-           'sales_bundle_version_components_no_update',
-           'sales_bundle_version_components_no_delete',
-           'sale_bundle_snapshots_no_update', 'sale_bundle_snapshots_no_delete',
-           'sale_bundle_component_snapshots_no_update',
-           'sale_bundle_component_snapshots_no_delete',
-           'bnpc_policy_versions_no_update', 'bnpc_policy_versions_no_delete',
-           'sale_bnpc_snapshots_no_update', 'sale_bnpc_snapshots_no_delete',
-           'bnpc_usage_events_no_update', 'bnpc_usage_events_no_delete',
-           'stock_cost_corrections_no_update', 'stock_cost_corrections_no_delete'
-         ) ORDER BY name`,
+        `SELECT name, sql FROM sqlite_master WHERE type = 'trigger'
+         AND tbl_name IN (${restoreTables.map(() => "?").join(", ")})
+         ORDER BY name`,
       )
-      .all() as Array<{ sql: string }>;
+      .all(...restoreTables) as Array<{ name: string; sql: string }>;
     const restoreTransaction = db.transaction(() => {
-      for (const triggerName of [
-        "lot_stock_movements_no_update",
-        "lot_stock_movements_no_delete",
-        "lot_stock_movements_no_negative_balance",
-        "lot_reconciliations_no_update",
-        "lot_reconciliations_no_delete",
-        "inventory_lots_identity_immutable",
-        "inventory_lots_no_delete",
-        "sale_line_lot_allocations_no_update",
-        "sale_line_lot_allocations_no_delete",
-        "sales_bundle_versions_no_update",
-        "sales_bundle_versions_no_delete",
-        "sales_bundle_version_components_no_update",
-        "sales_bundle_version_components_no_delete",
-        "sale_bundle_snapshots_no_update",
-        "sale_bundle_snapshots_no_delete",
-        "sale_bundle_component_snapshots_no_update",
-        "sale_bundle_component_snapshots_no_delete",
-        "bnpc_policy_versions_no_update",
-        "bnpc_policy_versions_no_delete",
-        "sale_bnpc_snapshots_no_update",
-        "sale_bnpc_snapshots_no_delete",
-        "bnpc_usage_events_no_update",
-        "bnpc_usage_events_no_delete",
-        "stock_cost_corrections_no_update",
-        "stock_cost_corrections_no_delete",
-      ]) {
-        db.exec(`DROP TRIGGER IF EXISTS main.${triggerName}`);
+      for (const trigger of appendOnlyTriggerSql) {
+        db.exec(`DROP TRIGGER main."${trigger.name.replaceAll('"', '""')}"`);
       }
       for (const table of [...restoreTables].reverse())
         db.exec(`DELETE FROM main.${table}`);

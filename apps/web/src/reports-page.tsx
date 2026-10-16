@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { api } from "./api";
+import type { ExpenseEntry } from "@medtryx/shared";
+import { ExpenseHistory } from "./expense-history";
 
 type SalesReport = {
   businessDate: string;
@@ -9,6 +11,7 @@ type SalesReport = {
   timeZone: string;
   generatedAt: string;
   metrics: Record<string, string>;
+  expenses: ExpenseEntry[];
   reversalCount: number;
   transactionChanges: Array<{
     transactionId: string;
@@ -72,6 +75,15 @@ type DailySalesEntry = {
   totalVat: string;
   grossSales: string;
   netSales: string;
+  operatingExpenses: string;
+  cashierPaidExpenses: string;
+  ownerPaidExpenses: string;
+  inventoryCostPayments: string;
+  stockPurchasePayments: string;
+  stockProductPayments: string;
+  stockDeliveryFees: string;
+  cashierPaidStockPurchases: string;
+  ownerPaidStockPurchases: string;
 };
 
 function todayInManila(): string {
@@ -97,6 +109,10 @@ const metricGroups: Array<{
       ["Gross sales", "grossSales"],
       ["Net sales excluding VAT", "netSalesExcludingVat"],
       ["Estimated gross profit", "estimatedGrossProfit"],
+      [
+        "Estimated result after expenses and write-offs",
+        "estimatedResultAfterExpenses",
+      ],
       ["COGS", "cogs"],
       ["Full reversals", "reversalCount"],
     ],
@@ -132,6 +148,34 @@ const metricGroups: Array<{
       ["Cash-in", "cashIn"],
       ["Cash-out", "cashOut"],
       ["Net cash impact", "netCashImpact"],
+    ],
+  },
+  {
+    heading: "Operating expenses",
+    metrics: [
+      ["Operating expenses", "operatingExpenses"],
+      ["Lunch", "lunchExpenses"],
+      ["Delivery fees (not included in unit cost)", "deliveryExpenses"],
+      ["Other", "otherExpenses"],
+    ],
+  },
+  {
+    heading: "Stock purchase / COD payments",
+    metrics: [
+      ["Total stock purchase payments", "stockPurchasePayments"],
+      ["Product invoice amounts", "stockProductPayments"],
+      ["Delivery fees with stock purchases", "stockDeliveryFees"],
+      ["Stock purchases paid from cashier", "cashierPaidStockPurchases"],
+      ["Stock purchases paid by owner", "ownerPaidStockPurchases"],
+    ],
+  },
+  {
+    heading: "All store payments",
+    metrics: [
+      ["Total paid (stock purchases and expenses)", "expensePayments"],
+      ["Paid from cashier", "cashierPaidExpenses"],
+      ["Paid by owner", "ownerPaidExpenses"],
+      ["Separate fees already in unit cost", "inventoryCostPayments"],
     ],
   },
   {
@@ -414,8 +458,8 @@ export function ReportsPage() {
               <div>
                 <h2>Daily sales summary</h2>
                 <p>
-                  Original Daily Sales totals for each business date in the
-                  selected range.
+                  Daily Sales totals, stock payments, and operating expenses for
+                  each business date in the selected range.
                 </p>
               </div>
               <span className="count-chip">
@@ -436,6 +480,15 @@ export function ReportsPage() {
                       <th>Total VAT</th>
                       <th>Gross sales</th>
                       <th>Net sales</th>
+                      <th>Operating expenses</th>
+                      <th>Stock purchase / COD payments</th>
+                      <th>Stock products</th>
+                      <th>Stock delivery fees</th>
+                      <th>Stock paid from cashier</th>
+                      <th>Stock paid by owner</th>
+                      <th>Paid from cashier</th>
+                      <th>Paid by owner</th>
+                      <th>Separate fees in unit cost</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -450,6 +503,15 @@ export function ReportsPage() {
                         <td>₱{entry.totalVat}</td>
                         <td>₱{entry.grossSales}</td>
                         <td>₱{entry.netSales}</td>
+                        <td>₱{entry.operatingExpenses}</td>
+                        <td>₱{entry.stockPurchasePayments}</td>
+                        <td>₱{entry.stockProductPayments}</td>
+                        <td>₱{entry.stockDeliveryFees}</td>
+                        <td>₱{entry.cashierPaidStockPurchases}</td>
+                        <td>₱{entry.ownerPaidStockPurchases}</td>
+                        <td>₱{entry.cashierPaidExpenses}</td>
+                        <td>₱{entry.ownerPaidExpenses}</td>
+                        <td>₱{entry.inventoryCostPayments}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -457,10 +519,13 @@ export function ReportsPage() {
               </div>
             ) : (
               <p className="report-empty">
-                No Daily Sales were recorded in the selected date range.
+                No sales, stock payments, or expenses were recorded in the
+                selected date range.
               </p>
             )}
           </section>
+
+          <ExpenseHistory expenses={report.expenses} />
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">

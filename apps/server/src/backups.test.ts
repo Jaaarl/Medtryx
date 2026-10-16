@@ -1,4 +1,5 @@
 import argon2 from "argon2";
+import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -14,16 +15,22 @@ import { join } from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
-import { restoreBackup } from "./backup-service.js";
+import { createBackup, restoreBackup } from "./backup-service.js";
 import {
   customerEncryptionKeyHex,
   decryptCustomerField,
 } from "./customer-data.js";
 import { openDatabase } from "./db.js";
 import {
+  applyMigrationsThrough,
+  seedProductionMigrationRecords,
+  snapshotMigrationTables,
+} from "./test-migrations.js";
+import {
   clearBnpcLedgerForTest,
   clearBundleLedgerForTest,
   clearLotLedgerForTest,
+  clearExpenseLedgerForTest,
 } from "./test-ledger.js";
 
 process.env.APP_ENV = "test";
@@ -96,6 +103,16 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  const receiptTriggers = db
+    .prepare(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name IN ('stock_receipts', 'stock_receipt_lines')",
+    )
+    .all() as Array<{ name: string; sql: string }>;
+  for (const trigger of receiptTriggers)
+    db.exec(`DROP TRIGGER "${trigger.name}"`);
+  db.exec("DELETE FROM stock_receipt_lines; DELETE FROM stock_receipts;");
+  for (const trigger of receiptTriggers) db.exec(trigger.sql);
+  clearExpenseLedgerForTest(db);
   clearBnpcLedgerForTest(db);
   clearBundleLedgerForTest(db);
   clearLotLedgerForTest(db);
@@ -108,6 +125,9 @@ beforeEach(() => {
      DELETE FROM cash_movements;
      DELETE FROM sale_reversals;
      DELETE FROM reversal_sequences;
+     DELETE FROM sale_payment_switches;
+     DELETE FROM daily_sales_journal;
+     DELETE FROM daily_sales_ledger;
      DELETE FROM sale_lines;
      DELETE FROM sales;
      DELETE FROM shifts;
@@ -148,6 +168,244 @@ afterAll(() => {
 });
 
 describe("owner-only verified backup and restore", () => {
+  it("restores a populated schema-0026 backup through all pending migrations without losing production history", async () => {
+    const owner = await signIn("owner.backups@example.test", ownerPassword);
+    const token = (await owner.get("/api/auth/csrf")).body.token as string;
+    const profile = await owner
+      .put("/api/settings/store-profile")
+      .set("x-csrf-token", token)
+      .send({ name: "Synthetic upgrade recovery" });
+    expect(profile.status).toBe(200);
+    const actor = db
+      .prepare("SELECT id FROM users WHERE role = 'owner'")
+      .get() as { id: string };
+    const legacy = new Database(
+      join(dataDirectory, "synthetic-production-0026.sqlite"),
+    );
+    try {
+      applyMigrationsThrough(legacy, 26);
+      seedProductionMigrationRecords(legacy, 10000, ownerHash);
+      const store = db
+        .prepare("SELECT * FROM settings WHERE key = 'store_profile'")
+        .get() as { key: string; value_json: string; updated_at: string };
+      legacy
+        .prepare(
+          "INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)",
+        )
+        .run(store.key, store.value_json, store.updated_at);
+      const original = snapshotMigrationTables(legacy);
+      const originalTriggers = db
+        .prepare(
+          "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+        )
+        .all();
+      const backup = await createBackup(legacy, "manual", "upgrade-owner");
+      expect(
+        legacy.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
+      ).toEqual({ count: 26 });
+      await restoreBackup(db, {
+        backupId: backup.backupId,
+        location: "primary",
+        confirmStoreId: profile.body.profile.id as string,
+        actorUserId: actor.id,
+        actorEmail: "owner.backups@example.test",
+      });
+      const restored = snapshotMigrationTables(db, original);
+      const {
+        sessions: originalSessions,
+        audit_events: originalAudit,
+        ...originalRecords
+      } = original;
+      const {
+        sessions: restoredSessions,
+        audit_events: restoredAudit,
+        ...restoredRecords
+      } = restored;
+      expect(restoredRecords).toEqual(originalRecords);
+      if (
+        !originalSessions ||
+        !restoredSessions ||
+        !originalAudit ||
+        !restoredAudit
+      ) {
+        throw new Error(
+          "Synthetic recovery snapshot is missing sessions or audit history",
+        );
+      }
+      expect(originalSessions.rows).toHaveLength(1);
+      expect(restoredSessions.rows).toHaveLength(0);
+      expect(restoredAudit.rows).toEqual(
+        expect.arrayContaining(originalAudit.rows),
+      );
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
+      ).toEqual({ count: 27 });
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
+      ).toEqual({ count: 0 });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+      expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+      expect(
+        db
+          .prepare(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+          )
+          .all(),
+      ).toEqual(originalTriggers);
+      expect(() =>
+        db
+          .prepare("DELETE FROM stock_receipts WHERE id = 'upgrade-receipt'")
+          .run(),
+      ).toThrow("stock_receipts_are_immutable");
+      expect(() =>
+        db
+          .prepare(
+            "DELETE FROM checkout_stock_override_records WHERE id = 'upgrade-override'",
+          )
+          .run(),
+      ).toThrow("checkout stock override evidence is immutable");
+      const restoredOwner = await signIn(
+        "upgrade-owner@example.test",
+        ownerPassword,
+      );
+      expect((await restoredOwner.get("/api/auth/me")).status).toBe(200);
+      // Restore again over the populated database to exercise deletion of the
+      // immutable receipt/override records and restoration of their triggers.
+      await restoreBackup(db, {
+        backupId: backup.backupId,
+        location: "primary",
+        confirmStoreId: profile.body.profile.id as string,
+        actorUserId: "upgrade-owner",
+        actorEmail: "upgrade-owner@example.test",
+      });
+      const repeated = snapshotMigrationTables(db, original);
+      for (const [table, snapshot] of Object.entries(originalRecords)) {
+        expect(repeated[table], table).toEqual(snapshot);
+      }
+      expect(
+        db
+          .prepare(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+          )
+          .all(),
+      ).toEqual(originalTriggers);
+      expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it("restores expense payments, their cash movements, and immutable ledger triggers", async () => {
+    const owner = await signIn("owner.backups@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.backups@example.test",
+      cashierPassword,
+    );
+    const token = (await owner.get("/api/auth/csrf")).body.token as string;
+    const profile = await owner
+      .put("/api/settings/store-profile")
+      .set("x-csrf-token", token)
+      .send({ name: "Expense Restore Pharmacy" });
+    expect(profile.status).toBe(200);
+    expect(
+      (await postWithCsrf(cashier, "/shifts", { openingCash: "0.00" })).status,
+    ).toBe(201);
+    const lunch = await postWithCsrf(cashier, "/expenses", {
+      requestKey: randomUUID(),
+      category: "LUNCH",
+      amount: "30.00",
+      paymentSource: "CASHIER",
+    });
+    expect(lunch.status).toBe(201);
+    expect(
+      (
+        await postWithCsrf(owner, "/expenses", {
+          requestKey: randomUUID(),
+          category: "DELIVERY",
+          amount: "15.00",
+          paymentSource: "OWNER",
+          includedInUnitCost: true,
+        })
+      ).status,
+    ).toBe(201);
+    for (const paymentSource of ["CASHIER", "OWNER"]) {
+      const stockPayment = await postWithCsrf(owner, "/expenses", {
+        requestKey: randomUUID(),
+        category: "STOCK_PURCHASE",
+        amount: "15200.00",
+        productAmount: "15000.00",
+        deliveryFee: "200.00",
+        supplier: "Synthetic restore supplier",
+        invoiceReference: `SYN-RESTORE-${paymentSource}`,
+        paymentSource,
+      });
+      expect(stockPayment.status, JSON.stringify(stockPayment.body)).toBe(201);
+    }
+    const saved = await postWithCsrf(owner, "/backups", {});
+    expect(saved.status).toBe(201);
+    expect(
+      (
+        await postWithCsrf(cashier, "/expenses", {
+          requestKey: randomUUID(),
+          category: "LUNCH",
+          amount: "10.00",
+          paymentSource: "CASHIER",
+        })
+      ).status,
+    ).toBe(201);
+    const restored = await postWithCsrf(owner, "/backups/restore", {
+      backupId: saved.body.backup.backupId,
+      location: "primary",
+      confirmStoreId: profile.body.profile.id,
+      ownerPassword,
+    });
+    expect(restored.status, JSON.stringify(restored.body)).toBe(200);
+    const signedIn = await signIn("owner.backups@example.test", ownerPassword);
+    const payments = (await signedIn.get("/api/expenses")).body;
+    expect(payments.expenses).toHaveLength(4);
+    expect(payments.totals).toMatchObject({
+      operatingExpenses: "30.00",
+      includedInUnitCost: "15.00",
+      stockPurchasePayments: "30400.00",
+      stockProductPayments: "30000.00",
+      stockDeliveryFees: "400.00",
+      cashierPaidStockPurchases: "15200.00",
+      ownerPaidStockPurchases: "15200.00",
+    });
+    expect(
+      payments.expenses.filter(
+        (entry: { category: string }) => entry.category === "STOCK_PURCHASE",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          productAmount: "15000.00",
+          deliveryFee: "200.00",
+          supplier: "Synthetic restore supplier",
+          invoiceReference: "SYN-RESTORE-CASHIER",
+          paymentSource: "CASHIER",
+          operatingExpense: "0.00",
+        }),
+        expect.objectContaining({
+          productAmount: "15000.00",
+          deliveryFee: "200.00",
+          supplier: "Synthetic restore supplier",
+          invoiceReference: "SYN-RESTORE-OWNER",
+          paymentSource: "OWNER",
+          operatingExpense: "0.00",
+        }),
+      ]),
+    );
+    expect(payments.registerShift.expectedCash).toBe("-15230.00");
+    expect(() =>
+      db
+        .prepare("DELETE FROM expenses WHERE id = ?")
+        .run(lunch.body.expense.id),
+    ).toThrow("expenses_are_append_only");
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+
   it("writes two restricted copies and restores saved stock, sales, customer data, and sessions", async () => {
     const owner = await signIn("owner.backups@example.test", ownerPassword);
     const cashier = await signIn(

@@ -1,5 +1,17 @@
 import type Database from "better-sqlite3";
 
+export function clearExpenseLedgerForTest(db: Database.Database): void {
+  db.transaction(() => {
+    db.exec(`DROP TRIGGER IF EXISTS expenses_no_update;
+      DROP TRIGGER IF EXISTS expenses_no_delete;
+      DELETE FROM expenses;
+      CREATE TRIGGER expenses_no_update BEFORE UPDATE ON expenses
+      BEGIN SELECT RAISE(ABORT, 'expenses_are_append_only'); END;
+      CREATE TRIGGER expenses_no_delete BEFORE DELETE ON expenses
+      BEGIN SELECT RAISE(ABORT, 'expenses_are_append_only'); END;`);
+  })();
+}
+
 const appendOnlyTriggers = [
   `CREATE TRIGGER checkout_stock_override_records_immutable_update
    BEFORE UPDATE ON checkout_stock_override_records

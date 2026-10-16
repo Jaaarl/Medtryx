@@ -37,6 +37,7 @@ import { registerSalesJournalRoutes } from "./sales-journal.js";
 import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
 import { apiMaintenance } from "./maintenance.js";
 import { registerAiReceiptRoutes } from "./receipt-workflow.js";
+import { registerExpenseRoutes } from "./expenses.js";
 
 const loginSchema = z.union([
   z
@@ -460,6 +461,7 @@ export function createApp(
   registerSalesRoutes(salesRouter, db);
   registerBnpcPolicyRoutes(salesRouter, db);
   registerReportRoutes(salesRouter, db);
+  registerExpenseRoutes(salesRouter, db);
   app.use("/api", salesRouter);
 
   app.use("/api", (_req, res) =>

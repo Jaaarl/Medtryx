@@ -6,6 +6,7 @@ import { requireAuthentication, requireRole } from "./auth.js";
 import { decryptCustomerField, CustomerDataError } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
 import { getLotBalances, manilaCalendarDate } from "./lot-stock.js";
+import { getExpenseEntries, summarizeExpenses } from "./expenses.js";
 
 const dateSchema = z
   .string()
@@ -96,6 +97,8 @@ export function safeCsvCell(value: string | number): string {
 
 function reportRows(db: Database.Database, startDay: string, endDay: string) {
   const window = utcWindowForManilaRange(startDay, endDay);
+  const expenses = getExpenseEntries(db, startDay, endDay);
+  const expenseTotals = summarizeExpenses(expenses);
   const totals: Record<string, bigint> = {};
   const sales = db
     .prepare(
@@ -503,7 +506,29 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
           (totals.cashOut ?? 0n),
       ),
       estimatedGrossProfit: money(estimatedGrossProfit),
+      operatingExpenses: expenseTotals.operatingExpenses,
+      lunchExpenses: expenseTotals.lunch,
+      deliveryExpenses: expenseTotals.delivery,
+      otherExpenses: expenseTotals.other,
+      expensePayments: expenseTotals.totalPayments,
+      cashierPaidExpenses: expenseTotals.cashierPaid,
+      ownerPaidExpenses: expenseTotals.ownerPaid,
+      inventoryCostPayments: expenseTotals.includedInUnitCost,
+      stockPurchasePayments: expenseTotals.stockPurchasePayments,
+      stockProductPayments: expenseTotals.stockProductPayments,
+      stockDeliveryFees: expenseTotals.stockDeliveryFees,
+      cashierPaidStockPurchases: expenseTotals.cashierPaidStockPurchases,
+      ownerPaidStockPurchases: expenseTotals.ownerPaidStockPurchases,
+      estimatedResultAfterExpenses: money(
+        estimatedGrossProfit -
+          BigInt(
+            new Decimal(expenseTotals.operatingExpenses).mul(100).toFixed(0),
+          ) -
+          (totals.writeOffValue ?? 0n),
+      ),
     },
+    expenses,
+    expenseTotals,
     reversalCount,
     transactionChanges: transactionChangeRows.map((change) => ({
       transactionId: change.transaction_id,
@@ -602,6 +627,9 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
       "Net sales exclude output VAT and include statutory and bundle promotional discounts; full reversals are recorded on their reversal date.",
       "COGS follows saved sale-line acquisition-cost allocations; full reversals offset the original saved COGS on their recorded date.",
       "Estimated gross profit excludes separate stock write-offs and operating expenses.",
+      "Estimated result after expenses subtracts recorded operating expenses and stock write-offs from estimated gross profit; unrecorded costs are excluded.",
+      "Stock purchase / COD payments include the product invoice and any separately entered delivery fee. They are excluded from operating expenses. Record acquisition costs, including these delivery fees, in Receive Stock; saved inventory costs affect profit through COGS when products sell. Recording a payment does not receive stock or update its cost.",
+      "Separate delivery fees marked as included in unit cost are also excluded from operating expenses. All owner-paid payments leave drawer cash unchanged. Cashier-paid stock purchases and expenses are already included once in Cash-out and Net cash impact. Total store payments describe money paid, not an additional profit deduction.",
       "Cash and QR sales show staff-declared payments before refunds. Cancellations and reversals appear in separate cash or QR refund totals on their recorded reversal date; compare sales and refunds for the selected date range to understand net collections.",
       "Cash rounding adjustments are reported separately and do not change saved line tax, net-sales, or estimated gross-profit figures.",
       "Only cash totals use configured payment rounding; QR payments use the saved line total, so QR rounding adjustments remain 0.00.",
@@ -653,6 +681,56 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ["Inventory", "Write-off value", report.metrics.writeOffValue],
     ["Inventory", "Lot disposal quantity", report.metrics.lotWriteOffQuantity],
     ["Profit", "Estimated gross profit", report.metrics.estimatedGrossProfit],
+    [
+      "Profit",
+      "Estimated result after expenses and write-offs",
+      report.metrics.estimatedResultAfterExpenses,
+    ],
+    ["Expenses", "Operating expenses", report.metrics.operatingExpenses],
+    ["Expenses", "Lunch", report.metrics.lunchExpenses],
+    [
+      "Expenses",
+      "Delivery fees (excluded when in unit cost)",
+      report.metrics.deliveryExpenses,
+    ],
+    ["Expenses", "Other", report.metrics.otherExpenses],
+    [
+      "Stock purchase payments",
+      "Total stock purchase / COD payments",
+      report.metrics.stockPurchasePayments,
+    ],
+    [
+      "Stock purchase payments",
+      "Product invoice amounts",
+      report.metrics.stockProductPayments,
+    ],
+    [
+      "Stock purchase payments",
+      "Delivery fees with stock purchases",
+      report.metrics.stockDeliveryFees,
+    ],
+    [
+      "Stock purchase payments",
+      "Stock purchases paid from cashier",
+      report.metrics.cashierPaidStockPurchases,
+    ],
+    [
+      "Stock purchase payments",
+      "Stock purchases paid by owner",
+      report.metrics.ownerPaidStockPurchases,
+    ],
+    [
+      "Store payments",
+      "Total paid (stock purchases and expenses)",
+      report.metrics.expensePayments,
+    ],
+    ["Store payments", "Paid by cashier", report.metrics.cashierPaidExpenses],
+    ["Store payments", "Paid by owner", report.metrics.ownerPaidExpenses],
+    [
+      "Store payments",
+      "Separate delivery fees already included in unit cost",
+      report.metrics.inventoryCostPayments,
+    ],
     ["Inventory", "Current inventory value", report.inventory.inventoryValue],
     [
       "Inventory",
@@ -676,6 +754,15 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
       "Low stock",
       `${product.sku} ${product.name} (${product.unit})`,
       `${product.quantityOnHand} / reorder ${product.reorderLevel}`,
+    ]);
+  }
+  for (const expense of report.expenses) {
+    rows.push([
+      expense.category === "STOCK_PURCHASE"
+        ? "Stock purchase payment"
+        : "Expense payment",
+      `${expense.businessDate} ${expense.category} / ${expense.description}`,
+      `${expense.amount} / paid by ${expense.paymentSource}${expense.cashierEmail ? ` (${expense.cashierEmail})` : ""} / operating expense ${expense.operatingExpense}${expense.category === "STOCK_PURCHASE" ? ` / products ${expense.productAmount} / delivery fee ${expense.deliveryFee} / supplier ${expense.supplier} / invoice ${expense.invoiceReference} / stock acquisition payment (excluded from operating expenses)` : ` / included in unit cost ${expense.includedInUnitCost ? "yes" : "no"}`} / recorded by ${expense.recordedByEmail}`,
     ]);
   }
   for (const bundle of report.bundlePromotions) {
