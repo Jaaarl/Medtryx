@@ -377,9 +377,9 @@ function productHasUnsupportedUsdBenefits(value: {
 }): boolean {
   return Boolean(
     value.isScEligible ||
-      value.isPwdEligible ||
-      value.bnpcEligible ||
-      value.bnpcCategory,
+    value.isPwdEligible ||
+    value.bnpcEligible ||
+    value.bnpcCategory,
   );
 }
 
@@ -1153,6 +1153,12 @@ export function createProductRecord(
   actorUserId: string,
   now: string,
 ): { id: string; sku: string; generatedSku: boolean } {
+  if (
+    databaseCurrency(db) === "USD" &&
+    productHasUnsupportedUsdBenefits(input)
+  ) {
+    throw new InventoryError(409, "benefits_not_supported_for_currency");
+  }
   productFromBody(db, input);
   const sellingPriceCents = parseMoney(input.sellingPrice);
   const openingCostCents =
@@ -1579,8 +1585,7 @@ export function registerInventoryRoutes(
     const currency = databaseCurrency(db);
     const sourceHeaders = PRODUCT_UPDATE_CSV_HEADERS;
     const headers = sourceHeaders.filter(
-      (header) =>
-        currency !== "USD" || !PH_BENEFIT_CSV_HEADERS.has(header),
+      (header) => currency !== "USD" || !PH_BENEFIT_CSV_HEADERS.has(header),
     );
     const products = db
       .prepare(`${baseProductSelect()} ORDER BY p.name COLLATE NOCASE, p.sku`)
@@ -1771,10 +1776,7 @@ export function registerInventoryRoutes(
           }
           input = parsed.data;
         }
-        if (
-          currency === "USD" &&
-          productHasUnsupportedUsdBenefits(input)
-        ) {
+        if (currency === "USD" && productHasUnsupportedUsdBenefits(input)) {
           rowErrors.push({
             row: row.row,
             message: "SC, PWD, and BNPC eligibility are unavailable for USD.",

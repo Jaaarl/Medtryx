@@ -4,6 +4,7 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
+import { databaseCurrency } from "./currency.js";
 import { writeAuditEvent } from "./db.js";
 
 export const CHECKOUT_INVENTORY_POLICY_VERSION = 1;
@@ -137,6 +138,7 @@ export function registerCheckoutInventoryRoutes(
         "Cashier",
         "SKU",
         "Product",
+        "Currency",
         "Unit",
         "Recorded count",
         "Physical count",
@@ -161,6 +163,7 @@ export function registerCheckoutInventoryRoutes(
         record.cashierEmail,
         record.sku,
         record.productName,
+        databaseCurrency(db),
         record.unit,
         record.recordedQuantity,
         record.physicalQuantity,

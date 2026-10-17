@@ -16,6 +16,7 @@ import {
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { manilaCalendarDate, validCalendarDate } from "./lot-stock.js";
+import { databaseCurrency } from "./currency.js";
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const MAX_UPLOAD_BYTES = 18 * 1024 * 1024;
@@ -64,6 +65,7 @@ const csvHeaders = [
   "conversionreason",
   "conversionapproved",
   "zerocostreason",
+  "currency",
 ];
 
 const uploadSchema = z
@@ -491,8 +493,19 @@ function parseReviewedCsv(
   if (document.issues.length) return { lines: [], rowErrors: document.issues };
   const rowErrors: Array<{ row: number; message: string }> = [];
   const lines: ImportLine[] = [];
+  const currency = databaseCurrency(db);
   for (const row of document.rows) {
     const values = row.values;
+    const csvCurrency = values.currency?.trim().toUpperCase();
+    if (
+      csvCurrency !== currency &&
+      !(csvCurrency === undefined && currency === "PHP")
+    ) {
+      rowErrors.push({
+        row: row.row,
+        message: `Currency must match this installation (${currency}).`,
+      });
+    }
     const originalDescription = productCsvValue(
       values.originaldescription ?? "",
     ).trim();
@@ -555,6 +568,15 @@ function parseReviewedCsv(
       "isPwdEligible",
       rowErrors,
     );
+    if (
+      currency === "USD" &&
+      (isScEligible || isPwdEligible || bnpcEligible || values.bnpccategory)
+    ) {
+      rowErrors.push({
+        row: row.row,
+        message: "SC, PWD, and BNPC eligibility cannot be imported for USD.",
+      });
+    }
     const quantity = Number(values.quantity);
     const unitCostText = values.unitcost ?? "";
     const unitCostCents = moneyToCents(unitCostText);
@@ -1015,6 +1037,7 @@ async function makeDraftCsv(
       prepared.conversionReason,
       "FALSE",
       "",
+      databaseCurrency(db),
     ]
       .map(csvCell)
       .join(",");
