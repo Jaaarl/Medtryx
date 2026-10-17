@@ -5,6 +5,8 @@ import { useSearchParams } from "react-router";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
   RotateCcw,
   ShieldCheck,
 } from "lucide-react";
@@ -79,6 +81,11 @@ type SaleLine = {
     expiryDate: string;
     quantity: number;
   }>;
+};
+
+type SalesListResult = {
+  sales: SaleSummary[];
+  totalCount: number;
 };
 
 type SaleChange = {
@@ -174,6 +181,19 @@ function dateText(value: string): string {
   });
 }
 
+function todayInManila(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function requestError(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The request could not be completed.";
@@ -237,6 +257,10 @@ export function SalesHistoryPage() {
   const requestedTransactionId = searchParams.get("transactionId") ?? "";
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [recordLimit, setRecordLimit] = useState(100);
+  const [salesView, setSalesView] = useState<"RECENT" | "DAY">("RECENT");
+  const [selectedDate, setSelectedDate] = useState(todayInManila);
+  const [salesPage, setSalesPage] = useState(1);
+  const [salesTotal, setSalesTotal] = useState(0);
   const [openShifts, setOpenShifts] = useState<OpenShift[]>([]);
   const [pendingVariances, setPendingVariances] = useState<PendingVariance[]>(
     [],
@@ -271,14 +295,22 @@ export function SalesHistoryPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const salesParams = new URLSearchParams({
+    limit: String(recordLimit),
+    page: String(salesPage),
+  });
+  if (salesView === "DAY") salesParams.set("businessDate", selectedDate);
+  const salesUrl = `/sales?${salesParams}`;
+  const totalSalesPages = Math.max(1, Math.ceil(salesTotal / recordLimit));
 
   async function refreshLists() {
     const [salesResult, shiftResult, varianceResult] = await Promise.all([
-      api.get<{ sales: SaleSummary[] }>(`/sales?limit=${recordLimit}`),
+      api.get<SalesListResult>(salesUrl),
       api.get<{ shifts: OpenShift[] }>("/shifts/open"),
       api.get<{ shifts: PendingVariance[] }>("/shifts/variance-approvals"),
     ]);
     setSales(salesResult.sales);
+    setSalesTotal(salesResult.totalCount);
     setOpenShifts(shiftResult.shifts);
     setPendingVariances(varianceResult.shifts);
     if (
@@ -293,13 +325,14 @@ export function SalesHistoryPage() {
   useEffect(() => {
     let active = true;
     void Promise.all([
-      api.get<{ sales: SaleSummary[] }>(`/sales?limit=${recordLimit}`),
+      api.get<SalesListResult>(salesUrl),
       api.get<{ shifts: OpenShift[] }>("/shifts/open"),
       api.get<{ shifts: PendingVariance[] }>("/shifts/variance-approvals"),
     ])
       .then(([salesResult, shiftResult, varianceResult]) => {
         if (!active) return;
         setSales(salesResult.sales);
+        setSalesTotal(salesResult.totalCount);
         setOpenShifts(shiftResult.shifts);
         setPendingVariances(varianceResult.shifts);
         const firstShift = shiftResult.shifts.at(0);
@@ -308,7 +341,11 @@ export function SalesHistoryPage() {
         }
       })
       .catch(() => {
-        if (active) setError("Unable to load sales and open cash drawers.");
+        if (active) {
+          setSales([]);
+          setSalesTotal(0);
+          setError("Unable to load sales and open cash drawers.");
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -316,7 +353,7 @@ export function SalesHistoryPage() {
     return () => {
       active = false;
     };
-  }, [recordLimit]);
+  }, [salesUrl]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -629,10 +666,16 @@ export function SalesHistoryPage() {
         <section className="settings-main-card history-list-card">
           <div className="card-heading inventory-card-heading">
             <div>
-              <h2>Recent internal sales</h2>
+              <h2>
+                {salesView === "RECENT"
+                  ? "Recent internal sales"
+                  : "Internal sales by day"}
+              </h2>
               <p>
-                Showing up to {recordLimit} most recent records. A reversal
-                leaves the original intact.
+                {salesView === "RECENT"
+                  ? `Showing up to ${recordLimit} most recent records.`
+                  : `Sales recorded on ${selectedDate} in Manila time, newest first.`}{" "}
+                A reversal leaves the original intact.
               </p>
             </div>
             <div className="history-list-controls">
@@ -642,20 +685,71 @@ export function SalesHistoryPage() {
                   aria-label="Records to show"
                   className="text-input history-limit-select"
                   value={recordLimit}
+                  disabled={saving}
                   onChange={(event) => {
+                    setError("");
                     setLoading(true);
+                    setSalesPage(1);
                     setRecordLimit(Number(event.target.value));
                   }}
                 >
-                  {[10, 25, 50, 100, 200, 300].map((limit) => (
+                  {[10, 25, 50, 100, 200, 300, 500].map((limit) => (
                     <option key={limit} value={limit}>
                       {limit} records
                     </option>
                   ))}
                 </select>
               </label>
-              <span className="count-chip">{sales.length} records</span>
+              <span className="count-chip">
+                {loading ? "Loading…" : `${sales.length} records`}
+              </span>
             </div>
+          </div>
+          <div className="history-view-filters">
+            <Field id="internal-sales-view" label="View sales">
+              <select
+                id="internal-sales-view"
+                className="text-input select-input"
+                value={salesView}
+                disabled={saving}
+                onChange={(event) => {
+                  setError("");
+                  setLoading(true);
+                  setSalesPage(1);
+                  setSelectedId("");
+                  setSale(null);
+                  setOwnerPassword("");
+                  setSalesView(event.target.value as "RECENT" | "DAY");
+                }}
+              >
+                <option value="RECENT">Most recent</option>
+                <option value="DAY">Specific day</option>
+              </select>
+            </Field>
+            {salesView === "DAY" && (
+              <Field id="internal-sales-date" label="Sales date (Manila)">
+                <input
+                  id="internal-sales-date"
+                  className="text-input"
+                  type="date"
+                  min="0001-01-01"
+                  max="9999-12-31"
+                  value={selectedDate}
+                  disabled={saving}
+                  onChange={(event) => {
+                    if (!event.target.value || !event.target.validity.valid)
+                      return;
+                    setError("");
+                    setLoading(true);
+                    setSalesPage(1);
+                    setSelectedId("");
+                    setSale(null);
+                    setOwnerPassword("");
+                    setSelectedDate(event.target.value);
+                  }}
+                />
+              </Field>
+            )}
           </div>
           <div className="inventory-table-wrap">
             <table className="inventory-table">
@@ -726,13 +820,56 @@ export function SalesHistoryPage() {
                 ) : (
                   <tr>
                     <td colSpan={6} className="table-loading">
-                      No sales have been finalized yet.
+                      {salesView === "DAY"
+                        ? "No sales were recorded on this day."
+                        : "No sales have been finalized yet."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {salesView === "DAY" && (
+            <div
+              className="inventory-pagination history-sales-pagination"
+              aria-label="Daily sales pagination"
+            >
+              <span role="status">
+                {loading
+                  ? "Loading sales…"
+                  : salesTotal === 0
+                    ? "0 records"
+                    : `Showing ${(salesPage - 1) * recordLimit + 1} to ${Math.min(salesPage * recordLimit, salesTotal)} of ${salesTotal} records`}
+              </span>
+              <div>
+                <button
+                  type="button"
+                  aria-label="Previous sales page"
+                  disabled={loading || saving || salesPage <= 1}
+                  onClick={() => {
+                    setLoading(true);
+                    setSalesPage((page) => page - 1);
+                  }}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+                <span>
+                  Page {salesPage} of {totalSalesPages}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Next sales page"
+                  disabled={loading || saving || salesPage >= totalSalesPages}
+                  onClick={() => {
+                    setLoading(true);
+                    setSalesPage((page) => page + 1);
+                  }}
+                >
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         <aside className="create-card sale-review-card">

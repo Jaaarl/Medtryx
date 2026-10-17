@@ -15,7 +15,11 @@ import {
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { getSavedSale } from "./sales.js";
-import { manilaCalendarDate, writeLotMovement } from "./lot-stock.js";
+import {
+  manilaCalendarDate,
+  validCalendarDate,
+  writeLotMovement,
+} from "./lot-stock.js";
 import { cashRoundingAdjustment, type CashRoundingMode } from "./tax-engine.js";
 
 const moneySchema = z
@@ -305,13 +309,20 @@ export function registerReversalRoutes(
   });
 
   router.get("/sales", requireAuth, requireOwner, (req, res) => {
-    const limit = z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(300)
-      .safeParse(req.query.limit ?? "100");
-    if (!limit.success) return validationFailure(res);
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(500).default(100),
+        page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+        businessDate: z.string().refine(validCalendarDate).optional(),
+      })
+      .safeParse(req.query);
+    if (!query.success) return validationFailure(res);
+    const { limit, page, businessDate: selectedDate } = query.data;
+    const where = selectedDate ? "WHERE s.business_date = ?" : "";
+    const parameters = selectedDate ? [selectedDate] : [];
+    const { totalCount } = db
+      .prepare(`SELECT COUNT(*) AS totalCount FROM sales s ${where}`)
+      .get(...parameters) as { totalCount: number };
     const rows = db
       .prepare(
         `SELECT s.id, s.transaction_id, s.business_date, u.email AS cashier_email,
@@ -326,9 +337,10 @@ export function registerReversalRoutes(
                   WHERE sl.sale_id = s.id AND sl.quantity > COALESCE(rl.quantity, 0)) AS partially_refunded
          FROM sales s JOIN users u ON u.id = s.cashier_user_id
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
-         ORDER BY s.created_at DESC, s.transaction_id DESC LIMIT ?`,
+         ${where}
+         ORDER BY s.created_at DESC, s.transaction_id DESC LIMIT ? OFFSET ?`,
       )
-      .all(limit.data) as SaleSummaryRow[];
+      .all(...parameters, limit, (page - 1) * limit) as SaleSummaryRow[];
     const saleIds = rows.map((row) => row.id);
     const saleLines = saleIds.length
       ? (db
@@ -361,6 +373,7 @@ export function registerReversalRoutes(
       linesBySaleId.set(line.sale_id, lines);
     }
     res.json({
+      totalCount,
       sales: rows.map((row) => ({
         ...presentSaleSummary(row),
         lines: linesBySaleId.get(row.id) ?? [],
