@@ -1,7 +1,8 @@
 [Unit]
-Description=Medtryx pharmacy operations server
+Description=Medtryx web application
 After=network-online.target
 Wants=network-online.target
+RequiresMountsFor=/mnt/medtryx-backups-secondary
 
 [Service]
 Type=simple

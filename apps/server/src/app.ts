@@ -388,6 +388,7 @@ export function createApp(
   options: { serveWeb?: boolean } = {},
 ): Express {
   const app = express();
+  if (selectedEnvironment() === "live") app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
   app.use(
     helmet({

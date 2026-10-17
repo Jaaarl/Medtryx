@@ -1,0 +1,19 @@
+[Unit]
+Description=Medtryx live environment preflight
+After=local-fs.target
+RequiresMountsFor=/mnt/medtryx-backups-secondary
+
+[Service]
+Type=oneshot
+User=medtryx
+Group=medtryx
+WorkingDirectory=/opt/medtryx/current
+EnvironmentFile=/etc/medtryx/medtryx.env
+ExecStart=/usr/bin/node apps/server/dist/cli/live-preflight.js
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/medtryx /var/backups/medtryx-primary /mnt/medtryx-backups-secondary
+ReadOnlyPaths=/etc/medtryx/secrets
+UMask=0077

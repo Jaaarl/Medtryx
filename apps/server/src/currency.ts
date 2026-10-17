@@ -108,7 +108,9 @@ export function assertCurrencyCompatibleBeforeMigrations(
   }
 }
 
-export function initializeDatabaseCurrency(db: Database.Database): CurrencyCode {
+export function initializeDatabaseCurrency(
+  db: Database.Database,
+): CurrencyCode {
   const configured = configuredCurrency();
   const initialize = db.transaction(() => {
     const stored = storedCurrency(db);
@@ -153,7 +155,9 @@ export function writeRestoredCurrency(
 ): void {
   const stored = storedCurrency(db);
   if (stored && stored !== currency) {
-    throw new Error("The restored database currency does not match its backup.");
+    throw new Error(
+      "The restored database currency does not match its backup.",
+    );
   }
   if (stored) return;
   const now = new Date().toISOString();

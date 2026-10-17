@@ -1,0 +1,18 @@
+[Unit]
+Description=Create the one-time Medtryx owner account
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=medtryx
+Group=medtryx
+WorkingDirectory=/opt/medtryx/current
+EnvironmentFile=/etc/medtryx/medtryx.env
+ExecStart=/usr/bin/node apps/server/dist/cli/create-owner.js
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/medtryx
+ReadOnlyPaths=/etc/medtryx/secrets
+UMask=0077

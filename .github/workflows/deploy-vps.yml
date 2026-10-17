@@ -1,0 +1,97 @@
+name: Deploy v1 to VPS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: medtryx-production-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }}
+      VPS_USER: ${{ vars.VPS_USER }}
+    steps:
+      - name: Check out the dispatched v1 revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify branch and deployment settings
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/v1" ]] || { echo "Deployment is restricted to v1." >&2; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Unexpected source revision." >&2; exit 1; }
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Set production environment variable VPS_HOST." >&2; exit 1; }
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "Set production environment variable VPS_USER." >&2; exit 1; }
+
+      - name: Install locked dependencies and validate release
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Package the exact source revision
+        id: package
+        shell: bash
+        run: |
+          payload="$RUNNER_TEMP/medtryx-release"
+          archive="$RUNNER_TEMP/medtryx-${GITHUB_SHA}.tar.gz"
+          mkdir -p "$payload/apps/server" "$payload/apps/web" "$payload/packages/shared" "$payload/database"
+          cp package.json package-lock.json "$payload/"
+          cp apps/server/package.json "$payload/apps/server/"
+          cp -a apps/server/dist "$payload/apps/server/"
+          cp apps/web/package.json "$payload/apps/web/"
+          cp -a apps/web/dist "$payload/apps/web/"
+          cp packages/shared/package.json "$payload/packages/shared/"
+          cp -a packages/shared/dist "$payload/packages/shared/"
+          cp -a database/migrations "$payload/database/"
+          printf '%s\n' "$GITHUB_SHA" > "$payload/REVISION"
+          tar -czf "$archive" -C "$payload" \
+            REVISION package.json package-lock.json \
+            apps/server/package.json apps/server/dist \
+            apps/web/package.json apps/web/dist \
+            packages/shared/package.json packages/shared/dist \
+            database/migrations
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload and deploy using pinned SSH credentials
+        shell: bash
+        env:
+          RELEASE_ARCHIVE: ${{ steps.package.outputs.archive }}
+          RELEASE_SHA256: ${{ steps.package.outputs.sha256 }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          [[ -n "$VPS_SSH_PRIVATE_KEY" && -n "$VPS_SSH_KNOWN_HOSTS" ]] || { echo "Set the protected VPS SSH key and pinned known-hosts secrets." >&2; exit 1; }
+          install -m 700 -d "$RUNNER_TEMP/medtryx-ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/medtryx-ssh/id_ed25519"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/medtryx-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/medtryx-ssh/id_ed25519" "$RUNNER_TEMP/medtryx-ssh/known_hosts"
+          trap 'rm -rf "$RUNNER_TEMP/medtryx-ssh"' EXIT
+          ssh_opts=(-i "$RUNNER_TEMP/medtryx-ssh/id_ed25519" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/medtryx-ssh/known_hosts" \
+            -o ForwardAgent=no -o ConnectTimeout=15)
+          scp "${ssh_opts[@]}" "$RELEASE_ARCHIVE" \
+            "$VPS_USER@$VPS_HOST:/var/tmp/medtryx-${GITHUB_SHA}.tar.gz"
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "sudo /usr/local/sbin/medtryx-deploy $GITHUB_SHA $RELEASE_SHA256"

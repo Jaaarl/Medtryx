@@ -1,7 +1,6 @@
-# Replace medtryx.example.lan with a stable private-network DNS name.
-# Install and trust Caddy's local root certificate on each planned browser device.
-medtryx.example.lan {
-	tls internal
+# Replace medtryx.example.com with the public DNS name for this VPS.
+# Public A/AAAA records and inbound ports 80 and 443 are required for automatic HTTPS.
+medtryx.example.com {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3001
 }
