@@ -26,7 +26,7 @@
 }
 .activity-log-page h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--type-subheading);
 }
 .activity-log-filter-heading h2 {
   display: flex;
@@ -41,7 +41,7 @@
 .activity-log-page .button {
   min-height: 39px;
   padding: 9px 13px;
-  font-size: 12px;
+  font-size: var(--type-body);
   line-height: 1.4;
 }
 .activity-log-page .button-quiet {
@@ -60,13 +60,13 @@
   min-width: 0;
 }
 .activity-log-filters .field-label {
-  font-size: 11px;
+  font-size: var(--type-caption);
 }
 .activity-log-filters .text-input {
   min-width: 0;
   height: 42px;
   padding: 0 10px;
-  font-size: 13px;
+  font-size: var(--type-control);
 }
 .activity-log-search {
   grid-column: span 2;
@@ -103,13 +103,13 @@
 }
 .activity-action-filter legend {
   padding: 0 6px;
-  font-size: 12px;
+  font-size: var(--type-body);
   font-weight: 650;
 }
 .activity-action-filter > p {
   margin: 0 0 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--type-body);
   line-height: 1.6;
 }
 .activity-action-tools,
@@ -122,7 +122,7 @@
 .activity-action-tools {
   justify-content: space-between;
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: var(--type-body);
 }
 .activity-action-tools > span {
   color: var(--green);
@@ -145,7 +145,7 @@
   border: 1px solid var(--line);
   border-radius: 6px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--type-body);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -173,7 +173,7 @@
 .activity-log-results-heading p {
   margin: 7px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--type-body);
   line-height: 1.5;
 }
 .activity-log-entry {
@@ -217,7 +217,7 @@
 }
 .activity-log-entry-top h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--type-body);
   line-height: 1.5;
 }
 .activity-log-category {
@@ -225,19 +225,19 @@
   background: #f2f5f4;
   padding: 4px 8px;
   color: #536c62;
-  font-size: 10px;
+  font-size: var(--type-caption);
   font-weight: 650;
 }
 .activity-log-subject {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--type-body);
   font-weight: 550;
   line-height: 1.6;
 }
 .activity-log-summary {
   margin: 5px 0 0;
   color: #536c62;
-  font-size: 12px;
+  font-size: var(--type-body);
   line-height: 1.7;
   white-space: pre-wrap;
 }
@@ -247,7 +247,7 @@
   gap: 6px 14px;
   margin-top: 10px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--type-caption);
   line-height: 1.6;
 }
 .activity-log-actor {
@@ -256,7 +256,7 @@
 }
 .activity-event-details {
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--type-body);
 }
 .activity-event-details > summary,
 .activity-nested-details > summary {
@@ -320,7 +320,7 @@
   margin-top: 14px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--type-caption);
 }
 .activity-log-empty {
   display: grid;
@@ -328,13 +328,13 @@
   gap: 10px;
   padding: 48px 22px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--type-body);
   text-align: center;
 }
 .activity-log-empty h3 {
   margin: 0;
   color: var(--ink);
-  font-size: 15px;
+  font-size: var(--type-control);
 }
 .activity-log-empty p {
   margin: 0;
@@ -349,7 +349,7 @@
   padding: 18px 22px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--type-body);
 }
 .activity-log-pagination > div {
   display: flex;
@@ -385,7 +385,7 @@
     grid-column: auto;
   }
   .activity-log-filters .text-input {
-    font-size: 16px;
+    font-size: var(--type-control);
   }
   .activity-log-entry {
     grid-template-columns: minmax(0, 1fr);
