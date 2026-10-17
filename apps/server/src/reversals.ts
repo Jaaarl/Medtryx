@@ -6,7 +6,12 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { calculateRefundTotal, prorateCentavos } from "@medtryx/shared";
+import {
+  calculateRefundTotal,
+  prorateCentavos,
+  type CashRefundShift,
+  type RefundSourceOptions,
+} from "@medtryx/shared";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { getSavedSale } from "./sales.js";
@@ -31,6 +36,8 @@ const reversalSchema = z
     refundMethod: z.enum(["CASH", "QR"]),
     qrRefundConfirmed: z.boolean().optional(),
     refundShiftId: z.uuid().optional(),
+    refundSource: z.enum(["CURRENT", "ORIGINAL"]).default("CURRENT"),
+    allowClosedOriginalShift: z.boolean().default(false),
     lines: z
       .array(
         z
@@ -74,7 +81,12 @@ const reversalSchema = z
         message: "cash_refund_shift_required",
       });
     }
-    if (value.refundMethod === "QR" && value.refundShiftId) {
+    if (
+      value.refundMethod === "QR" &&
+      (value.refundShiftId ||
+        value.refundSource === "ORIGINAL" ||
+        value.allowClosedOriginalShift)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["refundShiftId"],
@@ -121,6 +133,41 @@ function parseMoney(value: string): number {
 
 function money(cents: number): string {
   return new Decimal(cents).div(100).toFixed(2);
+}
+
+function refundShiftOption(
+  db: Database.Database,
+  id: string | null,
+): CashRefundShift | null {
+  if (!id) return null;
+  const row = db
+    .prepare(
+      `SELECT sh.id, sh.cashier_user_id, u.email, u.username,
+    sh.opened_at, sh.closed_at, COALESCE(sh.expected_cash_centavos, sh.opening_cash_centavos) AS expected_cash
+    FROM shifts sh JOIN users u ON u.id = sh.cashier_user_id WHERE sh.id = ?`,
+    )
+    .get(id) as
+    | {
+        id: string;
+        cashier_user_id: string;
+        email: string;
+        username: string | null;
+        opened_at: string;
+        closed_at: string | null;
+        expected_cash: number;
+      }
+    | undefined;
+  return row
+    ? {
+        id: row.id,
+        cashierUserId: row.cashier_user_id,
+        cashierEmail: row.email,
+        cashierUsername: row.username,
+        openedAt: row.opened_at,
+        closedAt: row.closed_at,
+        expectedCash: money(row.expected_cash),
+      }
+    : null;
 }
 
 function businessDate(now: Date): string {
@@ -714,6 +761,42 @@ export function registerReversalRoutes(
     },
   );
 
+  router.get(
+    "/sales/:transactionId/refund-sources",
+    requireAuth,
+    (req, res) => {
+      const transactionId = z
+        .string()
+        .regex(/^MTX-\d{8}-\d{6,}$/)
+        .safeParse(req.params.transactionId);
+      if (!transactionId.success || !req.user) return validationFailure(res);
+      const sale = db
+        .prepare(
+          "SELECT cashier_user_id, shift_id FROM sales WHERE transaction_id = ?",
+        )
+        .get(transactionId.data) as
+        | { cashier_user_id: string; shift_id: string | null }
+        | undefined;
+      if (!sale) return res.status(404).json({ error: "sale_not_found" });
+      if (req.user.role !== "owner" && sale.cashier_user_id !== req.user.id)
+        return res.status(403).json({ error: "forbidden" });
+      const result = db.transaction((): RefundSourceOptions => {
+        const current = db
+          .prepare(
+            "SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+          )
+          .get() as { id: string } | undefined;
+        return {
+          transactionId: transactionId.data,
+          originalShift: refundShiftOption(db, sale.shift_id),
+          currentShift: refundShiftOption(db, current?.id ?? null),
+          ownerApprovalAllowed: req.user!.role === "owner",
+        };
+      })();
+      res.json(result);
+    },
+  );
+
   router.get("/shifts/open", requireAuth, requireOwner, (_req, res) => {
     const rows = db
       .prepare(
@@ -1117,12 +1200,13 @@ export function registerReversalRoutes(
           }
           const original = db
             .prepare(
-              `SELECT id, amount_due_centavos, cash_rounding_adjustment_centavos
+              `SELECT id, shift_id, amount_due_centavos, cash_rounding_adjustment_centavos
                FROM sales WHERE id = ?`,
             )
             .get(sale.id) as
             | {
                 id: string;
+                shift_id: string | null;
                 amount_due_centavos: number;
                 cash_rounding_adjustment_centavos: number;
               }
@@ -1319,19 +1403,56 @@ export function registerReversalRoutes(
             throw new ReversalError(409, "sale_totals_do_not_reconcile");
 
           let cashShift:
-            | { id: string; expected_cash_centavos: number }
+            | {
+                id: string;
+                cashier_user_id: string;
+                expected_cash_centavos: number;
+                closed_at: string | null;
+                actual_cash_count_centavos: number | null;
+                variance_reason: string | null;
+              }
             | undefined;
           if (parsed.data.refundMethod === "CASH") {
+            if (
+              parsed.data.refundSource === "ORIGINAL" &&
+              (!original.shift_id ||
+                parsed.data.refundShiftId !== original.shift_id)
+            )
+              throw new ReversalError(409, "original_refund_shift_mismatch");
             cashShift = db
               .prepare(
-                `SELECT id, COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts
-                 WHERE id = ? AND closed_at IS NULL`,
+                `SELECT id, cashier_user_id, closed_at, actual_cash_count_centavos, variance_reason,
+                   COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts
+                 WHERE id = ?`,
               )
               .get(parsed.data.refundShiftId!) as
-              | { id: string; expected_cash_centavos: number }
+              | {
+                  id: string;
+                  cashier_user_id: string;
+                  expected_cash_centavos: number;
+                  closed_at: string | null;
+                  actual_cash_count_centavos: number | null;
+                  variance_reason: string | null;
+                }
               | undefined;
             if (!cashShift)
+              throw new ReversalError(409, "refund_shift_unavailable");
+            if (
+              parsed.data.refundSource === "CURRENT" &&
+              cashShift.closed_at !== null
+            )
               throw new ReversalError(409, "cash_refund_requires_open_shift");
+            if (cashShift.closed_at !== null) {
+              if (quickCancel || req.user!.role !== "owner")
+                throw new ReversalError(
+                  403,
+                  "closed_shift_refund_requires_owner_approval",
+                );
+              if (!parsed.data.allowClosedOriginalShift)
+                throw new ReversalError(409, "refund_shift_changed");
+              if (cashShift.actual_cash_count_centavos === null)
+                throw new ReversalError(409, "cash_shift_unavailable");
+            }
             if (
               !Number.isSafeInteger(
                 cashShift.expected_cash_centavos - refundTotal,
@@ -1339,6 +1460,14 @@ export function registerReversalRoutes(
             ) {
               throw new ReversalError(409, "cash_amount_overflow");
             }
+            if (
+              cashShift.closed_at !== null &&
+              !Number.isSafeInteger(
+                cashShift.actual_cash_count_centavos! -
+                  (cashShift.expected_cash_centavos - refundTotal),
+              )
+            )
+              throw new ReversalError(409, "cash_amount_overflow");
           }
 
           const now = new Date();
@@ -1590,9 +1719,28 @@ export function registerReversalRoutes(
 
           if (cashShift && refundTotal > 0) {
             const expected = cashShift.expected_cash_centavos - refundTotal;
-            db.prepare(
-              "UPDATE shifts SET expected_cash_centavos = ? WHERE id = ? AND closed_at IS NULL",
-            ).run(expected, cashShift.id);
+            if (cashShift.closed_at === null) {
+              db.prepare(
+                "UPDATE shifts SET expected_cash_centavos = ? WHERE id = ? AND closed_at IS NULL",
+              ).run(expected, cashShift.id);
+            } else {
+              const variance = cashShift.actual_cash_count_centavos! - expected;
+              db.prepare(
+                `UPDATE shifts SET expected_cash_centavos = ?, variance_centavos = ?,
+                variance_reason = ?, variance_approval_status = ?, variance_approved_by_user_id = NULL,
+                variance_approved_at = NULL, variance_approval_note = NULL WHERE id = ? AND closed_at IS NOT NULL`,
+              ).run(
+                expected,
+                variance,
+                variance === 0
+                  ? cashShift.variance_reason
+                  : (cashShift.variance_reason?.trim().length ?? 0) >= 3
+                    ? cashShift.variance_reason
+                    : "Cash refund assigned to the original shift after closing.",
+                variance === 0 ? "NONE" : "PENDING",
+                cashShift.id,
+              );
+            }
             db.prepare(
               `INSERT INTO cash_movements
                  (id, shift_id, movement_type, amount_delta_centavos, reversal_id,
@@ -1632,6 +1780,23 @@ export function registerReversalRoutes(
                   : "WRITE_OFF",
               })),
               cashShiftId: cashShift?.id ?? null,
+              ...(cashShift
+                ? {
+                    refundSource: parsed.data.refundSource,
+                    originalShiftId: original.shift_id,
+                    refundCashierUserId: cashShift.cashier_user_id,
+                    cashShiftWasClosed: cashShift.closed_at !== null,
+                    expectedCashBeforeCentavos:
+                      cashShift.expected_cash_centavos,
+                    expectedCashAfterCentavos:
+                      cashShift.expected_cash_centavos - refundTotal,
+                    varianceAfterCentavos:
+                      cashShift.closed_at === null
+                        ? null
+                        : cashShift.actual_cash_count_centavos! -
+                          (cashShift.expected_cash_centavos - refundTotal),
+                  }
+                : {}),
               lotActions: reversalLotActions,
             },
           });

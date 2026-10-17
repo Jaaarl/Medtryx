@@ -33,6 +33,23 @@ export type UserRole = z.infer<typeof userRoleSchema>;
 export type User = z.infer<typeof userSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 
+export type CashRefundSource = "CURRENT" | "ORIGINAL";
+export type CashRefundShift = {
+  id: string;
+  cashierUserId: string;
+  cashierEmail: string;
+  cashierUsername: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  expectedCash: string;
+};
+export type RefundSourceOptions = {
+  transactionId: string;
+  currentShift: CashRefundShift | null;
+  originalShift: CashRefundShift | null;
+  ownerApprovalAllowed: boolean;
+};
+
 export type ExpenseCategory = "LUNCH" | "DELIVERY" | "OTHER" | "STOCK_PURCHASE";
 export type ExpensePaymentSource = "CASHIER" | "OWNER";
 

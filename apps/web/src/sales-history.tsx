@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { api, ApiError } from "./api";
 import { addMoney } from "./sample-receipt";
+import {
+  RefundSourcePicker,
+  type SelectedRefundSource,
+} from "./refund-source-picker";
 import {
   fullRefund,
   RefundOptions,
@@ -188,6 +192,14 @@ function requestError(error: unknown): string {
       "An original lot is expired or quarantined. Choose the write-off treatment.",
     reversal_lines_must_match_sale:
       "Review every sale line and choose whether returned items are sellable.",
+    original_refund_shift_mismatch:
+      "The selected shift is not this sale’s original shift. Refresh the shift choices.",
+    refund_shift_unavailable:
+      "The selected refund shift is unavailable. Refresh the shift choices.",
+    refund_shift_changed:
+      "The original shift has closed since it was selected. Refresh shifts and review the owner approval details.",
+    closed_shift_refund_requires_owner_approval:
+      "An owner must approve refunds assigned to a closed original shift.",
     cash_refund_requires_open_shift:
       "Cash refunds must be assigned to an open cash drawer.",
     insufficient_shift_cash:
@@ -242,7 +254,9 @@ export function SalesHistoryPage() {
     useState<RefundSelection>(fullRefund);
   const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});
   const [refundMethod, setRefundMethod] = useState<"CASH" | "QR">("CASH");
-  const [refundShiftId, setRefundShiftId] = useState("");
+  const [refundSource, setRefundSource] = useState<SelectedRefundSource | null>(
+    null,
+  );
   const [ownerPassword, setOwnerPassword] = useState("");
   const [reversalReason, setReversalReason] = useState("");
   const [movementShiftId, setMovementShiftId] = useState("");
@@ -274,12 +288,6 @@ export function SalesHistoryPage() {
       setMovementShiftId("");
       setMovements([]);
     }
-    if (
-      refundShiftId &&
-      !shiftResult.shifts.some((shift) => shift.id === refundShiftId)
-    ) {
-      setRefundShiftId("");
-    }
   }
 
   useEffect(() => {
@@ -297,7 +305,6 @@ export function SalesHistoryPage() {
         const firstShift = shiftResult.shifts.at(0);
         if (firstShift) {
           setMovementShiftId(firstShift.id);
-          setRefundShiftId(firstShift.id);
         }
       })
       .catch(() => {
@@ -319,6 +326,7 @@ export function SalesHistoryPage() {
       .then(({ sale: result }) => {
         if (active) {
           setSale(result);
+          setRefundSource(null);
           setRestock(
             Object.fromEntries(
               result.lines.map((line) => [line.saleLineId, false]),
@@ -359,8 +367,9 @@ export function SalesHistoryPage() {
 
   const selectedSummary =
     sales.find((item) => item.transactionId === selectedId) ?? null;
-  const selectedRefundShift =
-    openShifts.find((shift) => shift.id === refundShiftId) ?? null;
+  const selectedCashSource =
+    refundSource?.transactionId === sale?.transactionId ? refundSource : null;
+  const selectedRefundShift = selectedCashSource?.shift ?? null;
   const refund = sale
     ? refundReview(sale.lines, sale.cashRoundingAdjustment, refundSelection)
     : { valid: false, total: "0.00" };
@@ -372,6 +381,12 @@ export function SalesHistoryPage() {
   async function reverseSale(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sale) return;
+    if (refundMethod === "CASH" && !selectedCashSource?.ready) {
+      setError(
+        "Choose an available refund shift before approving this refund.",
+      );
+      return;
+    }
     if (!refund.valid) {
       setError(
         "Select at least one valid refund quantity and check the returned lot quantities.",
@@ -388,7 +403,15 @@ export function SalesHistoryPage() {
         ownerPassword,
         reason: reversalReason,
         refundMethod,
-        ...(refundMethod === "CASH" ? { refundShiftId } : {}),
+        ...(refundMethod === "CASH"
+          ? {
+              refundShiftId: selectedCashSource!.shift.id,
+              refundSource: selectedCashSource!.source,
+              allowClosedOriginalShift:
+                selectedCashSource!.source === "ORIGINAL" &&
+                selectedCashSource!.shift.closedAt !== null,
+            }
+          : {}),
         lines: sale.lines.map((line) => ({
           ...refundLineRequest(line, refundSelection),
           restock: restock[line.saleLineId] === true,
@@ -917,9 +940,10 @@ export function SalesHistoryPage() {
                       id="refund-method"
                       className="text-input select-input"
                       value={refundMethod}
-                      onChange={(event) =>
-                        setRefundMethod(event.target.value as "CASH" | "QR")
-                      }
+                      onChange={(event) => {
+                        setRefundMethod(event.target.value as "CASH" | "QR");
+                        setRefundSource(null);
+                      }}
                     >
                       <option value="CASH">Cash returned</option>
                       <option value="QR">
@@ -928,35 +952,12 @@ export function SalesHistoryPage() {
                     </select>
                   </Field>
                   {refundMethod === "CASH" && (
-                    <Field
-                      id="refund-shift"
-                      label="Cash refund from open drawer"
-                    >
-                      <select
-                        id="refund-shift"
-                        className="text-input select-input"
-                        value={refundShiftId}
-                        onChange={(event) =>
-                          setRefundShiftId(event.target.value)
-                        }
-                        required
-                      >
-                        <option value="">Select a drawer</option>
-                        {openShifts.map((shift) => (
-                          <option key={shift.id} value={shift.id}>
-                            {shift.cashierEmail} · expected ₱
-                            {shift.expectedCash}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  )}
-                  {refundMethod === "CASH" && openShifts.length === 0 && (
-                    <small className="field-hint">
-                      No drawer is open. Open a shift from{" "}
-                      <Link to="/checkout">Checkout</Link> before recording a
-                      cash refund.
-                    </small>
+                    <RefundSourcePicker
+                      key={sale.transactionId}
+                      transactionId={sale.transactionId}
+                      ownerApprovalInParent
+                      onChange={setRefundSource}
+                    />
                   )}
                   {refundMethod === "CASH" &&
                     selectedRefundShift &&
@@ -1005,7 +1006,7 @@ export function SalesHistoryPage() {
                       selectedSummary?.status !== "FINALIZED" ||
                       !sale.lines.length ||
                       !refund.valid ||
-                      (refundMethod === "CASH" && !selectedRefundShift)
+                      (refundMethod === "CASH" && !selectedCashSource?.ready)
                     }
                   >
                     {saving

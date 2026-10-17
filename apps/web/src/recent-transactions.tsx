@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "./api";
 import {
+  RefundSourcePicker,
+  type SelectedRefundSource,
+} from "./refund-source-picker";
+import {
   fullRefund,
   RefundOptions,
   refundLineRequest,
@@ -79,6 +83,8 @@ function transactionError(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The cancellation could not be completed.";
   const messages: Record<string, string> = {
+    reauthentication_failed:
+      "The owner password could not be verified. Enter your owner password again.",
     quick_action_window_expired: "The 1-hour cancellation window has passed.",
     quick_cancel_refund_method_must_match:
       "The refund method must match the original payment.",
@@ -93,6 +99,14 @@ function transactionError(error: unknown): string {
       "Confirm the returned products match their original lots before restocking.",
     returned_lot_not_saleable:
       "An original lot is expired or quarantined. Select write-off for that item.",
+    original_refund_shift_mismatch:
+      "The selected shift is not this sale’s original shift. Refresh the shift choices.",
+    refund_shift_unavailable:
+      "The selected refund shift is unavailable. Refresh the shift choices.",
+    refund_shift_changed:
+      "The original shift has closed since it was selected. Refresh shifts and review the owner approval details.",
+    closed_shift_refund_requires_owner_approval:
+      "An owner must approve refunds assigned to a closed original shift.",
     cash_refund_requires_open_shift:
       "Open a cash drawer before recording a cash refund.",
     insufficient_shift_cash:
@@ -131,6 +145,9 @@ export function RecentTransactions({
   onUpdated: () => Promise<void>;
 }) {
   const [transactions, setTransactions] = useState<RecentTransaction[]>([]);
+  const [refundSources, setRefundSources] = useState<
+    Record<string, SelectedRefundSource | null>
+  >({});
   const [refundSelections, setRefundSelections] = useState<
     Record<string, RefundSelection>
   >({});
@@ -244,8 +261,11 @@ export function RecentTransactions({
       );
       return;
     }
-    if (transaction.paymentMethod === "CASH" && !refundShift) {
-      setError("Open a cash drawer before recording a cash refund.");
+    const cashSource = refundSources[transaction.transactionId];
+    if (transaction.paymentMethod === "CASH" && !cashSource?.ready) {
+      setError(
+        "Choose an available refund shift and provide owner approval if required.",
+      );
       return;
     }
 
@@ -260,13 +280,27 @@ export function RecentTransactions({
         ),
         refundMethod: transaction.paymentMethod,
         ...(transaction.paymentMethod === "CASH"
-          ? { refundShiftId: refundShift!.id }
+          ? {
+              refundShiftId: cashSource!.shift.id,
+              refundSource: cashSource!.source,
+              allowClosedOriginalShift:
+                cashSource!.source === "ORIGINAL" &&
+                cashSource!.shift.closedAt !== null,
+              ...(cashSource!.ownerPassword
+                ? { ownerPassword: cashSource!.ownerPassword }
+                : {}),
+            }
           : { qrRefundConfirmed: true }),
         lines,
       });
       setNotice(
         `${selection.mode === "FULL" ? "Cancellation" : "Partial refund"} ${result.reversal.transactionId} recorded for ₱${result.reversal.amount}.`,
       );
+      setRefundSources((current) => {
+        const next = { ...current };
+        delete next[transaction.transactionId];
+        return next;
+      });
       setLocalRefresh((value) => value + 1);
       await onUpdated();
     } catch (caught) {
@@ -406,9 +440,10 @@ export function RecentTransactions({
               transaction.cashRoundingAdjustment,
               refundSelection,
             );
+            const cashSource = refundSources[transaction.transactionId];
             const expectedCashAfterRefund =
-              refundShift && refund.valid
-                ? addMoney(refundShift.expectedCash, `-${refund.total}`)
+              cashSource && refund.valid
+                ? addMoney(cashSource.shift.expectedCash, `-${refund.total}`)
                 : null;
             const secondsRemaining = Math.max(
               0,
@@ -608,7 +643,7 @@ export function RecentTransactions({
                           <p>
                             {transaction.paymentMethod === "QR"
                               ? "Choose quantities below. Send the displayed QR refund first, then confirm it."
-                              : "Choose quantities below. Return the displayed cash amount from the open drawer."}
+                              : "Choose quantities below and choose which shift will be charged for the cash refund."}
                           </p>
                         </div>
                         <RefundOptions
@@ -787,19 +822,20 @@ export function RecentTransactions({
                                 customer.
                               </span>
                             </label>
-                          ) : refundShift ? (
-                            <small className="field-hint">
-                              Cash refund will come from this drawer (expected ₱
-                              {refundShift.expectedCash}).
-                            </small>
                           ) : (
-                            <small className="field-hint field-hint-error">
-                              Open a cash drawer before recording this cash
-                              refund.
-                            </small>
+                            <RefundSourcePicker
+                              key={`${transaction.transactionId}:${refundShift?.id ?? "none"}:${refreshKey}:${localRefresh}`}
+                              transactionId={transaction.transactionId}
+                              onChange={(selection) =>
+                                setRefundSources((current) => ({
+                                  ...current,
+                                  [transaction.transactionId]: selection,
+                                }))
+                              }
+                            />
                           )}
                           {transaction.paymentMethod === "CASH" &&
-                            refundShift &&
+                            cashSource &&
                             refund.valid &&
                             expectedCashAfterRefund !== null && (
                               <small className="field-hint">
@@ -823,7 +859,7 @@ export function RecentTransactions({
                             savingId === transaction.transactionId ||
                             !refund.valid ||
                             (transaction.paymentMethod === "CASH" &&
-                              !refundShift)
+                              !cashSource?.ready)
                           }
                         >
                           {savingId === transaction.transactionId

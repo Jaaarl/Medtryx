@@ -48,6 +48,9 @@ const fieldLabels: Record<string, string> = {
   productAmountCentavos: "Product payment",
   deliveryFeeCentavos: "Delivery fee",
   cashMovementId: "Cash movement reference",
+  refundSource: "Cash refund charged to",
+  cashShiftWasClosed: "Refund shift was already closed",
+  refundCashierUserId: "Refund shift cashier reference",
   stockAdjustmentIds: "Inventory corrections",
   isScEligible: "Senior citizen eligible",
   isPwdEligible: "PWD eligible",
@@ -101,6 +104,7 @@ function valueLabel(value: unknown, key: string): string {
       "role",
       "category",
       "paymentSource",
+      "refundSource",
       "paymentMethod",
       "refundMethod",
       "benefitType",
@@ -111,6 +115,8 @@ function valueLabel(value: unknown, key: string): string {
   ) {
     const labels: Record<string, string> = {
       STOCK_PURCHASE: "Stock purchase / COD",
+      CURRENT: "Current open shift",
+      ORIGINAL: "Original sale’s shift",
       OWNER: "Owner funds",
       CASHIER: "Cash register",
       QR: "QR",
