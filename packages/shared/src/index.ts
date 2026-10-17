@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./activity.js";
 
 export const userRoleSchema = z.enum(["owner", "cashier"]);
 

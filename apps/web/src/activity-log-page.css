@@ -1,0 +1,420 @@
+.activity-log-page {
+  max-width: 1320px;
+}
+.activity-log-heading {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.activity-log-heading p {
+  max-width: 650px;
+  line-height: 1.6;
+}
+.activity-owner-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 12px;
+  color: var(--green);
+  background: #fff;
+  font-size: 11px;
+  font-weight: 650;
+}
+.activity-log-filter-card {
+  padding: 22px;
+  margin-bottom: 22px;
+}
+.activity-log-filter-heading,
+.activity-log-results-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.activity-log-filter-heading {
+  margin-bottom: 20px;
+}
+.activity-log-page h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.activity-log-filter-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.activity-period-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.activity-log-page .button {
+  min-height: 39px;
+  padding: 9px 13px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.activity-log-page .button-quiet {
+  border: 1px solid var(--line);
+  background: #f7faf8;
+}
+.activity-log-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.activity-log-filters > label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+}
+.activity-log-filters .field-label {
+  font-size: 11px;
+}
+.activity-log-filters .text-input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.activity-log-search {
+  grid-column: span 2;
+}
+.activity-search-input {
+  position: relative;
+  display: block;
+}
+.activity-search-input > svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.activity-search-input .text-input {
+  padding-left: 35px;
+}
+.activity-log-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 20px;
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.activity-action-filter {
+  min-width: 0;
+  margin: 22px 0 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.activity-action-filter legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.activity-action-filter > p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.activity-action-tools,
+.activity-action-tools > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.activity-action-tools {
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.activity-action-tools > span {
+  color: var(--green);
+  font-weight: 600;
+}
+.activity-action-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 270px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.activity-action-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.activity-action-option:has(input:checked) {
+  background: var(--green-soft);
+  border-color: #9dc4b7;
+}
+.activity-action-option input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--green);
+}
+.activity-log-page > .banner {
+  margin-bottom: 20px;
+}
+.activity-log-filter-card .banner {
+  margin-bottom: 18px;
+}
+.activity-log-results-heading {
+  padding: 22px;
+  border-bottom: 1px solid var(--line);
+}
+.activity-log-results-heading p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.activity-log-entry {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 22px;
+}
+.activity-log-entry + .activity-log-entry {
+  border-top: 1px solid var(--line);
+}
+.activity-log-marker {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--green);
+  background: var(--green-soft);
+}
+.activity-log-marker-sales,
+.activity-log-marker-payments {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+.activity-log-marker-accounts,
+.activity-log-marker-backups {
+  color: #6d28d9;
+  background: #f5f3ff;
+}
+.activity-log-entry-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.activity-log-entry-top {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.activity-log-entry-top h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.activity-log-category {
+  border-radius: 999px;
+  background: #f2f5f4;
+  padding: 4px 8px;
+  color: #536c62;
+  font-size: 10px;
+  font-weight: 650;
+}
+.activity-log-subject {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.6;
+}
+.activity-log-summary {
+  margin: 5px 0 0;
+  color: #536c62;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+.activity-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.activity-log-actor {
+  color: #405f53;
+  font-weight: 650;
+}
+.activity-event-details {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.activity-event-details > summary,
+.activity-nested-details > summary {
+  width: fit-content;
+  padding: 5px 0;
+  color: var(--green);
+  cursor: pointer;
+  font-weight: 600;
+}
+.activity-event-detail-body {
+  padding: 16px;
+  margin-top: 10px;
+  background: #f8faf9;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  line-height: 1.6;
+}
+.activity-event-detail-body > p {
+  margin: 0 0 14px;
+}
+.activity-event-fields,
+.activity-nested-details dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.activity-event-fields > div,
+.activity-nested-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 180px) minmax(0, 1fr);
+  align-items: start;
+  gap: 6px 18px;
+}
+.activity-event-fields dt,
+.activity-nested-details dt {
+  color: #536c62;
+  font-weight: 600;
+}
+.activity-event-fields dd,
+.activity-nested-details dd {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.activity-nested-details {
+  min-width: 0;
+}
+.activity-nested-details dl {
+  padding-left: 12px;
+  margin-top: 8px;
+  border-left: 2px solid var(--line);
+}
+.activity-nested-details dl > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+}
+.activity-event-references {
+  display: grid;
+  gap: 5px;
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+}
+.activity-log-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 48px 22px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.activity-log-empty h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+.activity-log-empty p {
+  margin: 0;
+  line-height: 1.6;
+}
+.activity-log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 18px 22px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.activity-log-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+@media (max-width: 1000px) {
+  .activity-log-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .activity-action-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 620px) {
+  .activity-log-filter-card,
+  .activity-log-results-heading,
+  .activity-log-entry,
+  .activity-log-pagination {
+    padding: 18px 15px;
+  }
+  .activity-log-filters {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .activity-action-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .activity-action-filter {
+    padding: 12px;
+  }
+  .activity-log-search {
+    grid-column: auto;
+  }
+  .activity-log-filters .text-input {
+    font-size: 16px;
+  }
+  .activity-log-entry {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .activity-log-entry-top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .activity-event-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .activity-event-detail-body {
+    padding: 12px;
+  }
+  .activity-log-pagination > div {
+    gap: 8px;
+  }
+}

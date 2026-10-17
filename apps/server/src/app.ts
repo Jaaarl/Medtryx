@@ -38,6 +38,7 @@ import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
 import { apiMaintenance } from "./maintenance.js";
 import { registerAiReceiptRoutes } from "./receipt-workflow.js";
 import { registerExpenseRoutes } from "./expenses.js";
+import { registerActivityLogRoutes } from "./activity-log.js";
 
 const loginSchema = z.union([
   z
@@ -379,38 +380,6 @@ function registerAuthRoutes(app: Express, db: Database.Database): void {
       res.json({ ok: true });
     },
   );
-
-  app.get("/api/audit", requireAuth, requireOwner, (req, res) => {
-    const limitParsed = z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(200)
-      .safeParse(req.query.limit ?? "100");
-    if (!limitParsed.success) return sendBadRequest(res);
-    const rows = db
-      .prepare(
-        `SELECT a.id, a.action, a.entity_type AS entityType, a.entity_id AS entityId,
-                a.details_json AS detailsJson, a.created_at AS createdAt, u.email AS actorEmail
-         FROM audit_events a LEFT JOIN users u ON u.id = a.actor_user_id
-         ORDER BY a.created_at DESC LIMIT ?`,
-      )
-      .all(limitParsed.data) as {
-      id: string;
-      action: string;
-      entityType: string;
-      entityId: string;
-      detailsJson: string;
-      createdAt: string;
-      actorEmail: string | null;
-    }[];
-    res.json({
-      events: rows.map(({ detailsJson, ...row }) => ({
-        ...row,
-        details: JSON.parse(detailsJson) as unknown,
-      })),
-    });
-  });
 }
 
 export function createApp(
@@ -447,6 +416,7 @@ export function createApp(
   app.use("/api/stock/receipts", receiptAiRouter);
   app.use(express.json({ limit: "20kb", strict: true }));
   registerAuthRoutes(app, db);
+  registerActivityLogRoutes(app, db);
   const inventoryRouter = express.Router();
   registerInventoryRoutes(inventoryRouter, db);
   registerCheckoutInventoryRoutes(inventoryRouter, db);

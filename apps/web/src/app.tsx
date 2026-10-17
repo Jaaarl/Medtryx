@@ -20,6 +20,7 @@ import {
   Clock,
   DatabaseBackup,
   FileUp,
+  History,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -51,6 +52,7 @@ import { DailySalesSummaryPage } from "./daily-sales-summary";
 import { JournalPage } from "./journal-page";
 import { ReceiptReceivingPage } from "./receipt-receiving-page";
 import { ExpensesPage } from "./expenses-page";
+import { ActivityLogPage } from "./activity-log-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -97,6 +99,12 @@ const navigation = [
     ownerOnly: true,
   },
   { to: "/shifts", label: "Shift history", icon: Clock, ownerOnly: true },
+  {
+    to: "/activity-log",
+    label: "Activity log",
+    icon: History,
+    ownerOnly: true,
+  },
   {
     to: "/backups",
     label: "Backups",
@@ -952,6 +960,7 @@ export function App() {
             <Route path="reports" element={<ReportsPage />} />
             <Route path="product-movement" element={<ProductMovementPage />} />
             <Route path="shifts" element={<ShiftHistoryPage />} />
+            <Route path="activity-log" element={<ActivityLogPage />} />
             <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
