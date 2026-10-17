@@ -96,7 +96,9 @@ function transactionError(error: unknown): string {
     cash_refund_requires_open_shift:
       "Open a cash drawer before recording a cash refund.",
     insufficient_shift_cash:
-      "The selected drawer does not have enough expected cash for this refund.",
+      "The drawer does not have enough expected cash for this payment change.",
+    cash_amount_overflow:
+      "The resulting drawer balance is outside the supported range.",
     sale_totals_do_not_reconcile:
       "The saved sale total could not be reconciled. Ask an owner to review it.",
     invalid_refund_quantity:
@@ -404,9 +406,10 @@ export function RecentTransactions({
               transaction.cashRoundingAdjustment,
               refundSelection,
             );
-            const enoughCash =
-              refundShift &&
-              Number(refundShift.expectedCash) >= Number(refund.total);
+            const expectedCashAfterRefund =
+              refundShift && refund.valid
+                ? addMoney(refundShift.expectedCash, `-${refund.total}`)
+                : null;
             const secondsRemaining = Math.max(
               0,
               Math.ceil(remainingMs / 1_000),
@@ -798,10 +801,13 @@ export function RecentTransactions({
                           {transaction.paymentMethod === "CASH" &&
                             refundShift &&
                             refund.valid &&
-                            !enoughCash && (
-                              <small className="field-hint field-hint-error">
-                                The drawer does not have enough expected cash
-                                for this refund.
+                            expectedCashAfterRefund !== null && (
+                              <small className="field-hint">
+                                Expected drawer after refund:{" "}
+                                {expectedCashAfterRefund.startsWith("-")
+                                  ? `−₱${expectedCashAfterRefund.slice(1)}`
+                                  : `₱${expectedCashAfterRefund}`}
+                                . Expected cash can be negative.
                               </small>
                             )}
                           <small className="field-hint">
@@ -817,7 +823,7 @@ export function RecentTransactions({
                             savingId === transaction.transactionId ||
                             !refund.valid ||
                             (transaction.paymentMethod === "CASH" &&
-                              !enoughCash)
+                              !refundShift)
                           }
                         >
                           {savingId === transaction.transactionId

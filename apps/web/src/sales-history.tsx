@@ -9,6 +9,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { api, ApiError } from "./api";
+import { addMoney } from "./sample-receipt";
 import {
   fullRefund,
   RefundOptions,
@@ -190,7 +191,7 @@ function requestError(error: unknown): string {
     cash_refund_requires_open_shift:
       "Cash refunds must be assigned to an open cash drawer.",
     insufficient_shift_cash:
-      "The selected drawer does not have enough expected cash for this refund.",
+      "That drawer does not have enough expected cash for this operation.",
     insufficient_cash: "That drawer does not have enough expected cash.",
     open_shift_not_found:
       "That cash drawer is no longer open. Refresh and retry.",
@@ -363,10 +364,10 @@ export function SalesHistoryPage() {
   const refund = sale
     ? refundReview(sale.lines, sale.cashRoundingAdjustment, refundSelection)
     : { valid: false, total: "0.00" };
-  const refundHasEnoughCash =
-    selectedRefundShift && sale
-      ? cents(selectedRefundShift.expectedCash) >= cents(refund.total)
-      : false;
+  const expectedCashAfterRefund =
+    selectedRefundShift && refund.valid
+      ? addMoney(selectedRefundShift.expectedCash, `-${refund.total}`)
+      : null;
 
   async function reverseSale(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -959,10 +960,11 @@ export function SalesHistoryPage() {
                   )}
                   {refundMethod === "CASH" &&
                     selectedRefundShift &&
-                    !refundHasEnoughCash && (
-                      <small className="field-hint field-hint-error">
-                        This drawer's expected cash is below the selected
-                        refund.
+                    expectedCashAfterRefund !== null && (
+                      <small className="field-hint">
+                        Expected drawer after refund:{" "}
+                        {cashAdjustmentText(expectedCashAfterRefund)}. Expected
+                        cash can be negative.
                       </small>
                     )}
                   <Field id="reversal-reason" label="Reason for reversal">
@@ -1003,8 +1005,7 @@ export function SalesHistoryPage() {
                       selectedSummary?.status !== "FINALIZED" ||
                       !sale.lines.length ||
                       !refund.valid ||
-                      (refundMethod === "CASH" &&
-                        (!refundShiftId || !refundHasEnoughCash))
+                      (refundMethod === "CASH" && !selectedRefundShift)
                     }
                   >
                     {saving

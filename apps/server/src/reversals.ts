@@ -1324,7 +1324,7 @@ export function registerReversalRoutes(
           if (parsed.data.refundMethod === "CASH") {
             cashShift = db
               .prepare(
-                `SELECT id, expected_cash_centavos FROM shifts
+                `SELECT id, COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts
                  WHERE id = ? AND closed_at IS NULL`,
               )
               .get(parsed.data.refundShiftId!) as
@@ -1332,8 +1332,12 @@ export function registerReversalRoutes(
               | undefined;
             if (!cashShift)
               throw new ReversalError(409, "cash_refund_requires_open_shift");
-            if (cashShift.expected_cash_centavos < refundTotal) {
-              throw new ReversalError(409, "insufficient_shift_cash");
+            if (
+              !Number.isSafeInteger(
+                cashShift.expected_cash_centavos - refundTotal,
+              )
+            ) {
+              throw new ReversalError(409, "cash_amount_overflow");
             }
           }
 
