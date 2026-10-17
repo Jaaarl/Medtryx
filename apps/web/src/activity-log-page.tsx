@@ -430,8 +430,8 @@ function ActivityLogContent({
             in Manila time.
           </p>
         </div>
-        <span className="activity-owner-badge">
-          <ShieldCheck size={15} /> Owner access
+        <span className="secure-badge">
+          <ShieldCheck size={15} /> OWNER ACCESS
         </span>
       </div>
       <section

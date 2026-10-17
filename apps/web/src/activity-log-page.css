@@ -2,25 +2,12 @@
   max-width: 1320px;
 }
 .activity-log-heading {
-  align-items: center;
   flex-wrap: wrap;
   gap: 16px;
 }
 .activity-log-heading p {
   max-width: 650px;
   line-height: 1.6;
-}
-.activity-owner-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 9px 12px;
-  color: var(--green);
-  background: #fff;
-  font-size: 11px;
-  font-weight: 650;
 }
 .activity-log-filter-card {
   padding: 22px;
