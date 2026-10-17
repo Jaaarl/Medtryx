@@ -3725,11 +3725,13 @@ a {
   display: flex;
   justify-content: space-between;
 }
-.checkout-preview-total span {
+.checkout-preview-total span,
+.recent-cancel-action .sale-detail-total span {
   color: #73857b;
   font-size: 9px;
 }
-.checkout-preview-total strong {
+.checkout-preview-total strong,
+.recent-cancel-action .sale-detail-total strong {
   color: #225e4d;
   font-size: 15px;
 }
@@ -4314,7 +4316,8 @@ a {
   flex: 0 0 auto;
   margin-top: 2px;
 }
-.recent-cancel-details > .field-label {
+.recent-cancel-details > .field-label,
+.recent-cancel-action .refund-options .inventory-field > span {
   color: #51645b;
   font-size: 11px;
   margin-top: 2px;
@@ -5441,10 +5444,12 @@ a {
     font-size: 16px;
     line-height: 1.55;
   }
-  .checkout-page .checkout-preview-total span {
+  .checkout-page .checkout-preview-total span,
+  .checkout-page .recent-cancel-action .sale-detail-total span {
     font-size: 18px;
   }
-  .checkout-page .checkout-preview-total strong {
+  .checkout-page .checkout-preview-total strong,
+  .checkout-page .recent-cancel-action .sale-detail-total strong {
     font-size: 26px;
   }
   .checkout-page .checkout-policy-warning,
@@ -5521,10 +5526,12 @@ a {
     min-height: 42px;
   }
   .checkout-page .recent-cancel-details > .field-label,
+  .checkout-page .refund-options .inventory-field > span,
   .checkout-page .recent-cancel-action .inventory-checkbox {
     font-size: 17px;
   }
   .checkout-page .recent-payment-switch-form .text-input,
+  .checkout-page .refund-options .text-input,
   .checkout-page .recent-cancel-details .text-input {
     font-size: 20px;
     min-height: 48px;
