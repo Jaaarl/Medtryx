@@ -1,48 +1,50 @@
-# Medtryx web application
+# Medtryx
 
-Medtryx is being built in roadmap bundles for one pharmacy on one local server. Product scope and release gates are in the [simplified specification](Medtryx_Simplified_Web_Product_and_Technical_Specification.md) and [implementation roadmap](Medtryx_Web_Tech_Stack_and_Roadmap.md). Current progress and decisions are in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md); numbered follow-up feedback and verification evidence are tracked in [FEEDBACK_IMPLEMENTATION_STATUS.md](FEEDBACK_IMPLEMENTATION_STATUS.md).
+Medtryx is a single-store sales and inventory application for small shops. The current v1 behavior and limits are described in the [V1 product and feature specification](docs/V1_SPECIFICATION.md). VPS deployment and recovery instructions are in [docs/DEPLOYMENT_AND_RECOVERY.md](docs/DEPLOYMENT_AND_RECOVERY.md).
 
-## Local development
+## Local development setup
 
-The roadmap target is Node.js 24 LTS. The current development environment may use another Node version; run the app with Node 24 before pilot deployment.
+Use Node.js 24. From the repository root, follow this sequence for a new local development database:
 
-1. Copy `.env.example` to `.env` and use unique local credentials if you need an owner account.
-2. Run `npm install` from the repository root.
-3. Run `npm run db:migrate` to apply migrations to the selected environment's database.
-4. For a fresh development database only, set `MEDTRYX_OWNER_EMAIL` and `MEDTRYX_OWNER_PASSWORD` in `.env` (optionally set `MEDTRYX_OWNER_USERNAME`), then run `npm run db:create-owner`. The username defaults to the part of the email before `@`. Bootstrap refuses to add an owner once that environment has any users.
-5. Run `npm run dev`. Vite is available at `http://127.0.0.1:5173`; Express listens on `http://127.0.0.1:3001` and Vite proxies `/api` requests.
+1. Install the lockfile dependencies: `npm ci`.
+2. Copy `.env.example` to `.env`. Set `APP_ENV=development`, choose `MEDTRYX_CURRENCY=PHP` or `USD`, and set a unique `MEDTRYX_OWNER_EMAIL` and `MEDTRYX_OWNER_PASSWORD` for the one-time initial owner. Set USD only before opening a new, empty database.
+3. Run `npm run db:migrate` to initialize the selected local database.
+4. Run `npm run db:create-owner` to create the first owner account in that database. This command refuses to add an owner if the selected environment already has users. Remove `MEDTRYX_OWNER_PASSWORD` from `.env` after bootstrap.
+5. Start the application with `npm run dev`.
 
-The owner-only **Receipt receiving** page uses MixRoute for receipt OCR and review suggestions. Set `MIXROUTE_API_KEY` in the local `.env` file and restart the server to enable it. Uploaded receipt pages are sent to MixRoute during extraction and are not retained by this workflow. The reviewed CSV must confirm product matches and new-product POS fields before stock can be received.
+The web application is served at `http://127.0.0.1:5173`. The API listens at `http://127.0.0.1:3001` and the development web server proxies `/api` requests to it. The first sale requires an owner to record the store's approved regular-sale tax, cash-rounding, and acquisition-cost policy. Sale previews before approval are provisional and checkout is blocked.
 
-To seed the product-only catalog draft from `docs/Pharma - Compilation.csv`, run `npm run db:seed-products`. This idempotently inserts 80 inactive product records into the selected database. Suggested selling prices use each source acquisition cost multiplied by a saved random 2x or 3x multiplier. The command does not seed lot numbers, expiry dates, inventory, or stock events. Review the placeholder tax class, unit, and product type before activating products.
+### Local environment variables
 
-`APP_ENV` selects an isolated SQLite file: `development`, `test`, or `live`. Development and test files default to the ignored `data/` directory; live requires an absolute `MEDTRYX_DATA_DIR` outside the repository. Do not copy development or test databases into live use. The test suite creates synthetic users and isolated test databases. No default staff accounts or real customer data are included.
+| Variable                 | Local use                                                                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`                | Selects the isolated `development`, `test`, or `live` database. Defaults to `development`; non-live files are stored in `data/<environment>.sqlite` unless `MEDTRYX_DATA_DIR` is set.                         |
+| `MEDTRYX_CURRENCY`       | `PHP` (default) or `USD`; applies only when a new, empty database is first opened. The saved database currency is immutable.                                                                                  |
+| `MEDTRYX_OWNER_EMAIL`    | Email for the one-time first owner bootstrap.                                                                                                                                                                 |
+| `MEDTRYX_OWNER_PASSWORD` | Unique password for the one-time first owner bootstrap; remove it after use.                                                                                                                                  |
+| `HOST`, `PORT`           | API bind address and port; local defaults are `127.0.0.1` and `3001`.                                                                                                                                         |
+| `COOKIE_SECURE`          | Keep `true` for HTTPS. For local development over plain HTTP, set `false`; if exposing the dev server to a LAN over HTTP, do so only on a trusted network. Live deployments must keep secure cookies enabled. |
+| `MEDTRYX_DATA_DIR`       | Optional absolute database directory for development; live requires a dedicated absolute path outside the repository.                                                                                         |
 
-The local browser development server uses HTTP. App session cookies remain `Secure` by default; browsers permit secure cookies on loopback hosts. `COOKIE_SECURE=false` is reserved for the automated HTTP test server. A Caddy local-HTTPS example is included, but the live host, certificate trust, and client devices are not configured or tested yet.
+`CUSTOMER_ID_ENCRYPTION_KEY` is needed when saving protected customer benefit IDs in local development; use a unique key for each environment. `MIXROUTE_API_KEY` is optional and enables external receipt OCR. Live backup paths, key-file configuration, and service settings are covered by the deployment runbook. Do not copy `.env` or production data into Git.
 
-SC/PWD customer ID fields use AES-256-GCM with a unique 32-byte hex key per environment. Development/tests may use `CUSTOMER_ID_ENCRYPTION_KEY`; live requires `CUSTOMER_ID_ENCRYPTION_KEY_FILE` pointing to a restricted file outside the repository. Backup packages contain the key in plain text because the database is encrypted separately; the server restricts both copies to the service account, local administrators, and system account. Keep both backup locations private and the second copy on separately controlled storage.
+## Current workflows
 
-## Checks
+- Owners maintain the catalog, import and export CSV, receive inventory, track lots and expiry, record corrections and write-offs, and manage component-based bundle offers.
+- Cashiers record sales in the single store-wide open shift. Cash and QR are staff-declared payment methods. Owners review shifts, refunds, payment corrections, and checkout stock-count overrides.
+- Owners and cashiers record supported expenses. Supplier stock-purchase/COD payments, product costs, delivery fees, and drawer cash movements are tracked distinctly to avoid deducting inventory cost twice.
+- Owners use reports, formula-safe CSV exports, paginated sales history, the activity log, and an editable daily sales journal for operational review.
+- Owners may use external receipt OCR to prepare editable suggestions; every suggestion requires review before it changes inventory.
+- Owners configure staff, store policy, and backups. Backups contain sensitive database data and the customer-ID encryption key; protect the packages and follow the recovery runbook.
 
-- `npm run format:check`
-- `npm run lint`
-- `npm run typecheck`
-- `npm test`
-- `npm run build`
-- `npm run test:e2e` (requires Playwright Chromium; uses only a separate synthetic test database)
+## Current documentation
 
-The first bootstrap is intentionally a command-line operation so there is no public registration route. Owners create and deactivate subsequent owner or cashier accounts under **Settings**. Staff can change their own password after signing in.
+- [V1 product and feature specification](docs/V1_SPECIFICATION.md)
+- [VPS deployment and recovery](docs/DEPLOYMENT_AND_RECOVERY.md)
+- [V1 implementation plan and validation record](docs/V1_PLAN.md)
 
-## Implemented workflows
+Older product specifications, roadmaps, status snapshots, and planning prompts are historical and should not be used as release guidance.
 
-- Owners can create, search, edit, deactivate, and reactivate products; set Generic or Branded type and independent Senior Citizen/PWD eligibility; record opening stock, receipts, count corrections, and write-offs; and review stock value and immutable history. Existing catalog items are marked unclassified until the owner reviews their type.
-- Owners can upload receipt images or PDFs, extract line items with MixRoute, review suggested packaging conversions and catalog duplicates in a CSV, then create or match products and record stock receipts with lot movements. Package-to-piece conversions need explicit owner approval and a supported discrete POS unit.
-- Cashiers can search active products, build a browser cart, preview server-calculated line taxes/discounts, and use the single store-wide cash register shift. A second cashier account cannot open a shift until the current one closes. Cashiers can finalize an approved cash or QR-declared sale. Live sale finalization remains blocked until the owner records accountant-approved tax and acquisition-cost policy.
-- Owners can review immutable sale records, reauthenticate to record a linked full reversal, choose stock restoration per line, and reconcile cash refunds, cash-in/out, and non-zero shift variance decisions. Cash refunds require an open drawer with enough expected cash; QR declarations do not change physical cash.
-- Owners can review shift history with opening and closing accounts/times, opening float, cash and QR sales, refunds, expected and counted cash, and variance. This owner-only history does not replace physical drawer counts or site reconciliation.
-- Owners can review sales reports for an inclusive Manila date range (including month-to-date), export the same range to formula-safe CSV without customer identifiers, configure the store identity, create two verified backup copies, and restore after owner reauthentication, store-name confirmation, and a verified safety backup. Reports label stock and inventory value as current balances. Live backup creation requires absolute local paths and a second physical storage device. Automatic live backups run daily after 02:00 Manila time once the owner has configured the store identity.
-- Product gross-profit figures remain estimates. Before approval is recorded, they use a labeled provisional 12% VAT-inclusive assumption; afterward they use the owner's recorded approved tax settings and cost basis, while excluding benefit discounts and operating costs. Checkout is blocked until the owner records accountant-approved tax and cost settings. The test database alone has a clearly synthetic policy fixture. See [implementation status](IMPLEMENTATION_STATUS.md) for pending decisions and release checks.
+## Project checks
 
-## Pilot deployment and recovery
-
-Use [docs/DEPLOYMENT_AND_RECOVERY.md](docs/DEPLOYMENT_AND_RECOVERY.md), the [Caddy example](deploy/Caddyfile.example), and the [Linux service template](deploy/medtryx.service.example). The actual server OS, hostname, client browsers, trusted backup media, and certificate trust are still setup decisions; the repository does not configure or deploy a live host.
+The repository provides `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`. Run the checks appropriate for the revision under review; this README does not claim that a particular revision has passed them.

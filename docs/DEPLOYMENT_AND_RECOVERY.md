@@ -1,155 +1,198 @@
-# Local pilot deployment and recovery
+# VPS deployment and recovery
 
-This guide prepares a single local server behind Caddy. It does not deploy or configure a live pharmacy. Select the actual host, network name, planned browsers, and owner-controlled backup media before following it.
+This runbook describes a public VPS deployment behind Caddy. The GitHub workflow builds a release from one exact `v1` revision; it does not deploy automatically on push. The owner must still choose the real host, domain, currency, storage devices, credentials, and access policy before placing pharmacy data on the server.
 
-## Host and network requirements
+## Production VPS deployment
 
-- Use a supported desktop/server OS with Node.js 24 LTS and Caddy installed as services that start at boot.
-- Keep the SQLite database on the server's local disk. Do not put the database or its WAL files on a shared drive, NAS, or synced folder.
-- Give Express only a loopback listener (`HOST=127.0.0.1`). Caddy is the only network-facing web service; restrict HTTPS access with the host firewall to the private pharmacy network.
-- Configure a stable private DNS name or host mapping for the server. The name in `deploy/Caddyfile.example` is a placeholder.
-- Use one restricted operating-system account for the Medtryx service. The server applies directory and file permissions to its data and backup folders. On Windows, it grants access to that service identity, local Administrators, and SYSTEM. On POSIX systems, directories use mode `0700` and files use `0600`.
-- Keep the secondary backup location on separate storage controlled by the owner. Do not use a public download folder, synced cloud folder, or general shared network folder. The live service compares storage device identifiers and refuses to create a live backup when both configured paths resolve to the same device.
+### GitHub environment and release workflow
 
-## Live environment configuration
+`.github/workflows/ci.yml` runs on pushes to `v1` and pull requests targeting `v1`. It installs the lockfile with Node.js 24, then runs lint, type checking, and workspace builds. `.github/workflows/deploy-vps.yml` is a manual workflow. It accepts only `refs/heads/v1`, builds the dispatched commit SHA, packages its compiled server/web/shared files and migrations, uploads that exact artifact over SSH, then asks the VPS helper to verify its checksum and revision.
 
-Copy `.env.example` to `.env` beside the application and apply restrictive permissions to the file. Never commit it. Generate a unique 32-byte key for the live environment (for example, `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`) and store its 64-character hexadecimal value in a separate restricted file outside the repository and outside the database directory. Point `CUSTOMER_ID_ENCRYPTION_KEY_FILE` to that file. The key file is included as plain text in each unencrypted backup package so a recovery can decrypt authorized SC/PWD records.
+In GitHub repository settings, create an environment named `production`. Where the repository's GitHub plan and visibility allow it, restrict the environment's deployment branches to `v1` and configure required reviewers. Store `VPS_HOST` and `VPS_USER` as environment variables. Store `VPS_SSH_PRIVATE_KEY` and `VPS_SSH_KNOWN_HOSTS` as environment secrets. Put the VPS's already verified SSH host key line in `VPS_SSH_KNOWN_HOSTS`; do not populate it from an unverified `ssh-keyscan` in the workflow. The SSH client uses `StrictHostKeyChecking=yes`, disables agent forwarding, and the deployment is serialized. GitHub environments with required reviewers gate access to environment secrets; see [GitHub deployment environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments).
 
-Set these live values in `.env`:
+GitHub exposes `workflow_dispatch` in the Actions interface only after that workflow file exists on the repository's default branch. This change is intentionally scoped to `v1`; when enabling the workflow on GitHub later, either make `v1` the default branch or separately add the reviewed dispatch workflow descriptor to the default branch. Then select `v1` in the dispatch form. The workflow itself rejects any run whose selected ref is not `refs/heads/v1`. Do not dispatch it until the `production` environment and host secrets are configured. Required reviewer and branch-protection options vary by repository visibility and GitHub plan.
+
+From **Actions → Deploy v1 to VPS → Run workflow**, select the `v1` branch and review the displayed commit before dispatch. The run builds and deploys that commit's immutable SHA. Deployment credentials are used only in the final SSH step. No secrets or credentials belong in this repository.
+
+### Host, domain, and storage preparation
+
+The examples target Ubuntu 24.04 with systemd. Use a VPS with enough local disk for SQLite, releases, and backups, and a separately mounted owner-controlled storage volume for the secondary backup copy. The application database must stay on local disk; do not place SQLite or its WAL files on NFS, SMB, a synced folder, or object storage. The deployment helper refuses to proceed when its two backup roots report the same filesystem device.
+
+Create public DNS A and, if used, AAAA records for the VPS. Allow inbound TCP ports 80 and 443 to Caddy and restrict SSH to administrator/runner source addresses. Caddy obtains and renews a publicly trusted certificate when the domain resolves to the VPS and those ports reach Caddy. See the [Caddy HTTPS prerequisites](https://caddyserver.com/docs/quick-starts/https) and [official Caddy package installation](https://caddyserver.com/docs/install).
+
+Install Node.js 24, npm, the native build tools, SQLite CLI, and Caddy. The SQLite CLI is used for a safe stopped-service `.backup` snapshot before a new application version can open and migrate the database. The Node.js package is installed on Ubuntu as follows (check `node --version`; it must report major version 24):
+
+```sh
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg build-essential python3 sqlite3 openssl
+curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup_24.sh
+sudo bash /tmp/nodesource_setup_24.sh
+sudo apt-get install -y nodejs
+node --version
+npm --version
+```
+
+Install Caddy from its official Ubuntu package source:
+
+```sh
+sudo apt install --yes debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+sudo chmod o+r /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install caddy
+```
+
+Create separate service and deployment identities. The `medtryx` account runs the application; the SSH deployment account uploads a release artifact and receives passwordless sudo for only the root-owned deployment helper.
+
+```sh
+sudo useradd --system --user-group --home-dir /var/lib/medtryx --shell /usr/sbin/nologin medtryx
+sudo useradd --create-home --user-group --shell /bin/bash medtryx-deploy
+sudo install -d -o root -g root -m 0755 /opt/medtryx /opt/medtryx/releases
+sudo install -d -o root -g root -m 0755 /etc/medtryx
+sudo install -d -o medtryx -g medtryx -m 0700 /var/lib/medtryx /var/backups/medtryx-primary /etc/medtryx/secrets
+sudo install -d -o root -g root -m 0755 /mnt/medtryx-backups-secondary
+```
+
+Mount a separate filesystem at `/mnt/medtryx-backups-secondary` and configure that mount persistently in `/etc/fstab` using the device UUID supplied by the VPS/storage provider. For an ext4 volume, the fstab entry has this form; replace the UUID with the actual volume UUID. Mount it before continuing. Confirm it is a real mount and that its device identifier differs from the primary location:
+
+```fstab
+UUID=replace-with-secondary-volume-uuid /mnt/medtryx-backups-secondary ext4 defaults 0 2
+```
+
+```sh
+findmnt /mnt/medtryx-backups-secondary
+stat -c '%d %n' /var/backups/medtryx-primary /mnt/medtryx-backups-secondary
+sudo install -d -o medtryx -g medtryx -m 0700 /mnt/medtryx-backups-secondary
+```
+
+If both `stat` values match, stop and attach/mount a distinct volume. The built-in live backup preflight and deployment helper enforce this check; two directories on one filesystem do not count as separate copies.
+
+### Live configuration and service setup
+
+Create a 32-byte customer-data key file with restrictive permissions. The application copies this key alongside verified backups because protected customer IDs cannot be recovered without it. Keep the key out of the release checkout and GitHub; backup copies contain sensitive customer data and this key.
+
+```sh
+sudo -u medtryx sh -c 'umask 077; openssl rand -hex 32 > /etc/medtryx/secrets/customer-data.key'
+```
+
+Create `/etc/medtryx/medtryx.env` with `sudoedit` and set its owner to root with mode `0600`. Use absolute paths without embedded quotes or spaces. Set the owner email/password only for first-time account bootstrap; remove the password after bootstrap.
 
 ```dotenv
 APP_ENV=live
 NODE_ENV=production
+MEDTRYX_CURRENCY=PHP
 HOST=127.0.0.1
+PORT=3001
 COOKIE_SECURE=true
 MEDTRYX_DATA_DIR=/var/lib/medtryx
 MEDTRYX_BACKUP_PRIMARY_DIR=/var/backups/medtryx-primary
 MEDTRYX_BACKUP_SECONDARY_DIR=/mnt/medtryx-backups-secondary
 CUSTOMER_ID_ENCRYPTION_KEY_FILE=/etc/medtryx/secrets/customer-data.key
+MEDTRYX_OWNER_EMAIL=owner@example.com
+MEDTRYX_OWNER_PASSWORD=replace-with-a-unique-password
 ```
 
-Use absolute paths on the actual host. The database and both backup roots must be separate paths outside the repository. Medtryx creates an environment-specific child directory under each configured backup root, keeping development, test, and live packages apart. The live server refuses to start if the backup roots are missing, overlap, share the same filesystem/device identifier, or are inside the repository. It also requires a readable key file, secure cookies, and an Express loopback bind. The identifier check catches the same volume/filesystem but cannot prove that two volumes are separate physical devices; the owner must check the actual media. Create the root directories and grant the service account permission to use them before starting the service. Do not point the database to a network-mounted path.
+Set `MEDTRYX_CURRENCY=USD` only for a new, empty database and before its first open. Once a currency has been written to database settings it is immutable. Legacy financial data and legacy backups without currency metadata are treated as PHP; a configured mismatch fails before migrations or restore changes. Do not change the environment value to relabel saved amounts. The public `/api/config` response exposes the selected currency to the web app. USD only changes monetary denomination and the provisional unapproved regular-sale tax default to neutral 0%; it does not enable SC/PWD/BNPC benefits or make the product US tax-compliant. Business dates, shift timing, schedules, and backup times remain in Asia/Manila.
 
-Run the non-mutating environment check after Node.js 24 and dependencies are installed:
+The application and generated `medtryx-preflight.service`/`medtryx-bootstrap.service` units use systemd's `EnvironmentFile` to receive this configuration. The main service needs write access to the restricted key directory so an approved application restore can atomically replace the customer-data key; keep that directory owned by `medtryx` with mode `0700` and the key file mode `0600`. Preflight and bootstrap units do not need to write there. Install the examples and the root-owned deploy helper from a reviewed `v1` checkout:
 
-```powershell
-npm run live:preflight
+```sh
+sudo chown root:root /etc/medtryx/medtryx.env
+sudo chmod 0600 /etc/medtryx/medtryx.env
+sudo chown medtryx:medtryx /etc/medtryx/secrets/customer-data.key
+sudo chmod 0600 /etc/medtryx/secrets/customer-data.key
+sudo install -o root -g root -m 0644 deploy/medtryx.service.example /etc/systemd/system/medtryx.service
+sudo install -o root -g root -m 0644 deploy/medtryx-preflight.service.example /etc/systemd/system/medtryx-preflight.service
+sudo install -o root -g root -m 0644 deploy/medtryx-bootstrap.service.example /etc/systemd/system/medtryx-bootstrap.service
+sudo install -o root -g root -m 0750 deploy/medtryx-deploy.sh /usr/local/sbin/medtryx-deploy
+sudo systemctl daemon-reload
+sudo systemctl enable medtryx.service
 ```
 
-The preflight checks Node version, environment, absolute paths, directory separation, distinct storage device IDs, loopback bind, secure cookies, and key-file format. It does not prove a disk is physically local, verify the host firewall, configure Caddy, or test client devices.
+Install the SSH public key for `medtryx-deploy` in its `~/.ssh/authorized_keys` with normal SSH file permissions and no agent forwarding. Create `/etc/sudoers.d/medtryx-deploy` with `visudo` and this rule so that account can execute only the root-owned deployment helper as root:
 
-Apply migrations and create the first owner only after reviewing the live paths and secrets:
-
-```powershell
-npm run db:migrate
-npm run db:create-owner
-npm run build
+```sudoers
+medtryx-deploy ALL=(root) NOPASSWD: /usr/local/sbin/medtryx-deploy *
 ```
 
-Before applying a release that adds the single-register constraint to an existing database, make a verified backup and rehearse the migration on a restored copy. Migration `0008_single_store_register.sql` requires zero or one open shift. If the existing database has more than one, the migration fails atomically: it does not close shifts or change their counts, and the earlier per-cashier constraint remains in place. Stop the upgrade, have each cashier close the correct drawer using its physical cash count and the owner's reconciliation procedure, verify that no shift remains open, create a fresh verified backup, then retry the migration. Never resolve this by inventing a count or deleting a shift.
+The helper validates both arguments, artifact checksum, revision, app paths, and the live preflight before it touches the current release or database. Keep the helper root-owned and non-writable by both the service and deployment accounts.
 
-For migration `0010_lot_expiry.sql` and later releases that alter the inventory ledger, lots, bundles, or BNPC data, make a verified backup and test the upgrade and restore on a copy before touching live data. Migration `0010` first requires each existing product's quantity and inventory value to reconcile with its stock-event ledger; if that check fails, the migration rolls back. Resolve the pre-existing mismatch against physical records before retrying. On a valid upgrade, the migration preserves historical product quantity, inventory value, and stock events but assigns no lot codes or expiry dates to existing units. They remain visible as unallocated legacy stock. If the owner marks a product as lot-tracked, those units cannot be sold until an owner physically verifies the actual batch label, printed expiry, and quantity and records a reasoned reconciliation. Do not infer or type a plausible batch number or expiry to make the software totals saleable. Any unresolved quantity stays unallocated and is excluded from checkout until physical evidence is available. Reconciliation preserves total SKU quantity and value, distributing book value to reconciled units at the current weighted-average SKU cost; it does not introduce lot-specific COGS. Keep the regular receipt flow for non-tracked products.
+The helper installs production dependencies in a staging release on the VPS so native SQLite/Argon2 modules match the host Node ABI. It runs the staged `live-preflight` as the service user with a clean environment before stopping the current server. This preflight does not open the database.
 
-In **Stock**, an owner can correct the current average acquisition cost for a product with stock on hand. The correction revalues remaining units, requires a reason, and appears in stock history. It does not rewrite receipt records or COGS already saved on past sales. Enter the actual unit cost on each future receipt.
+### First deployment and owner bootstrap
 
-## Virtual bundle offers
+For first deployment, the configured database path and `/opt/medtryx/current` must not already contain an installation. Run **Deploy v1 to VPS** after the service files, root helper, environment file, and separate backup volume are ready. Since there is no database yet, the helper reports that no pre-migration snapshot applies. The new service's startup creates the schema and applies migrations automatically. Do not run an older server against that database.
 
-Only the owner creates, edits, or activates/deactivates offers in **Bundles**. An offer has a unique code, name, Manila active dates, component SKUs and quantities, an optional maximum quantity **per sale**, and a promotional price. The owner may calculate a suggested price from a percentage or fixed-amount reduction, edits the final price, then checks the explicit price-approval box before saving. Editing saves a new immutable version; previous sales retain the version they used. A bundle is an offer only: never receive stock against its code or count it as a separate product.
+Install the Caddy example with the actual public DNS name before the first deployment. This allows you to verify HTTPS after the application becomes healthy:
 
-At checkout, the cashier selects the offer and quantity. Medtryx expands it into the component products and checks stock across the whole cart. For tracked components, pick the assigned lots and confirm the physical labels before confirming the sale. Review the regular component prices, promotional allocations, and each component's promotional-versus-statutory result. The more favorable allowed treatment is used per component and the discounts are not stacked; statutory treatment can make the payable total differ from the advertised bundle price. If price, date, per-sale limit, or component stock is no longer valid, remove or reduce the offer and preview again. A sale reversal is still processed against each original component line, with the existing lot-verification/restock or write-off choice. Bundle discounts appear separately in reports and CSV. Do not treat the internal Medtryx sale as an official invoice.
+```sh
+sudo install -o root -g root -m 0644 deploy/Caddyfile.example /etc/caddy/Caddyfile
+sudoedit /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl enable --now caddy
+```
 
-## BNPC benefit policy and checkout
+The Caddy site should contain the public hostname and `reverse_proxy 127.0.0.1:3001`. Express listens only on loopback. In live mode it trusts proxy headers from loopback only so Caddy can pass the client IP for rate limiting; do not place an untrusted/general-purpose proxy in front of the loopback listener. Open only ports 80 and 443 publicly.
 
-The seeded policy references [DTI–DA–DOE Joint Administrative Order No. 24-02, Series of 2024](https://ncda.gov.ph/2024-revised-rules-on-granting-special-discounts-to-senior-citizens-and-persons-with-disability-on-purchase-of-basic-necessities-and-prime-commodities-joint-administrative-order-no-24-02-series-of-2/): 5% of regular retail price without VAT exemption; at most PHP125 discount per calendar week on PHP2,500 of covered online and offline purchases, with no carryover; four kinds of covered items when the full PHP2,500 is used; and the more favorable of promotion or BNPC, without stacking. The Order exempts BMBEs registered under RA 9178 and CDA-registered cooperatives. The software stores the source, effective date, values, and review/version metadata; verify current rules and the pharmacy's status before live use.
+After the workflow reports a healthy service, stop it and run the one-time owner bootstrap through systemd so it receives the same live environment as the service:
 
-The owner reviews each eligible SKU against the dated official goods list and records its Basic Necessity or Prime Commodity category, source, and review reference. Do not classify from the product name, generic/branded type, or tax class. In **Settings**, an owner creates an immutable policy version. Keep the live switch off until the owner/accountant has documented the current rule, store eligibility, covered product list, exact centavo/tax/booklet/four-kind/reversal behavior, and cross-channel verification procedure. Enabling is a recorded approval attestation; the automated test environment uses synthetic data only.
+```sh
+sudo systemctl stop medtryx.service
+sudo systemctl start medtryx-bootstrap.service
+sudo systemctl status medtryx-bootstrap.service --no-pager
+sudoedit /etc/medtryx/medtryx.env
+```
 
-At checkout, select BNPC only on the covered component lines and select the Senior Citizen or PWD holder type. Enter the protected ID through the checkout screen, check the physical ID and booklet, and attest the prior covered purchases and BNPC discounts for this Manila calendar week, including amounts from other stores or online channels. Medtryx cannot query those channels, so the screen's remaining amount is only this register's verified local allowance, not a nationwide guarantee. For a representative, verify the representative and holder IDs, booklet, signed authorization letter issued within seven days, and medical prescription if applicable; missing evidence means no BNPC discount. The full-PHP2,500 four-kind confirmation must be verified from the booklet using the approved store procedure. If the policy is disabled or evidence is uncertain, keep that line regular and complete checkout without BNPC.
+Remove `MEDTRYX_OWNER_PASSWORD` from the environment file, save it, then start the service:
 
-Review the regular price, promotion-vs-BNPC result, BNPC amount, normal VAT calculation, and final amount before sale confirmation. The full reversal flow offsets local weekly usage against the original week and never edits the saved sale. Owner reports show holder type, policy/allowance and tax snapshots without plaintext holder IDs; CSV contains aggregate BNPC totals only. Keep customer identity out of logs and ordinary exports. The internal Medtryx sale remains separate from the registered manual invoice.
+```sh
+sudo systemctl start medtryx.service
+curl --fail --show-error https://medtryx.example.com/api/health
+```
 
-Set `MEDTRYX_OWNER_EMAIL` and a unique `MEDTRYX_OWNER_PASSWORD` in the restricted environment file for the one-time owner bootstrap. Optionally set `MEDTRYX_OWNER_USERNAME`; by default the username is the part of the email before `@`. Remove the bootstrap password after setup. Run database migration/bootstrap commands under the same dedicated operating-system account that will run the service; folder ACLs are restricted to the account executing these commands, local administrators, and system account. The server must run as a service under that same account. `deploy/medtryx.service.example` provides a Linux systemd template; fill in the real paths and service identity. On Windows, configure the selected Windows service manager or Task Scheduler to run `node apps/server/dist/index.js` at startup under the dedicated service account.
+Sign in at the public domain, complete the initial store setup, and create a verified application backup to both destinations before recording live sales. The first owner bootstrap is disabled once any user exists. Do not run seed commands as part of an update; products must be entered or imported and reviewed by the owner.
+Test the certificate, login, owner/cashier permissions, inventory, checkout, reversals, reports, backup, and restore on the actual planned devices before staff use.
 
-## Caddy and browser trust
+### Routine update
 
-Copy `deploy/Caddyfile.example` to the selected Caddy configuration location and replace the placeholder hostname. Start Caddy as a service, confirm it can reach `127.0.0.1:3001`, and allow only the private network through the firewall. Do not expose the Express port directly.
+1. Review the proposed migration files and pass the `v1` CI workflow. Close shifts and stop new checkout. The owner should create and verify a manual application backup to both configured destinations before approving a release.
+2. Dispatch the manual workflow from `v1` and confirm the exact revision. The workflow packages its built output and uploads it to `/var/tmp`; it runs no database CLI during package creation. Native dependencies are installed while the existing service still runs.
+3. The VPS helper runs live preflight, stops `medtryx.service`, and checks that the service is stopped. For an existing database it creates a consistent `.backup` SQLite snapshot, checks `integrity_check` and `foreign_key_check`, copies the snapshot plus the matching customer-data key to both configured roots, and compares SHA-256 hashes. Both paths must remain on different devices. The helper does not call `openDatabase` before this snapshot.
+4. Only after the snapshot verifies does the helper atomically change `/opt/medtryx/current` to the exact release and start the new service. Startup applies pending migrations. The helper waits for `/api/health` on loopback. It never starts the old process against a migrated database and never automatically points back to old code after cutover.
+5. Confirm `https://<your-domain>/api/health`, sign-in, the owner/cashier workflows and `/api/config` currency. Monitor `journalctl -u medtryx.service` and verify that the owner Backups screen shows a new valid application backup after the release.
 
-With `tls internal`, Caddy issues a local certificate. Securely install Caddy's local root certificate into the trust store on every cashier and owner device. Then test the final hostname, certificate trust, sign-in, checkout, owner inventory, reversal, reports, backup, and restore using the actual planned browsers and network. The automated Playwright run uses desktop Chromium over local HTTP; it does not satisfy this physical-device release gate.
+The helper's `predeploy-<revision>-<UTC timestamp>` folders are emergency **offline snapshots**, not normal Medtryx backup packages. They contain only `store.sqlite` and `customer-data.key`; they have no Medtryx manifest, are not shown in the Backups screen, and cannot be restored through the UI. Keep the independently verified application backup too. Protect both copies as sensitive customer data. The deployment helper preserves old code releases for inspection and does not prune them automatically.
 
-## Daily backups
+### Failed deployment and rollback
 
-After the store identity is saved by the owner, Medtryx creates a daily automatic backup after 02:00 Asia/Manila when the live service is running. Owners can also choose **Backups → Create backup now**. Each package contains:
+If an error occurs before cutover, the helper deletes the unused staged release and restarts the previous service if it was running; the live database has not been opened by new code. If an error occurs after the current symlink changes, the helper stops the new service, leaves that release selected, and retains all database snapshots. Read `systemctl status medtryx.service` and `journalctl -u medtryx.service` before deciding what to do. A failed artifact after cutover cannot be redeployed under the same SHA; make and review a new `v1` commit for a fix-forward release, or start the selected release manually after resolving an external/transient issue.
 
-- a consistent SQLite online backup with active sessions removed;
-- the 32-byte customer field-encryption key in plain text;
-- a manifest with the store identity, environment, Manila date, migration list, purpose, and SHA-256 checksums.
+Do not automatically switch the symlink to old code after a migration. First inspect the database migration list and compare the older release's supported schema/data behavior. A code-only rollback is safe only when the old code is known to support every schema migration already applied and all new stored data; this compatibility must be verified for that specific release. Otherwise keep the service stopped and fix forward, or conduct a deliberate restore with the matching application release.
 
-The same package is copied to both configured destinations. Creation fails if either copy cannot be secured or if live storage is not separate. The owner screen lists the copies only after checksum, database integrity, foreign-key, and encrypted-customer-record checks pass. Backups are not downloadable through the browser. Monitor disk capacity and the latest automatic backup in the owner screen. Keep one secondary storage device disconnected or physically protected when practical, and record who can access it.
+To recover from a migration failure using a deployment snapshot, stop the service and preserve the failed `live.sqlite`, its WAL/SHM files if present, and current key file in a separate restricted quarantine directory. Choose one verified pre-deploy copy from the matching timestamp, restore both its `store.sqlite` and `customer-data.key` to the configured live paths with owner `medtryx:medtryx` and mode `0600`, then start only an application release compatible with that snapshot's recorded migration list. The SQLite `.backup` snapshot is self-contained and must not be combined with old `-wal`/`-shm` files; move those aside with the failed database before installing it. Record the selected revision and database snapshot, validate the application and known records, then create a fresh application backup. Never delete either snapshot or make a best-guess migration rollback on a live database.
 
-The live app requires the backup to use the same `APP_ENV` when restoring. This prevents a live database from being restored into the development/test database. Use synthetic records for development and restore rehearsals. Never copy a live package into development or test because it contains customer data and the live decryption key.
+If the owner restores from **Backups** in the running application, its normal workflow validates the package and currency and creates a safety backup before applying it. Cross-currency backup restoration is rejected before the safety backup or database is changed. A pre-currency legacy backup without a currency setting is PHP. Offline deployment snapshots are for stopped-service disaster recovery, not the UI restore workflow.
 
-## Restore procedure
+## Private-network pilot
 
-1. Stop cashier checkout and notify staff that recovery is starting. Keep the server on the private network.
-2. If the current server still runs, open **Backups** and select a verified copy. Confirm the displayed store identity and date. Type the store name and enter the current owner password.
-3. Medtryx validates the package, schema, checksums, customer-data key, authorized owner, database integrity, and foreign keys. It then makes a safety backup of the current state to both configured destinations.
-4. Restore replaces the current inventory, sales, shifts, settings, and audit history with the selected snapshot; all staff sessions are revoked. Sign in again after the confirmation screen.
-5. Compare a known synthetic sale, its saved COGS, product quantity/value, reversal or write-off, and selected-day report with the package manifest and paper records.
-6. Verify both the restored package and the new safety package appear as valid copies. Keep staff on manual outage procedures until the owner accepts the reconciliation.
+For a private site, follow the same Node.js 24, dedicated service account, local SQLite, two-device backup, and systemd setup above. Use a stable private hostname and replace the public site block in `deploy/Caddyfile.example` with this Caddy configuration:
 
-For a clean replacement server, first install the same release, configure separate empty live paths, restore the owner-managed environment/key file, apply the matching application version, create a bootstrap owner, and configure the store. Do not make the server available to staff until the restored store identity is confirmed. Restore tests must use a dedicated isolated test host with synthetic data and paths on separate test media; they must not use a live customer backup.
+```caddyfile
+medtryx.example.lan {
+  tls internal
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3001
+}
+```
 
-If a restore fails validation, Medtryx leaves the current database unchanged and reports a safe error code. Do not delete either backup copy. Preserve both copies and the manifest, investigate storage or key problems, then retry from the other verified copy. After any software upgrade, test a synthetic backup and restore against the new release before returning the service to staff.
+Install Caddy's local root certificate into each authorized device's trusted certificate store using a secure, administrator-managed process. Restrict access to the private network at the firewall. Keep Express bound to loopback. Feature behavior and operating procedures belong to the [v1 specification](V1_SPECIFICATION.md).
 
-## Update and rollback
+## Application backups and restore
 
-1. Close shifts and stop new checkout before maintenance.
-2. Create and verify a manual backup on both locations.
-3. Build the new release on a separate workspace with Node.js 24. Review migrations and run the full synthetic test and browser suite.
-4. Run migrations against a restored copy of the latest backup first. Preserve the previous application release.
-5. Stop the service, deploy the new build, run the migration against live, and start the service. Confirm health and owner/cashier permissions.
-6. If the release fails, stop the service. Restore the pre-upgrade backup with a compatible application release, then investigate before reopening checkout.
+After initial store setup, Medtryx creates a daily backup after 02:00 Asia/Manila while the live service is running. Owners can also create a backup from **Backups**. The app verifies the database and copies each backup to both configured storage devices. Monitor the latest valid backup and free space; keep one copy physically protected when practical. The package includes the customer-data key required to recover encrypted customer identifiers.
 
-## Upgrading an existing schema 0026 installation
+A restore through **Backups** checks the package, store identity, environment, currency, integrity, and key, then creates a safety backup to both destinations before replacing the database. A legacy backup without currency metadata is PHP. A PHP/USD mismatch is rejected. Offline `predeploy-*` snapshots are for stopped-service disaster recovery and cannot be restored through the app.
 
-Ship one new migration, `database/migrations/0027_payments_and_expenses.sql`,
-with this release. Keep migrations 0001–0026 unchanged. The unreleased drafts
-0027/0028/0029 have been consolidated into this single migration.
-
-The new migration copies all existing cashier shifts, balances, counts,
-identifiers, and variance approvals into a table that permits negative expected
-cash, then creates the complete payments ledger, including stock purchase / COD
-breakdowns. Opening cash and actual cash counts remain nonnegative. Historical
-cash movements are preserved without inventing expense records for them.
-
-The migration runner executes the whole file and its foreign-key check in one
-transaction. A failure rolls back both the shift rebuild and the ledger creation;
-the migration is recorded as applied only when the whole transaction succeeds.
-Repeated startup skips the applied migration.
-
-Follow the update and rollback procedure above: verify a backup **before starting
-the new application**, stop the existing service, and run `npm run db:migrate`
-with Node.js 24 and the service's existing environment and data path. Startup also
-runs migrations automatically. Keep the service stopped while a separate
-migration command runs. The same file applies to development and production;
-select the intended database through `APP_ENV` and `MEDTRYX_DATA_DIR`.
-
-The regression suite upgrades populated 0026 databases in development, test, and
-live modes using isolated synthetic paths. It checks record preservation, repeat
-startup, rollback halfway through or after the migration, ledger constraints, and
-restore of a 0026 backup with stock receipts, journal edits, payment corrections,
-and stock override history. Rehearse against an owner-controlled copy of the
-actual production backup before deployment. For rollback, retain the verified
-pre-upgrade database snapshot, matching customer-data key, and previous release
-together.
-
-## Physical release checks
-
-The following require the owner's actual site and cannot be inferred from repository tests:
-
-- store computer OS, stable private address/name, firewall, and local network failure/recovery;
-- physical confirmation that database storage is local and the secondary backup is separate owner-controlled media;
-- local HTTPS certificate trust and checkout/owner workflows on every planned browser device;
-- owner/accountant/professional approval of tax, discount, supplier-cost, invoicing, privacy, retention, and any registration requirements;
-- if an existing database contains multiple open shifts, the owner must reconcile the active physical drawers and approve the counts before the single-register migration can be applied;
-- physical verification of tracked opening stock and legacy reconciliation, expiry checks and FEFO picking, exact-lot disposal/reversal, any approved booklet/prior-purchase procedure, manual invoicing, outage/recovery procedures, and staff training.
+Review migration files before release. The application applies migrations during startup, so keep the service stopped while making a database snapshot and never start old code against a database that newer code may have migrated. For an offline restore, preserve the failed database and its WAL/SHM files separately, then restore a verified matching database-and-key snapshot. The SQLite `.backup` file is self-contained and must not be combined with the failed database's WAL/SHM files. Confirm the restored app release supports that schema, verify known records, then create a new application backup. Use the [v1 specification](V1_SPECIFICATION.md) for product behavior and any version-specific operational detail.
