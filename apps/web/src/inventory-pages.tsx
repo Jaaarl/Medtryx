@@ -1259,6 +1259,10 @@ export function ProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [duplicateProductId, setDuplicateProductId] = useState("");
+  const [duplicatePrice, setDuplicatePrice] = useState<{
+    productId: string;
+    value: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [zeroRatedAllowed, setZeroRatedAllowed] = useState(false);
@@ -1320,6 +1324,10 @@ export function ProductsPage() {
       ?.product ??
     (duplicateCandidates.length === 1 ? duplicateCandidates[0] : null) ??
     null;
+  const duplicateSellingPrice =
+    duplicateProduct && duplicatePrice?.productId === duplicateProduct.id
+      ? duplicatePrice.value
+      : (duplicateProduct?.sellingPrice ?? "");
 
   function updateProductTableScroll() {
     const table = productTableRef.current;
@@ -1558,6 +1566,7 @@ export function ProductsPage() {
   function cancelEdit() {
     setEditing(null);
     setDuplicateProductId("");
+    setDuplicatePrice(null);
     setForm(EMPTY_FORM);
     setError("");
   }
@@ -1605,6 +1614,7 @@ export function ProductsPage() {
           productId: duplicateProduct.id,
           quantity: Number(form.openingQuantity),
           unitCost: form.openingUnitCost,
+          sellingPrice: duplicateSellingPrice,
           ...(form.openingReference.trim()
             ? { reference: form.openingReference.trim() }
             : {}),
@@ -1663,6 +1673,7 @@ export function ProductsPage() {
       setProductPage(1);
       setEditing(null);
       setDuplicateProductId("");
+      setDuplicatePrice(null);
       setForm(EMPTY_FORM);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -1920,7 +1931,7 @@ export function ProductsPage() {
             {editing
               ? "Unit changes relabel the current stock count; they do not convert quantity, price, or costs. Past sales keep their saved unit."
               : duplicateProduct
-                ? "The existing catalog details will be kept. Enter the received quantity and unit cost below."
+                ? "Enter the received quantity and unit cost, and review the current selling price."
                 : "Set a single selling price and optional opening stock."}
           </p>
           <form
@@ -1932,9 +1943,10 @@ export function ProductsPage() {
                 id="product-name"
                 className="text-input"
                 value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
+                onChange={(event) => {
+                  setForm({ ...form, name: event.target.value });
+                  setDuplicatePrice(null);
+                }}
                 required
                 maxLength={160}
               />
@@ -1948,7 +1960,7 @@ export function ProductsPage() {
                 </strong>
                 <p>
                   {duplicateCandidates.length > 0
-                    ? "Only quantity, cost, supplier, and lot details will be recorded. The existing catalog details will stay unchanged."
+                    ? "Receive stock for the existing product and review its selling price below."
                     : "Select a match to add stock in its existing stock unit, or create a new product if none is the same item."}
                 </p>
                 <div
@@ -1970,6 +1982,7 @@ export function ProductsPage() {
                               ? ""
                               : product.id,
                           );
+                          setDuplicatePrice(null);
                           setError("");
                         }}
                       >
@@ -2004,6 +2017,28 @@ export function ProductsPage() {
                   </p>
                 )}
               </div>
+            )}
+            {duplicateProduct && (
+              <Field id="matched-product-price" label="Selling price (₱)">
+                <input
+                  id="matched-product-price"
+                  className="text-input"
+                  inputMode="decimal"
+                  value={duplicateSellingPrice}
+                  onChange={(event) =>
+                    setDuplicatePrice({
+                      productId: duplicateProduct.id,
+                      value: event.target.value,
+                    })
+                  }
+                  required
+                  pattern="[0-9]+(\.[0-9]{1,2})?"
+                />
+                <small className="field-hint">
+                  Prefilled with the current price. Changes apply to future
+                  sales when you receive this stock.
+                </small>
+              </Field>
             )}
             {!duplicateProduct && (
               <>
