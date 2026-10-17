@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "./api";
+import { currencyCode, usesPhpRegionalPolicies } from "./currency";
 
 type Policy = {
   approved: boolean;
@@ -63,11 +64,21 @@ function Field({
 }
 
 function emptyForm(policy?: Policy): FormState {
+  const regionalPoliciesEnabled = usesPhpRegionalPolicies();
   return {
-    version: policy?.approved ? policy.version : "PH-APPROVED-V1",
+    version: policy?.approved
+      ? policy.version
+      : regionalPoliciesEnabled
+        ? "PH-APPROVED-V1"
+        : "TAX-POLICY-V1",
     vatRate: percentText(policy?.vatRateBasisPoints ?? 1_200),
-    seniorDiscount: percentText(policy?.seniorDiscountBasisPoints ?? 2_000),
-    pwdDiscount: percentText(policy?.pwdDiscountBasisPoints ?? 2_000),
+    seniorDiscount: percentText(
+      policy?.seniorDiscountBasisPoints ??
+        (regionalPoliciesEnabled ? 2_000 : 0),
+    ),
+    pwdDiscount: percentText(
+      policy?.pwdDiscountBasisPoints ?? (regionalPoliciesEnabled ? 2_000 : 0),
+    ),
     vatInclusivePrices: policy?.vatInclusivePrices ?? true,
     allowZeroRated: policy?.allowZeroRated ?? false,
     roundingMode: policy?.roundingMode ?? "HALF_UP",
@@ -122,8 +133,12 @@ export function TaxPolicySettings() {
         confirmApproved: true,
         version: form.version.trim(),
         vatRateBasisPoints: percentBasisPoints(form.vatRate),
-        seniorDiscountBasisPoints: percentBasisPoints(form.seniorDiscount),
-        pwdDiscountBasisPoints: percentBasisPoints(form.pwdDiscount),
+        seniorDiscountBasisPoints: usesPhpRegionalPolicies()
+          ? percentBasisPoints(form.seniorDiscount)
+          : 0,
+        pwdDiscountBasisPoints: usesPhpRegionalPolicies()
+          ? percentBasisPoints(form.pwdDiscount)
+          : 0,
         vatInclusivePrices: form.vatInclusivePrices,
         allowZeroRated: form.allowZeroRated,
         roundingMode: form.roundingMode,
@@ -152,8 +167,8 @@ export function TaxPolicySettings() {
         <div>
           <h2>Tax and acquisition-cost policy</h2>
           <p>
-            Save these settings only after the pharmacy's tax adviser/accountant
-            approves the rules and supplier-cost basis.
+            Save these settings only after the store&apos;s tax
+            adviser/accountant approves the rules and supplier-cost basis.
           </p>
         </div>
         <span
@@ -197,7 +212,7 @@ export function TaxPolicySettings() {
               maxLength={64}
             />
           </Field>
-          <Field id="tax-rounding-mode" label="Tax-component centavo rounding">
+          <Field id="tax-rounding-mode" label="Tax-component rounding">
             <select
               id="tax-rounding-mode"
               className="text-input select-input"
@@ -230,15 +245,16 @@ export function TaxPolicySettings() {
           >
             <option value="NONE">No cash total rounding</option>
             <option value="NEAREST_25_CENTAVOS">
-              Nearest ₱0.25 (cash only)
+              Nearest 0.25 {currencyCode()} (cash only)
             </option>
           </select>
         </Field>
         <p className="field-hint">
-          Nearest ₱0.25 for the final cash total: ₱0.00–₱0.12 → ₱0.00;
-          ₱0.13–₱0.37 → ₱0.25; ₱0.38–₱0.62 → ₱0.50; ₱0.63–₱0.87 → ₱0.75;
-          ₱0.88–₱0.99 → next ₱1.00. This does not change item tax calculations
-          or QR totals.
+          Cash rounding uses quarter-unit increments in the store currency (
+          {currencyCode()}). For a two-decimal amount, 0.00–0.12 rounds to 0.00,
+          0.13–0.37 to 0.25, 0.38–0.62 to 0.50, 0.63–0.87 to 0.75, and 0.88–0.99
+          to the next whole unit. This does not change item tax calculations or
+          QR totals.
         </p>
         <div className="tax-percentage-grid">
           <Field id="tax-vat-rate" label="VAT rate (%)">
@@ -254,32 +270,36 @@ export function TaxPolicySettings() {
               pattern="[0-9]{1,3}(\.[0-9]{1,2})?"
             />
           </Field>
-          <Field id="tax-senior-discount" label="Senior discount (%)">
-            <input
-              id="tax-senior-discount"
-              className="text-input"
-              inputMode="decimal"
-              value={form.seniorDiscount}
-              onChange={(event) =>
-                setForm({ ...form, seniorDiscount: event.target.value })
-              }
-              required
-              pattern="[0-9]{1,3}(\.[0-9]{1,2})?"
-            />
-          </Field>
-          <Field id="tax-pwd-discount" label="PWD discount (%)">
-            <input
-              id="tax-pwd-discount"
-              className="text-input"
-              inputMode="decimal"
-              value={form.pwdDiscount}
-              onChange={(event) =>
-                setForm({ ...form, pwdDiscount: event.target.value })
-              }
-              required
-              pattern="[0-9]{1,3}(\.[0-9]{1,2})?"
-            />
-          </Field>
+          {usesPhpRegionalPolicies() && (
+            <Field id="tax-senior-discount" label="Senior discount (%)">
+              <input
+                id="tax-senior-discount"
+                className="text-input"
+                inputMode="decimal"
+                value={form.seniorDiscount}
+                onChange={(event) =>
+                  setForm({ ...form, seniorDiscount: event.target.value })
+                }
+                required
+                pattern="[0-9]{1,3}(\.[0-9]{1,2})?"
+              />
+            </Field>
+          )}
+          {usesPhpRegionalPolicies() && (
+            <Field id="tax-pwd-discount" label="PWD discount (%)">
+              <input
+                id="tax-pwd-discount"
+                className="text-input"
+                inputMode="decimal"
+                value={form.pwdDiscount}
+                onChange={(event) =>
+                  setForm({ ...form, pwdDiscount: event.target.value })
+                }
+                required
+                pattern="[0-9]{1,3}(\.[0-9]{1,2})?"
+              />
+            </Field>
+          )}
         </div>
         <div className="tax-policy-toggles">
           <label className="inventory-checkbox">
@@ -344,9 +364,9 @@ export function TaxPolicySettings() {
             }
           />
           <span>
-            I confirm these tax, benefit, cash and tax-component rounding,
-            classification, and cost-basis rules have been approved for this
-            pharmacy.
+            I confirm these tax, {usesPhpRegionalPolicies() ? "benefit, " : ""}
+            cash and tax-component rounding, classification, and cost-basis
+            rules have been approved for this store.
           </span>
         </label>
         <button

@@ -1,3 +1,8 @@
+import {
+  currencyCode,
+  formatCurrency,
+  usesPhpRegionalPolicies,
+} from "./currency";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "./api";
@@ -142,9 +147,7 @@ export function BundlesPage() {
     return { total, suggested };
   }, [components, products, reductionType, reductionValue]);
   const calculatedPromotionalPrice =
-    pricing && pricing.suggested > 0n
-      ? moneyFromCents(pricing.suggested)
-      : "";
+    pricing && pricing.suggested > 0n ? moneyFromCents(pricing.suggested) : "";
   const finalPromotionalPrice = priceOverridden
     ? promotionalPrice.trim()
     : calculatedPromotionalPrice;
@@ -400,7 +403,7 @@ export function BundlesPage() {
               <span>
                 {reductionType === "PERCENT"
                   ? "Percentage reduction"
-                  : "Amount reduction (PHP)"}
+                  : `Amount reduction (${currencyCode()})`}
               </span>
               <input
                 className="text-input"
@@ -415,7 +418,7 @@ export function BundlesPage() {
             </label>
             <div className="bundle-promotional-price">
               <label className="inventory-field">
-                <span>Approved promotional price (PHP)</span>
+                <span>Approved promotional price ({currencyCode()})</span>
                 <input
                   className="text-input"
                   inputMode="decimal"
@@ -454,10 +457,12 @@ export function BundlesPage() {
                 <h3>Component products</h3>
                 <p>
                   Current regular prices total{" "}
-                  {pricing ? `₱${moneyFromCents(pricing.total)}` : "—"}.
-                  Suggested offer price:{" "}
+                  {pricing
+                    ? `${formatCurrency(moneyFromCents(pricing.total))}`
+                    : "—"}
+                  . Suggested offer price:{" "}
                   {pricing && pricing.suggested > 0n
-                    ? `₱${moneyFromCents(pricing.suggested)}`
+                    ? `${formatCurrency(moneyFromCents(pricing.suggested))}`
                     : "—"}
                   .
                 </p>
@@ -481,7 +486,8 @@ export function BundlesPage() {
                     <option value="">Choose product</option>
                     {products.map((product) => (
                       <option key={product.id} value={product.id}>
-                        {product.sku} · {product.name} · ₱{product.sellingPrice}
+                        {product.sku} · {product.name} ·{" "}
+                        {formatCurrency(product.sellingPrice)}
                       </option>
                     ))}
                   </select>
@@ -566,9 +572,10 @@ export function BundlesPage() {
                 onChange={(event) => setConfirmPrice(event.target.checked)}
               />
               <span>
-                I approve this exact final promotional price. Statutory SC/PWD
-                treatment is compared per component and never stacked with the
-                bundle promotion.
+                I approve this exact final promotional price.{" "}
+                {usesPhpRegionalPolicies()
+                  ? "SC/PWD treatment is compared per component and never stacked with the bundle promotion."
+                  : "Tax is calculated per component at checkout."}
               </span>
             </label>
             <div className="button-row">

@@ -131,6 +131,7 @@ export function registerCheckoutInventoryRoutes(
         return;
       }
       const records = queryOverrideHistory(db, filters);
+      const currency = databaseCurrency(db);
       const header = [
         "Transaction",
         "Business date",
@@ -163,7 +164,7 @@ export function registerCheckoutInventoryRoutes(
         record.cashierEmail,
         record.sku,
         record.productName,
-        databaseCurrency(db),
+        currency,
         record.unit,
         record.recordedQuantity,
         record.physicalQuantity,

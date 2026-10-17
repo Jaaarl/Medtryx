@@ -1,3 +1,4 @@
+import { formatCurrency } from "./currency";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "./api";
@@ -294,7 +295,7 @@ export function RecentTransactions({
         lines,
       });
       setNotice(
-        `${selection.mode === "FULL" ? "Cancellation" : "Partial refund"} ${result.reversal.transactionId} recorded for ₱${result.reversal.amount}.`,
+        `${selection.mode === "FULL" ? "Cancellation" : "Partial refund"} ${result.reversal.transactionId} recorded for ${formatCurrency(result.reversal.amount)}.`,
       );
       setRefundSources((current) => {
         const next = { ...current };
@@ -329,8 +330,8 @@ export function RecentTransactions({
       });
       setNotice(
         transaction.paymentMethod === "CASH"
-          ? `Payment switched: cash reduced by ₱${result.paymentSwitch.cashAmount}; QR now shows ₱${result.paymentSwitch.qrAmount}.`
-          : `Payment switched: QR reduced by ₱${result.paymentSwitch.qrAmount}; cash now shows ₱${result.paymentSwitch.cashAmount}.`,
+          ? `Payment switched: cash reduced by ${formatCurrency(result.paymentSwitch.cashAmount)}; QR now shows ${formatCurrency(result.paymentSwitch.qrAmount)}.`
+          : `Payment switched: QR reduced by ${formatCurrency(result.paymentSwitch.qrAmount)}; cash now shows ${formatCurrency(result.paymentSwitch.cashAmount)}.`,
       );
       setLocalRefresh((value) => value + 1);
       await onUpdated();
@@ -460,7 +461,7 @@ export function RecentTransactions({
                     <small>{transactionDate(transaction.createdAt)}</small>
                   </div>
                   <div>
-                    <strong>₱{transaction.amountDue}</strong>
+                    <strong>{formatCurrency(transaction.amountDue)}</strong>
                     <small>{transaction.paymentMethod} declared</small>
                   </div>
                 </div>
@@ -560,8 +561,8 @@ export function RecentTransactions({
                           </div>
                           <small className="field-hint">
                             {transaction.paymentMethod === "CASH"
-                              ? `Cash will decrease by ₱${transaction.amountDue}; QR will increase by ₱${transaction.qrAmountIfSwitched}. The QR total does not include cash rounding.`
-                              : `QR will decrease by ₱${transaction.amountDue}; expected drawer cash will increase by ₱${transaction.cashAmountIfSwitched}.`}
+                              ? `Cash will decrease by ${formatCurrency(transaction.amountDue)}; QR will increase by ${formatCurrency(transaction.qrAmountIfSwitched)}. The QR total does not include cash rounding.`
+                              : `QR will decrease by ${formatCurrency(transaction.amountDue)}; expected drawer cash will increase by ${formatCurrency(transaction.cashAmountIfSwitched)}.`}
                           </small>
                           <label
                             className="field-label"
@@ -818,8 +819,8 @@ export function RecentTransactions({
                                 }
                               />
                               <span>
-                                I sent the ₱{refund.total} QR refund to the
-                                customer.
+                                I sent the {formatCurrency(refund.total)} QR
+                                refund to the customer.
                               </span>
                             </label>
                           ) : (
@@ -841,8 +842,8 @@ export function RecentTransactions({
                               <small className="field-hint">
                                 Expected drawer after refund:{" "}
                                 {expectedCashAfterRefund.startsWith("-")
-                                  ? `−₱${expectedCashAfterRefund.slice(1)}`
-                                  : `₱${expectedCashAfterRefund}`}
+                                  ? `−${formatCurrency(expectedCashAfterRefund.slice(1))}`
+                                  : `${formatCurrency(expectedCashAfterRefund)}`}
                                 . Expected cash can be negative.
                               </small>
                             )}

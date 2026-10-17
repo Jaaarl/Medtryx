@@ -1,3 +1,4 @@
+import { formatCurrency } from "./currency";
 import { useEffect, useId, useRef, useState } from "react";
 import type {
   CashRefundSource,
@@ -40,8 +41,8 @@ function ShiftDescription({ shift }: { shift: CashRefundShift | null }) {
       <span>
         Expected cash:{" "}
         {shift.expectedCash.startsWith("-")
-          ? `−₱${shift.expectedCash.slice(1)}`
-          : `₱${shift.expectedCash}`}
+          ? `−${formatCurrency(shift.expectedCash.slice(1))}`
+          : `${formatCurrency(shift.expectedCash)}`}
       </span>
     </span>
   );

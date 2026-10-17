@@ -896,6 +896,7 @@ async function makeDraftCsv(
   if (extraction.items.length > MAX_RECEIPT_ROWS)
     throw new ReceiptWorkflowError(400, "too_many_receipt_lines");
   const draftId = randomUUID();
+  const currency = databaseCurrency(db);
 
   const sourceLines = extraction.items.map((item, index) => ({
     row: index + 1,
@@ -1037,7 +1038,7 @@ async function makeDraftCsv(
       prepared.conversionReason,
       "FALSE",
       "",
-      databaseCurrency(db),
+      currency,
     ]
       .map(csvCell)
       .join(",");

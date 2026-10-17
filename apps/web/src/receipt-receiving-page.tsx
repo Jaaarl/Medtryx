@@ -1,3 +1,8 @@
+import {
+  formatCurrency,
+  formatCents as formatCurrencyFromCents,
+  usesPhpRegionalPolicies,
+} from "./currency";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import {
@@ -239,20 +244,25 @@ function receiptMoneyToCents(value: string): number | null {
   return Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
 }
 
-function formatReceiptMoney(cents: number): string {
-  const wholePesos = Math.floor(cents / 100);
-  return `₱${wholePesos.toLocaleString("en-PH")}.${String(cents % 100).padStart(2, "0")}`;
-}
-
-function formatReceiptPeso(value: string): string {
+function formatReceiptMoney(value: number): string;
+function formatReceiptMoney(value: string): string;
+function formatReceiptMoney(value: number | string): string {
+  if (typeof value === "number") return formatCurrencyFromCents(value);
   const normalized = value.trim();
   if (!normalized) return "—";
-  const match = /^(\d+)(?:\.(\d{1,2}))?$/u.exec(normalized);
-  if (!match) return value;
-  const cents =
-    BigInt(match[1]!) * 100n + BigInt((match[2] ?? "").padEnd(2, "0"));
-  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) return value;
-  return formatReceiptMoney(Number(cents));
+  if (!/^\d+(?:\.\d{1,2})?$/u.test(normalized)) return value;
+  return formatCurrency(normalized);
+}
+
+function regionalizedReceiptRows(rows: ReceiptCsvRow[]): ReceiptCsvRow[] {
+  if (usesPhpRegionalPolicies()) return rows;
+  return rows.map((row) => ({
+    ...row,
+    issceligible: "FALSE",
+    ispwdeligible: "FALSE",
+    bnpceligible: "FALSE",
+    bnpccategory: "",
+  }));
 }
 
 function convertedUnitCostCents(
@@ -472,7 +482,7 @@ export function ReceiptReceivingPage() {
     initialDraft?.headers ?? [],
   );
   const [draftRows, setDraftRows] = useState<ReceiptCsvRow[]>(
-    groupReceiptRows(initialDraft?.rows ?? []),
+    groupReceiptRows(regionalizedReceiptRows(initialDraft?.rows ?? [])),
   );
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
     () => new Set(initialDraft?.collapsedGroupIds ?? []),
@@ -668,7 +678,9 @@ export function ReceiptReceivingPage() {
     const fallbackGroupId = crypto.randomUUID();
     setDraftRows(
       groupReceiptRows(
-        preselectHighConfidenceConversions(document.rows).map((row) => ({
+        preselectHighConfidenceConversions(
+          regionalizedReceiptRows(document.rows),
+        ).map((row) => ({
           ...row,
           sourcegroupid: row.sourcegroupid || fallbackGroupId,
           sourcefile: row.sourcefile || filename,
@@ -762,16 +774,16 @@ export function ReceiptReceivingPage() {
         receiptDraftId ??= extracted.rows[0]?.draftid;
         if (!receiptDraftId)
           throw new Error("The receipt draft has no line items.");
-        const newRows = preselectHighConfidenceConversions(
-          extracted.rows,
-        ).map((row) => ({
-          ...row,
-          draftid: receiptDraftId!,
-          sourcegroupid: groupId,
-          sourcefile: file.name,
-          sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
-          supplier: singleSupplierMode ? sharedSupplier : row.supplier,
-        }));
+        const newRows = preselectHighConfidenceConversions(extracted.rows).map(
+          (row) => ({
+            ...row,
+            draftid: receiptDraftId!,
+            sourcegroupid: groupId,
+            sourcefile: file.name,
+            sourcegroupsupplier: row.sourcegroupsupplier || row.supplier,
+            supplier: singleSupplierMode ? sharedSupplier : row.supplier,
+          }),
+        );
         appendedRows = groupReceiptRows([...appendedRows, ...newRows]);
         receiptFilename ??= response.filename;
         setDraftHeaders(extracted.headers);
@@ -1578,74 +1590,82 @@ export function ReceiptReceivingPage() {
                                       })
                                     }
                                   />
-                                  <ReceiptCheck
-                                    label="Senior citizen eligible"
-                                    checked={
-                                      row.issceligible.toUpperCase() === "TRUE"
-                                    }
-                                    onChange={(checked) =>
-                                      updateRow(index, {
-                                        issceligible: checked
-                                          ? "TRUE"
-                                          : "FALSE",
-                                      })
-                                    }
-                                  />
-                                  <ReceiptCheck
-                                    label="PWD eligible"
-                                    checked={
-                                      row.ispwdeligible.toUpperCase() === "TRUE"
-                                    }
-                                    onChange={(checked) =>
-                                      updateRow(index, {
-                                        ispwdeligible: checked
-                                          ? "TRUE"
-                                          : "FALSE",
-                                      })
-                                    }
-                                  />
-                                  <ReceiptCheck
-                                    label="BNPC eligible"
-                                    checked={
-                                      row.bnpceligible.toUpperCase() === "TRUE"
-                                    }
-                                    onChange={(checked) =>
-                                      updateRow(index, {
-                                        bnpceligible: checked
-                                          ? "TRUE"
-                                          : "FALSE",
-                                        ...(checked
-                                          ? {}
-                                          : { bnpccategory: "" }),
-                                      })
-                                    }
-                                  />
+                                  {usesPhpRegionalPolicies() && (
+                                    <>
+                                      <ReceiptCheck
+                                        label="Senior citizen eligible"
+                                        checked={
+                                          row.issceligible.toUpperCase() ===
+                                          "TRUE"
+                                        }
+                                        onChange={(checked) =>
+                                          updateRow(index, {
+                                            issceligible: checked
+                                              ? "TRUE"
+                                              : "FALSE",
+                                          })
+                                        }
+                                      />
+                                      <ReceiptCheck
+                                        label="PWD eligible"
+                                        checked={
+                                          row.ispwdeligible.toUpperCase() ===
+                                          "TRUE"
+                                        }
+                                        onChange={(checked) =>
+                                          updateRow(index, {
+                                            ispwdeligible: checked
+                                              ? "TRUE"
+                                              : "FALSE",
+                                          })
+                                        }
+                                      />
+                                      <ReceiptCheck
+                                        label="BNPC eligible"
+                                        checked={
+                                          row.bnpceligible.toUpperCase() ===
+                                          "TRUE"
+                                        }
+                                        onChange={(checked) =>
+                                          updateRow(index, {
+                                            bnpceligible: checked
+                                              ? "TRUE"
+                                              : "FALSE",
+                                            ...(checked
+                                              ? {}
+                                              : { bnpccategory: "" }),
+                                          })
+                                        }
+                                      />
+                                    </>
+                                  )}
                                 </div>
-                                {row.bnpceligible.toUpperCase() === "TRUE" && (
-                                  <ReceiptSelect
-                                    label="BNPC category"
-                                    value={row.bnpccategory.toUpperCase()}
-                                    onChange={(value) =>
-                                      updateRow(index, {
-                                        bnpccategory: value,
-                                      })
-                                    }
-                                    options={[
-                                      {
-                                        value: "",
-                                        label: "Choose BNPC category",
-                                      },
-                                      {
-                                        value: "BASIC_NECESSITY",
-                                        label: "Basic necessity",
-                                      },
-                                      {
-                                        value: "PRIME_COMMODITY",
-                                        label: "Prime commodity",
-                                      },
-                                    ]}
-                                  />
-                                )}
+                                {usesPhpRegionalPolicies() &&
+                                  row.bnpceligible.toUpperCase() === "TRUE" && (
+                                    <ReceiptSelect
+                                      label="BNPC category"
+                                      value={row.bnpccategory.toUpperCase()}
+                                      onChange={(value) =>
+                                        updateRow(index, {
+                                          bnpccategory: value,
+                                        })
+                                      }
+                                      options={[
+                                        {
+                                          value: "",
+                                          label: "Choose BNPC category",
+                                        },
+                                        {
+                                          value: "BASIC_NECESSITY",
+                                          label: "Basic necessity",
+                                        },
+                                        {
+                                          value: "PRIME_COMMODITY",
+                                          label: "Prime commodity",
+                                        },
+                                      ]}
+                                    />
+                                  )}
                               </div>
                             ) : (
                               <div className="receipt-existing-product">
@@ -1892,21 +1912,21 @@ export function ReceiptReceivingPage() {
                               ? ` units (×${line.conversionFactor})`
                               : ""}
                           </td>
-                          <td>{formatReceiptPeso(line.unitCost)}</td>
+                          <td>{formatReceiptMoney(line.unitCost)}</td>
                           <td>
-                            {formatReceiptPeso(
+                            {formatReceiptMoney(
                               draftRows[index]?.sellingprice ?? "",
                             )}
                           </td>
-                          <td>{formatReceiptPeso(line.lineTotal)}</td>
+                          <td>{formatReceiptMoney(line.lineTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                   {review.lines.some((line) => line.unitCostRounded) && (
                     <small>
-                      Average unit cost is rounded to centavos; line total
-                      preserves the exact package cost.
+                      Average unit cost is rounded to two decimal places; line
+                      total preserves the exact package cost.
                     </small>
                   )}
                 </div>

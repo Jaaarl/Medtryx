@@ -1,3 +1,8 @@
+import {
+  currencySymbol,
+  formatCurrency,
+  formatCents as formatCurrencyFromCents,
+} from "./currency";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
@@ -169,8 +174,7 @@ function cents(value: string): bigint {
 
 function cashAdjustmentText(value: string): string {
   const total = cents(value);
-  const absolute = total < 0n ? -total : total;
-  return `${total < 0n ? "−" : ""}₱${absolute / 100n}.${String(absolute % 100n).padStart(2, "0")}`;
+  return formatCurrencyFromCents(total);
 }
 
 function dateText(value: string): string {
@@ -456,7 +460,7 @@ export function SalesHistoryPage() {
         })),
       });
       setNotice(
-        `Reversal ${result.reversal.transactionId} saved for ₱${result.reversal.amount}.`,
+        `Reversal ${result.reversal.transactionId} saved for ${formatCurrency(result.reversal.amount)}.`,
       );
       setOwnerPassword("");
       setReversalReason("");
@@ -488,7 +492,7 @@ export function SalesHistoryPage() {
         },
       );
       setNotice(
-        `${movementType === "CASH_IN" ? "Cash-in" : "Cash-out"} recorded. Expected drawer cash: ₱${result.expectedCash}.`,
+        `${movementType === "CASH_IN" ? "Cash-in" : "Cash-out"} recorded. Expected drawer cash: ${formatCurrency(result.expectedCash)}.`,
       );
       setMovementAmount("");
       setMovementReason("");
@@ -587,8 +591,9 @@ export function SalesHistoryPage() {
                     {shift.closedByEmail ?? "staff"}
                   </small>
                   <span>
-                    Expected ₱{shift.expectedCash} · Counted ₱
-                    {shift.actualCashCount} · Variance ₱{shift.variance}
+                    Expected {formatCurrency(shift.expectedCash)} · Counted{" "}
+                    {formatCurrency(shift.actualCashCount)} · Variance{" "}
+                    {formatCurrency(shift.variance)}
                   </span>
                   <small>Cashier reason: {shift.cashierReason}</small>
                 </div>
@@ -790,7 +795,7 @@ export function SalesHistoryPage() {
                         <small>{item.cashierEmail}</small>
                       </td>
                       <td>{item.paymentMethod} declared</td>
-                      <td>₱{item.amountDue}</td>
+                      <td>{formatCurrency(item.amountDue)}</td>
                       <td>
                         <span
                           className={`sale-status ${item.status === "REVERSED" ? "sale-status-reversed" : ""}`}
@@ -910,20 +915,23 @@ export function SalesHistoryPage() {
                   <div className="sale-detail-line" key={line.saleLineId}>
                     <strong>{line.productName}</strong>
                     <small>
-                      {line.sku} · {line.quantity} {line.unit} × ₱
-                      {line.unitPrice}
+                      {line.sku} · {line.quantity} {line.unit} ×{" "}
+                      {formatCurrency(line.unitPrice)}
                     </small>
                     <span>
-                      Due ₱{line.amountDue} · Saved COGS ₱{line.cogs}
+                      Due {formatCurrency(line.amountDue)} · Saved COGS{" "}
+                      {formatCurrency(line.cogs)}
                     </span>
                     {line.bundle && (
                       <small>
                         {line.bundle.code} · {line.bundle.name} v
-                        {line.bundle.version} · regular component ₱
-                        {line.bundle.regularLineTotal} · allocated offer ₱
-                        {line.bundle.allocatedPromotionDiscount} · applied offer
-                        ₱{line.bundlePromotionDiscount} · selected{" "}
-                        {line.bundle.selectedStatutoryTreatment}
+                        {line.bundle.version} · regular component{" "}
+                        {formatCurrency(line.bundle.regularLineTotal)} ·
+                        allocated offer{" "}
+                        {formatCurrency(line.bundle.allocatedPromotionDiscount)}{" "}
+                        · applied offer
+                        {formatCurrency(line.bundlePromotionDiscount)} ·
+                        selected {line.bundle.selectedStatutoryTreatment}
                       </small>
                     )}
                     {line.lotAllocations.length > 0 && (
@@ -992,7 +1000,7 @@ export function SalesHistoryPage() {
                 )}
               <div className="sale-detail-total">
                 <span>Original sale amount</span>
-                <strong>₱{sale.amountDue}</strong>
+                <strong>{formatCurrency(sale.amountDue)}</strong>
               </div>
 
               {sale.changes.length > 0 && (
@@ -1018,16 +1026,20 @@ export function SalesHistoryPage() {
                       {change.payment && (
                         <p>
                           {change.payment.fromMethod} →{" "}
-                          {change.payment.toMethod}: cash ₱
-                          {change.payment.cashAmount}, QR ₱
-                          {change.payment.qrAmount}; cash rounding adjustment ₱
-                          {change.payment.cashRoundingAdjustment}
+                          {change.payment.toMethod}: cash{" "}
+                          {formatCurrency(change.payment.cashAmount)}, QR{" "}
+                          {formatCurrency(change.payment.qrAmount)}; cash
+                          rounding adjustment{" "}
+                          {formatCurrency(
+                            change.payment.cashRoundingAdjustment,
+                          )}
                         </p>
                       )}
                       {change.refund && (
                         <p>
                           Refund {change.refund.transactionId} ·{" "}
-                          {change.refund.method} · ₱{change.refund.amount}
+                          {change.refund.method} ·{" "}
+                          {formatCurrency(change.refund.amount)}
                         </p>
                       )}
                       <ul>
@@ -1048,8 +1060,8 @@ export function SalesHistoryPage() {
               {selectedSummary?.reversal ? (
                 <div className="reversal-saved-note" role="status">
                   Reversal {selectedSummary.reversal.transactionId} saved on{" "}
-                  {dateText(selectedSummary.reversal.createdAt)} for ₱
-                  {selectedSummary.reversal.amount} by{" "}
+                  {dateText(selectedSummary.reversal.createdAt)} for{" "}
+                  {formatCurrency(selectedSummary.reversal.amount)} by{" "}
                   {selectedSummary.reversal.refundMethod}.
                   {selectedSummary.reversal.cashRoundingAdjustment !==
                     "0.00" && (
@@ -1191,7 +1203,7 @@ export function SalesHistoryPage() {
                     <strong>{shift.cashierEmail}</strong>
                     <small>Opened {dateText(shift.openedAt)}</small>
                   </span>
-                  <strong>₱{shift.expectedCash}</strong>
+                  <strong>{formatCurrency(shift.expectedCash)}</strong>
                 </button>
               ))}
             </div>
@@ -1215,7 +1227,10 @@ export function SalesHistoryPage() {
                     <option value="CASH_OUT">Cash-out</option>
                   </select>
                 </Field>
-                <Field id="cash-movement-amount" label="Amount (₱)">
+                <Field
+                  id="cash-movement-amount"
+                  label={`Amount (${currencySymbol()})`}
+                >
                   <input
                     id="cash-movement-amount"
                     className="text-input"
@@ -1263,7 +1278,7 @@ export function SalesHistoryPage() {
                           {movement.reason} · {movement.actorEmail}
                         </small>
                       </span>
-                      <b>₱{movement.amountDelta}</b>
+                      <b>{formatCurrency(movement.amountDelta)}</b>
                     </div>
                   ))
                 ) : (

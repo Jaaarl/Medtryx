@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { X } from "lucide-react";
+import { formatCurrency } from "./currency";
 
 export type SampleReceiptData = {
   transactionId: string;
@@ -25,8 +26,11 @@ export type SampleReceiptData = {
 
 export function moneyTimesQuantity(value: string, quantity: number): string {
   const negative = value.startsWith("-");
-  const [whole = "0", fraction = ""] = (negative ? value.slice(1) : value).split(".");
-  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2));
+  const [whole = "0", fraction = ""] = (
+    negative ? value.slice(1) : value
+  ).split(".");
+  const cents =
+    BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2));
   const total = (negative ? -cents : cents) * BigInt(quantity);
   const sign = total < 0n ? "-" : "";
   const absolute = total < 0n ? -total : total;
@@ -36,8 +40,11 @@ export function moneyTimesQuantity(value: string, quantity: number): string {
 export function addMoney(...values: string[]): string {
   const total = values.reduce((sum, value) => {
     const negative = value.startsWith("-");
-    const [whole = "0", fraction = ""] = (negative ? value.slice(1) : value).split(".");
-    const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2));
+    const [whole = "0", fraction = ""] = (
+      negative ? value.slice(1) : value
+    ).split(".");
+    const cents =
+      BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2));
     return sum + (negative ? -cents : cents);
   }, 0n);
   const sign = total < 0n ? "-" : "";
@@ -46,11 +53,7 @@ export function addMoney(...values: string[]): string {
 }
 
 function receiptMoney(value: string): string {
-  const amount = Number(value);
-  return `₱${(Number.isFinite(amount) ? amount : 0).toLocaleString("en-PH", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatCurrency(value);
 }
 
 function receiptDate(value: string): string {
@@ -114,7 +117,9 @@ export function SampleReceiptModal({
             Sample only · Not a tax invoice · Not valid for input tax claims
           </div>
           <header className="sample-receipt-header">
-            <span className="sample-receipt-overline">SALES INVOICE · SAMPLE</span>
+            <span className="sample-receipt-overline">
+              SALES INVOICE · SAMPLE
+            </span>
           </header>
 
           <div className="sample-receipt-meta">
@@ -128,7 +133,9 @@ export function SampleReceiptModal({
             </div>
             <div>
               <span>Payment method</span>
-              <strong>{receipt.paymentMethod === "CASH" ? "Cash" : "QR"}</strong>
+              <strong>
+                {receipt.paymentMethod === "CASH" ? "Cash" : "QR"}
+              </strong>
             </div>
           </div>
 
@@ -149,7 +156,9 @@ export function SampleReceiptModal({
                       <strong>{line.description}</strong>
                       {line.sku && <small>{line.sku}</small>}
                     </td>
-                    <td>{line.quantity} {line.unit}</td>
+                    <td>
+                      {line.quantity} {line.unit}
+                    </td>
                     <td>{receiptMoney(line.unitPrice)}</td>
                     <td>{receiptMoney(line.amount)}</td>
                   </tr>
@@ -184,11 +193,12 @@ export function SampleReceiptModal({
               </div>
             )}
             <div className="sample-receipt-due">
-              <dt>{receipt.estimate ? "Estimated amount due" : "Total amount due"}</dt>
+              <dt>
+                {receipt.estimate ? "Estimated amount due" : "Total amount due"}
+              </dt>
               <dd>{receiptMoney(receipt.amountDue)}</dd>
             </div>
           </dl>
-
         </div>
       </section>
     </div>

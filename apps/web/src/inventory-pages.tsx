@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  currencyCode,
+  currencySymbol,
+  formatCurrency,
+  formatCents as formatCurrencyFromCents,
+  usesPhpRegionalPolicies,
+} from "./currency";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
@@ -505,9 +512,7 @@ function parseCashTenderAmount(value: string): bigint | null {
 }
 
 function formatCents(cents: bigint): string {
-  const sign = cents < 0n ? "−" : "";
-  const absolute = cents < 0n ? -cents : cents;
-  return `${sign}₱${(absolute / 100n).toLocaleString("en-PH")}.${String(absolute % 100n).padStart(2, "0")}`;
+  return formatCurrencyFromCents(cents);
 }
 
 function moneyStringFromCents(cents: bigint): string {
@@ -609,7 +614,7 @@ function useProducts() {
       active = false;
     };
     // Fetch persisted product data on mount.
-  }, []);
+  }, [setError]);
   return { products, setProducts, loading, error, setError, refresh };
 }
 
@@ -826,7 +831,7 @@ function ProductCsvImportPanel({
           </p>
           <a
             className="text-action csv-template-download"
-            href="/csv-templates/new-products-opening-stock.csv"
+            href="/api/products/import-csv/template"
             download
           >
             <ArrowDownToLine size={14} />
@@ -1087,7 +1092,7 @@ function StockCsvImportPanel({
           </p>
           <a
             className="text-action csv-template-download"
-            href="/csv-templates/existing-products-stock.csv"
+            href="/api/stock/receipts/import-csv/template"
             download
           >
             <ArrowDownToLine size={14} />
@@ -1205,15 +1210,9 @@ function ProductDeleteDialog({
               {product.quantityOnHand.toLocaleString("en-PH")} {product.unit}
             </strong>
             , valued at{" "}
-            <strong>
-              ₱
-              {Number(product.inventoryValue).toLocaleString("en-PH", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </strong>
-            . This will be removed with a recorded inventory correction.
-            Existing supplier payments and expenses will stay unchanged.
+            <strong>{formatCurrency(product.inventoryValue)}</strong>. This will
+            be removed with a recorded inventory correction. Existing supplier
+            payments and expenses will stay unchanged.
           </p>
         )}
         {error && (
@@ -1476,17 +1475,19 @@ export function ProductsPage() {
       case "reorderLevel":
         return product.reorderLevel ?? "—";
       case "sellingPrice":
-        return `₱${product.sellingPrice}`;
+        return `${formatCurrency(product.sellingPrice)}`;
       case "latestCost":
-        return `₱${product.latestAcquisitionCost ?? "—"}`;
+        return product.latestAcquisitionCost === null
+          ? "—"
+          : formatCurrency(product.latestAcquisitionCost);
       case "averageCost":
-        return `₱${product.weightedAverageUnitCost}`;
+        return `${formatCurrency(product.weightedAverageUnitCost)}`;
       case "priceSpread":
-        return `₱${product.unitPriceSpread}`;
+        return `${formatCurrency(product.unitPriceSpread)}`;
       case "grossProfit":
-        return `₱${product.estimatedUnitGrossProfit}`;
+        return `${formatCurrency(product.estimatedUnitGrossProfit)}`;
       case "inventoryValue":
-        return `₱${product.inventoryValue}`;
+        return `${formatCurrency(product.inventoryValue)}`;
       case "status":
         return (
           <span
@@ -1512,27 +1513,30 @@ export function ProductsPage() {
     }
   }
 
-  function startEdit(product: Product) {
-    setNotice("");
-    setError("");
-    setEditing(product);
-    setDuplicateProductId("");
-    setForm({
-      ...EMPTY_FORM,
-      name: product.name,
-      unit: product.unit,
-      sellingPrice: product.sellingPrice,
-      reorderLevel:
-        product.reorderLevel === null ? "" : String(product.reorderLevel),
-      taxClass: product.taxClass,
-      isScEligible: product.isScEligible,
-      isPwdEligible: product.isPwdEligible,
-      isBnpcEligible: product.isBnpcEligible,
-      bnpcCategory: product.bnpcCategory ?? "",
-      productType: product.productType ?? "",
-      tracksLots: product.tracksLots,
-    });
-  }
+  const startEdit = useCallback(
+    (product: Product) => {
+      setNotice("");
+      setError("");
+      setEditing(product);
+      setDuplicateProductId("");
+      setForm({
+        ...EMPTY_FORM,
+        name: product.name,
+        unit: product.unit,
+        sellingPrice: product.sellingPrice,
+        reorderLevel:
+          product.reorderLevel === null ? "" : String(product.reorderLevel),
+        taxClass: product.taxClass,
+        isScEligible: product.isScEligible,
+        isPwdEligible: product.isPwdEligible,
+        isBnpcEligible: product.isBnpcEligible,
+        bnpcCategory: product.bnpcCategory ?? "",
+        productType: product.productType ?? "",
+        tracksLots: product.tracksLots,
+      });
+    },
+    [setError],
+  );
 
   useEffect(() => {
     const productId = searchParams.get("edit");
@@ -1541,27 +1545,14 @@ export function ProductsPage() {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
 
-    setEditing(product);
-    setForm({
-      ...EMPTY_FORM,
-      name: product.name,
-      unit: product.unit,
-      sellingPrice: product.sellingPrice,
-      reorderLevel:
-        product.reorderLevel === null ? "" : String(product.reorderLevel),
-      taxClass: product.taxClass,
-      isScEligible: product.isScEligible,
-      isPwdEligible: product.isPwdEligible,
-      isBnpcEligible: product.isBnpcEligible,
-      bnpcCategory: product.bnpcCategory ?? "",
-      productType: product.productType ?? "",
-      tracksLots: product.tracksLots,
+    const frame = window.requestAnimationFrame(() => {
+      startEdit(product);
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("edit");
+      setSearchParams(nextSearchParams, { replace: true });
     });
-
-    const nextSearchParams = new URLSearchParams(searchParams);
-    nextSearchParams.delete("edit");
-    setSearchParams(nextSearchParams, { replace: true });
-  }, [loading, products, searchParams, setSearchParams]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, products, searchParams, setSearchParams, startEdit]);
 
   function cancelEdit() {
     setEditing(null);
@@ -1848,14 +1839,17 @@ export function ProductsPage() {
                         </strong>
                         <small>
                           {product.sku}
-                          {product.barcode
-                            ? ` · ${product.barcode}`
-                            : ""} ·{" "}
-                          {product.isBnpcEligible
-                            ? product.bnpcCategory
-                              ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
-                              : "BNPC category missing"
-                            : "BNPC ineligible"}
+                          {product.barcode ? ` · ${product.barcode}` : ""}
+                          {usesPhpRegionalPolicies() && (
+                            <>
+                              {" · "}
+                              {product.isBnpcEligible
+                                ? product.bnpcCategory
+                                  ? `BNPC ${product.bnpcCategory === "BASIC_NECESSITY" ? "Basic Necessity" : "Prime Commodity"}`
+                                  : "BNPC category missing"
+                                : "BNPC ineligible"}
+                            </>
+                          )}
                         </small>
                       </td>
                       {PRODUCT_CATALOG_COLUMNS.filter(
@@ -2019,7 +2013,10 @@ export function ProductsPage() {
               </div>
             )}
             {duplicateProduct && (
-              <Field id="matched-product-price" label="Selling price (₱)">
+              <Field
+                id="matched-product-price"
+                label={`Selling price (${currencySymbol()})`}
+              >
                 <input
                   id="matched-product-price"
                   className="text-input"
@@ -2054,7 +2051,10 @@ export function ProductsPage() {
                     maxLength={32}
                   />
                 </Field>
-                <Field id="product-price" label="Selling price (₱)">
+                <Field
+                  id="product-price"
+                  label={`Selling price (${currencySymbol()})`}
+                >
                   <input
                     id="product-price"
                     className="text-input"
@@ -2139,87 +2139,100 @@ export function ProductsPage() {
                     </small>
                   )}
                 </fieldset>
-                <div
-                  className="inventory-checkbox-group"
-                  role="group"
-                  aria-label="Discount eligibility"
-                >
-                  <span className="field-label">Discount eligibility</span>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={form.isScEligible}
-                      onChange={(event) =>
-                        setForm({ ...form, isScEligible: event.target.checked })
-                      }
-                    />
-                    <span>
-                      Senior Citizen 20% discount + VAT exemption eligible
-                    </span>
-                  </label>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={form.isPwdEligible}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          isPwdEligible: event.target.checked,
-                        })
-                      }
-                    />
-                    <span>PWD 20% discount + VAT exemption eligible</span>
-                  </label>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={form.isBnpcEligible}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          isBnpcEligible: event.target.checked,
-                        })
-                      }
-                    />
-                    <span>BNPC 5% discount eligible</span>
-                  </label>
-                </div>
-                {form.isBnpcEligible && (
-                  <div
-                    className="inventory-checkbox-group"
-                    role="group"
-                    aria-label="BNPC eligibility review"
-                  >
-                    <span className="field-label">BNPC eligibility review</span>
-                    <Field
-                      id="product-bnpc-category"
-                      label="Covered goods category"
+                {usesPhpRegionalPolicies() && (
+                  <>
+                    <div
+                      className="inventory-checkbox-group"
+                      role="group"
+                      aria-label="Discount eligibility"
                     >
-                      <select
-                        id="product-bnpc-category"
-                        className="text-input select-input"
-                        value={form.bnpcCategory}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            bnpcCategory: event.target.value as NonNullable<
-                              Product["bnpcCategory"]
-                            >,
-                          })
-                        }
+                      <span className="field-label">Discount eligibility</span>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={form.isScEligible}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              isScEligible: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>
+                          Senior Citizen 20% discount + VAT exemption eligible
+                        </span>
+                      </label>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={form.isPwdEligible}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              isPwdEligible: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>PWD 20% discount + VAT exemption eligible</span>
+                      </label>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={form.isBnpcEligible}
+                          onChange={(event) =>
+                            setForm({
+                              ...form,
+                              isBnpcEligible: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>BNPC 5% discount eligible</span>
+                      </label>
+                    </div>
+                    {form.isBnpcEligible && (
+                      <div
+                        className="inventory-checkbox-group"
+                        role="group"
+                        aria-label="BNPC eligibility review"
                       >
-                        <option value="">Choose category</option>
-                        <option value="BASIC_NECESSITY">Basic Necessity</option>
-                        <option value="PRIME_COMMODITY">Prime Commodity</option>
-                      </select>
-                    </Field>
-                    <small className="field-hint">
-                      The official list has two covered-goods sections. Both get
-                      5%; choose the section that lists this product. Leave it
-                      blank while unclassified; BNPC discounts stay unavailable
-                      until a category is assigned.
-                    </small>
-                  </div>
+                        <span className="field-label">
+                          BNPC eligibility review
+                        </span>
+                        <Field
+                          id="product-bnpc-category"
+                          label="Covered goods category"
+                        >
+                          <select
+                            id="product-bnpc-category"
+                            className="text-input select-input"
+                            value={form.bnpcCategory}
+                            onChange={(event) =>
+                              setForm({
+                                ...form,
+                                bnpcCategory: event.target.value as NonNullable<
+                                  Product["bnpcCategory"]
+                                >,
+                              })
+                            }
+                          >
+                            <option value="">Choose category</option>
+                            <option value="BASIC_NECESSITY">
+                              Basic Necessity
+                            </option>
+                            <option value="PRIME_COMMODITY">
+                              Prime Commodity
+                            </option>
+                          </select>
+                        </Field>
+                        <small className="field-hint">
+                          The official list has two covered-goods sections. Both
+                          get 5%; choose the section that lists this product.
+                          Leave it blank while unclassified; BNPC discounts stay
+                          unavailable until a category is assigned.
+                        </small>
+                      </div>
+                    )}
+                  </>
                 )}
                 <label className="inventory-checkbox">
                   <input
@@ -2263,7 +2276,10 @@ export function ProductsPage() {
                       required
                     />
                   </Field>
-                  <Field id="opening-cost" label="Unit cost (₱)">
+                  <Field
+                    id="opening-cost"
+                    label={`Unit cost (${currencySymbol()})`}
+                  >
                     <input
                       id="opening-cost"
                       className="text-input"
@@ -2657,16 +2673,14 @@ export function StockPage() {
     visibleLots.length,
   );
 
-  useEffect(() => {
-    if (!selected) return;
-    setCostCorrectionInput(selected.weightedAverageUnitCost);
+  function selectStockProduct(productId: string) {
+    const product = products.find((item) => item.id === productId);
+    setSelectedId(productId);
+    if (!product) return;
+    setCostCorrectionInput(product.weightedAverageUnitCost);
     setCostCorrectionReason("");
-  }, [selectedId, selected?.weightedAverageUnitCost]);
-
-  useEffect(() => {
-    if (!selected) return;
-    setReceiptSellingPrice(selected.sellingPrice);
-  }, [selectedId, selected?.sellingPrice]);
+    setReceiptSellingPrice(product.sellingPrice);
+  }
 
   function selectStockSort(key: string) {
     setStockPage(1);
@@ -2678,7 +2692,7 @@ export function StockPage() {
   }
 
   function focusCostCorrection(productId: string) {
-    setSelectedId(productId);
+    selectStockProduct(productId);
     document
       .getElementById("stock-cost-correction")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2687,7 +2701,22 @@ export function StockPage() {
   async function refreshProducts() {
     const result = await api.get<{ products: Product[] }>("/products");
     setProducts(result.products);
-    if (!selectedId && result.products[0]) setSelectedId(result.products[0].id);
+    const nextSelected = selectedId
+      ? result.products.find((product) => product.id === selectedId)
+      : result.products[0];
+    if (!selectedId && nextSelected) setSelectedId(nextSelected.id);
+    if (nextSelected) {
+      if (
+        !selected ||
+        selected.weightedAverageUnitCost !==
+          nextSelected.weightedAverageUnitCost
+      ) {
+        setCostCorrectionInput(nextSelected.weightedAverageUnitCost);
+        setCostCorrectionReason("");
+      }
+      if (!selected || selected.sellingPrice !== nextSelected.sellingPrice)
+        setReceiptSellingPrice(nextSelected.sellingPrice);
+    }
   }
   async function refreshEvents(id = selectedId) {
     const path = id
@@ -2729,9 +2758,13 @@ export function StockPage() {
         const routeProduct = productData.products.find(
           (product) => product.id === requestedProductId,
         );
-        if (routeProduct) setSelectedId(routeProduct.id);
-        else if (productData.products[0])
-          setSelectedId(productData.products[0].id);
+        const nextSelected = routeProduct ?? productData.products[0];
+        if (nextSelected) {
+          setSelectedId(nextSelected.id);
+          setCostCorrectionInput(nextSelected.weightedAverageUnitCost);
+          setCostCorrectionReason("");
+          setReceiptSellingPrice(nextSelected.sellingPrice);
+        }
       })
       .catch(() => {
         if (active) setError("Unable to load stock records.");
@@ -3105,7 +3138,7 @@ export function StockPage() {
                           ? "inventory-row-selected"
                           : ""
                       }
-                      onClick={() => setSelectedId(product.id)}
+                      onClick={() => selectStockProduct(product.id)}
                     >
                       <td>
                         <strong className="product-description">
@@ -3124,8 +3157,8 @@ export function StockPage() {
                             </span>
                           )}
                       </td>
-                      <td>₱{product.weightedAverageUnitCost}</td>
-                      <td>₱{product.inventoryValue}</td>
+                      <td>{formatCurrency(product.weightedAverageUnitCost)}</td>
+                      <td>{formatCurrency(product.inventoryValue)}</td>
                       <td>
                         <div className="stock-product-actions">
                           <button
@@ -3232,7 +3265,10 @@ export function StockPage() {
                     required
                   />
                 </Field>
-                <Field id="receipt-cost" label="Unit acquisition cost (₱)">
+                <Field
+                  id="receipt-cost"
+                  label={`Unit acquisition cost (${currencySymbol()})`}
+                >
                   <input
                     id="receipt-cost"
                     className="text-input"
@@ -3243,7 +3279,10 @@ export function StockPage() {
                     pattern="[0-9]+(\.[0-9]{1,2})?"
                   />
                 </Field>
-                <Field id="receipt-selling-price" label="Selling price (₱)">
+                <Field
+                  id="receipt-selling-price"
+                  label={`Selling price (${currencySymbol()})`}
+                >
                   <input
                     id="receipt-selling-price"
                     className="text-input"
@@ -3360,13 +3399,13 @@ export function StockPage() {
                   </strong>
                   <span>
                     {selected.sku} · {selected.quantityOnHand} {selected.unit}{" "}
-                    on hand · current average ₱
-                    {selected.weightedAverageUnitCost}
+                    on hand · current average{" "}
+                    {formatCurrency(selected.weightedAverageUnitCost)}
                   </span>
                 </div>
                 <Field
                   id="cost-correction-unit-cost"
-                  label="Correct average acquisition cost per unit (₱)"
+                  label={`Correct average acquisition cost per unit (${currencySymbol()})`}
                 >
                   <input
                     id="cost-correction-unit-cost"
@@ -3530,7 +3569,10 @@ export function StockPage() {
                   </>
                 )}
                 {Number(adjustQty) > 0 && (
-                  <Field id="adjust-cost" label="Unit acquisition cost (₱)">
+                  <Field
+                    id="adjust-cost"
+                    label={`Unit acquisition cost (${currencySymbol()})`}
+                  >
                     <input
                       id="adjust-cost"
                       className="text-input"
@@ -3701,8 +3743,12 @@ export function StockPage() {
                     <td>{lot.expiryDate}</td>
                     <td>{lot.quantity}</td>
                     <td>{lot.saleableQuantity}</td>
-                    <td>{lot.unitCost === null ? "—" : `₱${lot.unitCost}`}</td>
-                    <td>₱{lot.sellingPrice}</td>
+                    <td>
+                      {lot.unitCost === null
+                        ? "—"
+                        : `${formatCurrency(lot.unitCost)}`}
+                    </td>
+                    <td>{formatCurrency(lot.sellingPrice)}</td>
                     <td>
                       <span
                         className={`stock-lot-status ${lotStatusPresentation(lot).className}`}
@@ -3766,7 +3812,7 @@ export function StockPage() {
                           </Field>
                           <Field
                             id={`lot-unit-cost-${lot.id}`}
-                            label="Unit acquisition cost (₱)"
+                            label={`Unit acquisition cost (${currencySymbol()})`}
                           >
                             <input
                               id={`lot-unit-cost-${lot.id}`}
@@ -3785,7 +3831,7 @@ export function StockPage() {
                           </Field>
                           <Field
                             id={`lot-price-${lot.id}`}
-                            label="Product selling price (₱)"
+                            label={`Product selling price (${currencySymbol()})`}
                           >
                             <input
                               id={`lot-price-${lot.id}`}
@@ -4035,7 +4081,9 @@ export function StockPage() {
                       {event.quantityDelta}
                     </td>
                     <td>
-                      {event.unitCost === null ? "—" : `₱${event.unitCost}`}
+                      {event.unitCost === null
+                        ? "—"
+                        : `${formatCurrency(event.unitCost)}`}
                     </td>
                     <td>
                       {eventAcquisitionSpread(event, products) === null
@@ -4046,7 +4094,7 @@ export function StockPage() {
                       {centsFromMoney(event.inventoryValueDelta) > 0n
                         ? "+"
                         : ""}
-                      ₱{event.inventoryValueDelta}
+                      {formatCurrency(event.inventoryValueDelta)}
                     </td>
                     <td>
                       <span>{event.reference ?? "—"}</span>
@@ -4446,7 +4494,6 @@ export function CheckoutPage({
     let active = true;
     const name = customerName.trim();
     if (benefitType === "REGULAR" || name.length < 2 || !customerBirthday) {
-      setCustomerLookupStatus("");
       return () => {
         active = false;
       };
@@ -4596,7 +4643,8 @@ export function CheckoutPage({
         (treatment) => treatment !== "REGULAR",
       ),
     );
-  const effectiveBenefitType = hasSelectedBenefit ? benefitType : "REGULAR";
+  const effectiveBenefitType =
+    usesPhpRegionalPolicies() && hasSelectedBenefit ? benefitType : "REGULAR";
   const cashReceivedCents = parseCashTenderAmount(cashReceived);
   const saleAmountDueCents = preview
     ? centsFromMoney(preview.totals.amountDue)
@@ -5550,9 +5598,9 @@ export function CheckoutPage({
       : 0;
   const quantityDialogName = productToAdd?.name ?? bundleOfferToAdd?.name ?? "";
   const quantityDialogPrice = productToAdd
-    ? `₱${productToAdd.sellingPrice} per ${productToAdd.unit}`
+    ? `${formatCurrency(productToAdd.sellingPrice)} per ${productToAdd.unit}`
     : bundleOfferToAdd
-      ? `₱${bundleOfferToAdd.promotionalPrice} per bundle`
+      ? `${formatCurrency(bundleOfferToAdd.promotionalPrice)} per bundle`
       : "";
   const quantityAlreadyInCart = productToAdd
     ? (cart.find((line) => line.product.id === productToAdd.id)?.quantity ?? 0)
@@ -5689,8 +5737,8 @@ export function CheckoutPage({
                       {product.barcode ? ` · ${product.barcode}` : ""}
                     </small>
                     <span>
-                      ₱{product.sellingPrice} · {product.quantityAvailable}{" "}
-                      available
+                      {formatCurrency(product.sellingPrice)} ·{" "}
+                      {product.quantityAvailable} available
                     </span>
                     {stockOverrideEnabled &&
                       (product.quantityAvailable === 0 ||
@@ -5742,8 +5790,8 @@ export function CheckoutPage({
                         .join(" + ")}
                     </small>
                     <span>
-                      Regular components ₱{offer.regularTotal} · bundle offer ₱
-                      {offer.promotionalPrice} ·{" "}
+                      Regular components {formatCurrency(offer.regularTotal)} ·
+                      bundle offer {formatCurrency(offer.promotionalPrice)} ·{" "}
                       {availableBundleQuantity(offer)} available
                     </span>
                   </div>
@@ -5805,7 +5853,8 @@ export function CheckoutPage({
                         </small>
                       )}
                       <small className="checkout-cart-price">
-                        ₱{line.product.sellingPrice} × {line.quantity}
+                        {formatCurrency(line.product.sellingPrice)} ×{" "}
+                        {line.quantity}
                       </small>
                     </div>
                     <div className="cart-line-actions">
@@ -5879,8 +5928,9 @@ export function CheckoutPage({
                         </small>
                       )}
                       <small className="checkout-cart-price">
-                        ₱{line.offer.regularTotal} regular · ₱
-                        {line.offer.promotionalPrice} offer × {line.quantity}
+                        {formatCurrency(line.offer.regularTotal)} regular ·{" "}
+                        {formatCurrency(line.offer.promotionalPrice)} offer ×{" "}
+                        {line.quantity}
                       </small>
                       <small>
                         {line.offer.components
@@ -5985,7 +6035,10 @@ export function CheckoutPage({
                     Enter the physical cash placed in the drawer. QR
                     declarations are not counted as cash.
                   </p>
-                  <Field id="shift-opening-cash" label="Opening cash (₱)">
+                  <Field
+                    id="shift-opening-cash"
+                    label={`Opening cash (${currencySymbol()})`}
+                  >
                     <input
                       id="shift-opening-cash"
                       className="text-input"
@@ -6013,11 +6066,12 @@ export function CheckoutPage({
                       {registerShift.openedByEmail}
                     </strong>
                     <span>
-                      Expected physical cash: ₱{registerShift.expectedCash}
+                      Expected physical cash:{" "}
+                      {formatCurrency(registerShift.expectedCash)}
                     </span>
                     <span>
-                      Expected QR after refunds: ₱
-                      {registerShift.expectedQrSales}
+                      Expected QR after refunds:{" "}
+                      {formatCurrency(registerShift.expectedQrSales)}
                     </span>
                     {error && (
                       <div className="banner banner-error" role="alert">
@@ -6030,7 +6084,7 @@ export function CheckoutPage({
                     >
                       <Field
                         id="emergency-shift-cash-count"
-                        label="Actual physical cash count (₱)"
+                        label={`Actual physical cash count (${currencySymbol()})`}
                       >
                         <input
                           id="emergency-shift-cash-count"
@@ -6083,9 +6137,12 @@ export function CheckoutPage({
                 <div>
                   <strong>Shift open</strong>
                   <ShiftElapsed openedAt={shift.openedAt} />
-                  <span>Expected physical cash: ₱{shift.expectedCash}</span>
                   <span>
-                    Expected QR after refunds: ₱{shift.expectedQrSales}
+                    Expected physical cash: {formatCurrency(shift.expectedCash)}
+                  </span>
+                  <span>
+                    Expected QR after refunds:{" "}
+                    {formatCurrency(shift.expectedQrSales)}
                   </span>
                 </div>
                 <button
@@ -6109,7 +6166,9 @@ export function CheckoutPage({
                 <div className="checkout-shift-modal-heading">
                   <span className="eyebrow">CASH DRAWER COUNT</span>
                   <h2 id="close-shift-modal-title">Close cashier shift</h2>
-                  <p>Expected physical cash: ₱{shift.expectedCash}</p>
+                  <p>
+                    Expected physical cash: {formatCurrency(shift.expectedCash)}
+                  </p>
                 </div>
                 {error && (
                   <div className="banner banner-error" role="alert">
@@ -6120,7 +6179,10 @@ export function CheckoutPage({
                   className="form-stack inventory-form checkout-shift-close-form"
                   onSubmit={(event) => void closeCurrentShift(event)}
                 >
-                  <Field id="shift-closing-cash" label="Actual cash count (₱)">
+                  <Field
+                    id="shift-closing-cash"
+                    label={`Actual cash count (${currencySymbol()})`}
+                  >
                     <input
                       id="shift-closing-cash"
                       className="text-input"
@@ -6178,163 +6240,104 @@ export function CheckoutPage({
               className="checkout-options"
               onSubmit={(event) => void calculateCheckout(event)}
             >
-              <Field id="sale-benefit-type" label="Sale benefit">
-                <select
-                  id="sale-benefit-type"
-                  className="text-input select-input"
-                  value={benefitType}
-                  onChange={(event) => {
-                    const next = event.target.value as typeof benefitType;
-                    setBenefitType(next);
-                    setCustomerIdType(
-                      next === "SENIOR_CITIZEN"
-                        ? "Senior Citizen ID"
-                        : next === "PWD"
-                          ? "PWD ID"
-                          : "",
-                    );
-                    setCustomerIdNumber("");
-                    setCustomerLookupStatus("");
-                    setCart((current) =>
-                      current.map((line) => ({
-                        ...line,
-                        benefitTreatment:
-                          (next !== "REGULAR" &&
-                            line.benefitTreatment === "BNPC") ||
-                          (next === "SENIOR_CITIZEN" &&
-                            line.benefitTreatment === "SENIOR_CITIZEN" &&
-                            line.product.isScEligible) ||
-                          (next === "PWD" &&
-                            line.benefitTreatment === "PWD" &&
-                            line.product.isPwdEligible)
-                            ? line.benefitTreatment
-                            : "REGULAR",
-                      })),
-                    );
-                    setBundleCart((current) =>
-                      current.map((bundleLine) => ({
-                        ...bundleLine,
-                        componentBenefits: Object.fromEntries(
-                          bundleLine.offer.components.map((component) => [
-                            component.productId,
-                            (() => {
-                              const treatment =
-                                bundleLine.componentBenefits[
-                                  component.productId
-                                ] ?? "REGULAR";
-                              return (next !== "REGULAR" &&
-                                treatment === "BNPC") ||
-                                (next === "SENIOR_CITIZEN" &&
-                                  treatment === "SENIOR_CITIZEN" &&
-                                  component.isScEligible) ||
-                                (next === "PWD" &&
-                                  treatment === "PWD" &&
-                                  component.isPwdEligible)
-                                ? treatment
-                                : "REGULAR";
-                            })(),
-                          ]),
-                        ),
-                      })),
-                    );
-                    invalidatePreview();
-                  }}
-                >
-                  <option value="REGULAR">Regular sale</option>
-                  <option value="SENIOR_CITIZEN">Senior citizen</option>
-                  <option value="PWD">PWD</option>
-                </select>
-              </Field>
-              {benefitType !== "REGULAR" &&
-                cart.some((line) =>
-                  benefitType === "SENIOR_CITIZEN"
-                    ? line.product.isScEligible
-                    : line.product.isPwdEligible,
-                ) && (
-                  <div className="checkout-benefit-lines">
-                    <strong>
-                      Choose lines for the standard{" "}
-                      {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
-                      benefit (20% discount + VAT exemption)
-                    </strong>
-                    {cart
-                      .filter((line) =>
-                        benefitType === "SENIOR_CITIZEN"
-                          ? line.product.isScEligible
-                          : line.product.isPwdEligible,
-                      )
-                      .map((line) => (
-                        <label
-                          className="inventory-checkbox"
-                          key={line.product.id}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={line.benefitTreatment === benefitType}
-                            onChange={(event) =>
-                              setBenefitForLine(
-                                line.product.id,
-                                event.target.checked ? benefitType : "REGULAR",
-                              )
-                            }
-                          />
-                          <span>
-                            {line.product.name} · 20% + VAT exemption
-                            {(
-                              benefitType === "SENIOR_CITIZEN"
-                                ? line.product.isScEligible
-                                : line.product.isPwdEligible
-                            )
-                              ? " · eligible"
-                              : " · not eligible"}
-                          </span>
-                        </label>
-                      ))}
-                  </div>
-                )}
-              {benefitType !== "REGULAR" &&
-                bundleCart.some((bundleLine) =>
-                  bundleLine.offer.components.some((component) =>
-                    benefitType === "SENIOR_CITIZEN"
-                      ? component.isScEligible
-                      : component.isPwdEligible,
-                  ),
-                ) && (
-                  <div className="checkout-benefit-lines">
-                    <strong>
-                      Choose bundle components for the standard{" "}
-                      {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
-                      benefit (20% discount + VAT exemption)
-                    </strong>
-                    {bundleCart.flatMap((bundleLine) =>
-                      bundleLine.offer.components
-                        .filter((component) =>
-                          benefitType === "SENIOR_CITIZEN"
-                            ? component.isScEligible
-                            : component.isPwdEligible,
-                        )
-                        .map((component) => {
-                          const eligible =
+              {usesPhpRegionalPolicies() && (
+                <>
+                  <Field id="sale-benefit-type" label="Sale benefit">
+                    <select
+                      id="sale-benefit-type"
+                      className="text-input select-input"
+                      value={benefitType}
+                      onChange={(event) => {
+                        const next = event.target.value as typeof benefitType;
+                        setBenefitType(next);
+                        setCustomerIdType(
+                          next === "SENIOR_CITIZEN"
+                            ? "Senior Citizen ID"
+                            : next === "PWD"
+                              ? "PWD ID"
+                              : "",
+                        );
+                        setCustomerIdNumber("");
+                        setCustomerLookupStatus("");
+                        setCart((current) =>
+                          current.map((line) => ({
+                            ...line,
+                            benefitTreatment:
+                              (next !== "REGULAR" &&
+                                line.benefitTreatment === "BNPC") ||
+                              (next === "SENIOR_CITIZEN" &&
+                                line.benefitTreatment === "SENIOR_CITIZEN" &&
+                                line.product.isScEligible) ||
+                              (next === "PWD" &&
+                                line.benefitTreatment === "PWD" &&
+                                line.product.isPwdEligible)
+                                ? line.benefitTreatment
+                                : "REGULAR",
+                          })),
+                        );
+                        setBundleCart((current) =>
+                          current.map((bundleLine) => ({
+                            ...bundleLine,
+                            componentBenefits: Object.fromEntries(
+                              bundleLine.offer.components.map((component) => [
+                                component.productId,
+                                (() => {
+                                  const treatment =
+                                    bundleLine.componentBenefits[
+                                      component.productId
+                                    ] ?? "REGULAR";
+                                  return (next !== "REGULAR" &&
+                                    treatment === "BNPC") ||
+                                    (next === "SENIOR_CITIZEN" &&
+                                      treatment === "SENIOR_CITIZEN" &&
+                                      component.isScEligible) ||
+                                    (next === "PWD" &&
+                                      treatment === "PWD" &&
+                                      component.isPwdEligible)
+                                    ? treatment
+                                    : "REGULAR";
+                                })(),
+                              ]),
+                            ),
+                          })),
+                        );
+                        invalidatePreview();
+                      }}
+                    >
+                      <option value="REGULAR">Regular sale</option>
+                      <option value="SENIOR_CITIZEN">Senior citizen</option>
+                      <option value="PWD">PWD</option>
+                    </select>
+                  </Field>
+                  {benefitType !== "REGULAR" &&
+                    cart.some((line) =>
+                      benefitType === "SENIOR_CITIZEN"
+                        ? line.product.isScEligible
+                        : line.product.isPwdEligible,
+                    ) && (
+                      <div className="checkout-benefit-lines">
+                        <strong>
+                          Choose lines for the standard{" "}
+                          {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                          benefit (20% discount + VAT exemption)
+                        </strong>
+                        {cart
+                          .filter((line) =>
                             benefitType === "SENIOR_CITIZEN"
-                              ? component.isScEligible
-                              : component.isPwdEligible;
-                          return (
+                              ? line.product.isScEligible
+                              : line.product.isPwdEligible,
+                          )
+                          .map((line) => (
                             <label
                               className="inventory-checkbox"
-                              key={`${bundleLine.offerKey}-${component.productId}`}
+                              key={line.product.id}
                             >
                               <input
                                 type="checkbox"
-                                checked={
-                                  bundleLine.componentBenefits[
-                                    component.productId
-                                  ] === benefitType
-                                }
-                                disabled={!eligible}
+                                checked={line.benefitTreatment === benefitType}
                                 onChange={(event) =>
-                                  setBundleBenefit(
-                                    bundleLine.offerKey,
-                                    component.productId,
+                                  setBenefitForLine(
+                                    line.product.id,
                                     event.target.checked
                                       ? benefitType
                                       : "REGULAR",
@@ -6342,290 +6345,300 @@ export function CheckoutPage({
                                 }
                               />
                               <span>
-                                {bundleLine.offer.name} · {component.name} · 20%
-                                + VAT exemption
-                                {eligible ? " · eligible" : " · not eligible"}
+                                {line.product.name} · 20% + VAT exemption
+                                {(
+                                  benefitType === "SENIOR_CITIZEN"
+                                    ? line.product.isScEligible
+                                    : line.product.isPwdEligible
+                                )
+                                  ? " · eligible"
+                                  : " · not eligible"}
                               </span>
                             </label>
-                          );
-                        }),
+                          ))}
+                      </div>
                     )}
-                  </div>
-                )}
-              {bnpcPolicy?.enabled &&
-                benefitType !== "REGULAR" &&
-                (cart.some((line) => isBnpcDiscountAvailable(line.product)) ||
-                  bundleCart.some((bundleLine) =>
-                    bundleLine.offer.components.some((component) =>
-                      isBnpcDiscountAvailable(component),
-                    ),
-                  )) && (
-                  <div className="checkout-benefit-lines">
-                    <strong>
-                      Separate BNPC benefit: 5% discount; VAT remains
-                    </strong>
-                    <small className="field-hint">
-                      BNPC product eligibility works for both senior and PWD
-                      holders. It does not use the standard 20% discount or VAT
-                      exemption.
-                    </small>
-                    {cart
-                      .filter((line) => isBnpcDiscountAvailable(line.product))
-                      .map((line) => (
-                        <label
-                          className="inventory-checkbox"
-                          key={line.product.id}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={line.benefitTreatment === "BNPC"}
-                            disabled={!isBnpcDiscountAvailable(line.product)}
-                            onChange={(event) =>
-                              setBenefitForLine(
-                                line.product.id,
-                                event.target.checked ? "BNPC" : "REGULAR",
-                              )
-                            }
-                          />
-                          <span>
-                            {line.product.name} · BNPC 5%{" "}
-                            {isBnpcDiscountAvailable(line.product)
-                              ? "eligible"
-                              : "not eligible"}
-                          </span>
-                        </label>
-                      ))}
-                    {bundleCart.flatMap((bundleLine) =>
-                      bundleLine.offer.components
-                        .filter((component) =>
+                  {benefitType !== "REGULAR" &&
+                    bundleCart.some((bundleLine) =>
+                      bundleLine.offer.components.some((component) =>
+                        benefitType === "SENIOR_CITIZEN"
+                          ? component.isScEligible
+                          : component.isPwdEligible,
+                      ),
+                    ) && (
+                      <div className="checkout-benefit-lines">
+                        <strong>
+                          Choose bundle components for the standard{" "}
+                          {benefitType === "SENIOR_CITIZEN" ? "senior" : "PWD"}{" "}
+                          benefit (20% discount + VAT exemption)
+                        </strong>
+                        {bundleCart.flatMap((bundleLine) =>
+                          bundleLine.offer.components
+                            .filter((component) =>
+                              benefitType === "SENIOR_CITIZEN"
+                                ? component.isScEligible
+                                : component.isPwdEligible,
+                            )
+                            .map((component) => {
+                              const eligible =
+                                benefitType === "SENIOR_CITIZEN"
+                                  ? component.isScEligible
+                                  : component.isPwdEligible;
+                              return (
+                                <label
+                                  className="inventory-checkbox"
+                                  key={`${bundleLine.offerKey}-${component.productId}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={
+                                      bundleLine.componentBenefits[
+                                        component.productId
+                                      ] === benefitType
+                                    }
+                                    disabled={!eligible}
+                                    onChange={(event) =>
+                                      setBundleBenefit(
+                                        bundleLine.offerKey,
+                                        component.productId,
+                                        event.target.checked
+                                          ? benefitType
+                                          : "REGULAR",
+                                      )
+                                    }
+                                  />
+                                  <span>
+                                    {bundleLine.offer.name} · {component.name} ·
+                                    20% + VAT exemption
+                                    {eligible
+                                      ? " · eligible"
+                                      : " · not eligible"}
+                                  </span>
+                                </label>
+                              );
+                            }),
+                        )}
+                      </div>
+                    )}
+                  {bnpcPolicy?.enabled &&
+                    benefitType !== "REGULAR" &&
+                    (cart.some((line) =>
+                      isBnpcDiscountAvailable(line.product),
+                    ) ||
+                      bundleCart.some((bundleLine) =>
+                        bundleLine.offer.components.some((component) =>
                           isBnpcDiscountAvailable(component),
-                        )
-                        .map((component) => (
-                          <label
-                            className="inventory-checkbox"
-                            key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={
-                                bundleLine.componentBenefits[
-                                  component.productId
-                                ] === "BNPC"
-                              }
-                              disabled={!isBnpcDiscountAvailable(component)}
-                              onChange={(event) =>
-                                setBundleBenefit(
-                                  bundleLine.offerKey,
-                                  component.productId,
-                                  event.target.checked ? "BNPC" : "REGULAR",
-                                )
-                              }
-                            />
-                            <span>
-                              {bundleLine.offer.name} · {component.name} · BNPC
-                              5%{" "}
-                              {isBnpcDiscountAvailable(component)
-                                ? "eligible"
-                                : "not eligible"}
-                            </span>
-                          </label>
-                        )),
+                        ),
+                      )) && (
+                      <div className="checkout-benefit-lines">
+                        <strong>
+                          Separate BNPC benefit: 5% discount; VAT remains
+                        </strong>
+                        <small className="field-hint">
+                          BNPC product eligibility works for both senior and PWD
+                          holders. It does not use the standard 20% discount or
+                          VAT exemption.
+                        </small>
+                        {cart
+                          .filter((line) =>
+                            isBnpcDiscountAvailable(line.product),
+                          )
+                          .map((line) => (
+                            <label
+                              className="inventory-checkbox"
+                              key={line.product.id}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={line.benefitTreatment === "BNPC"}
+                                disabled={
+                                  !isBnpcDiscountAvailable(line.product)
+                                }
+                                onChange={(event) =>
+                                  setBenefitForLine(
+                                    line.product.id,
+                                    event.target.checked ? "BNPC" : "REGULAR",
+                                  )
+                                }
+                              />
+                              <span>
+                                {line.product.name} · BNPC 5%{" "}
+                                {isBnpcDiscountAvailable(line.product)
+                                  ? "eligible"
+                                  : "not eligible"}
+                              </span>
+                            </label>
+                          ))}
+                        {bundleCart.flatMap((bundleLine) =>
+                          bundleLine.offer.components
+                            .filter((component) =>
+                              isBnpcDiscountAvailable(component),
+                            )
+                            .map((component) => (
+                              <label
+                                className="inventory-checkbox"
+                                key={`${bundleLine.offerKey}-${component.productId}-bnpc`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    bundleLine.componentBenefits[
+                                      component.productId
+                                    ] === "BNPC"
+                                  }
+                                  disabled={!isBnpcDiscountAvailable(component)}
+                                  onChange={(event) =>
+                                    setBundleBenefit(
+                                      bundleLine.offerKey,
+                                      component.productId,
+                                      event.target.checked ? "BNPC" : "REGULAR",
+                                    )
+                                  }
+                                />
+                                <span>
+                                  {bundleLine.offer.name} · {component.name} ·
+                                  BNPC 5%{" "}
+                                  {isBnpcDiscountAvailable(component)
+                                    ? "eligible"
+                                    : "not eligible"}
+                                </span>
+                              </label>
+                            )),
+                        )}
+                      </div>
                     )}
-                  </div>
-                )}
-              {hasSelectedBenefit && benefitType !== "REGULAR" && (
-                <div className="checkout-customer-fields">
-                  <Field id="benefit-customer-name" label="Customer name">
-                    <input
-                      id="benefit-customer-name"
-                      className="text-input"
-                      value={customerName}
-                      onChange={(event) => {
-                        setCustomerName(event.target.value);
-                        setCustomerIdType(
-                          benefitType === "SENIOR_CITIZEN"
-                            ? "Senior Citizen ID"
-                            : "PWD ID",
-                        );
-                        setCustomerIdNumber("");
-                        setCustomerLookupStatus("");
-                        setRequestKey("");
-                      }}
-                      required
-                      minLength={2}
-                      maxLength={160}
-                    />
-                  </Field>
-                  <Field id="benefit-customer-birthday" label="Birthday">
-                    <input
-                      id="benefit-customer-birthday"
-                      className="text-input"
-                      type="date"
-                      value={customerBirthday}
-                      onChange={(event) => {
-                        setCustomerBirthday(event.target.value);
-                        setCustomerIdType(
-                          benefitType === "SENIOR_CITIZEN"
-                            ? "Senior Citizen ID"
-                            : "PWD ID",
-                        );
-                        setCustomerIdNumber("");
-                        setCustomerLookupStatus("");
-                        setRequestKey("");
-                      }}
-                      required
-                    />
-                  </Field>
-                  {customerLookupStatus && (
-                    <small className="field-hint" role="status">
-                      {customerLookupStatus}
-                    </small>
-                  )}
-                  <Field id="benefit-id-type" label="ID type">
-                    <input
-                      id="benefit-id-type"
-                      className="text-input"
-                      value={customerIdType}
-                      onChange={(event) => {
-                        setCustomerIdType(event.target.value);
-                        setRequestKey("");
-                      }}
-                      required
-                      minLength={2}
-                      maxLength={60}
-                    />
-                  </Field>
-                  <Field id="benefit-id-number" label="ID number">
-                    <input
-                      id="benefit-id-number"
-                      className="text-input"
-                      value={customerIdNumber}
-                      onChange={(event) => {
-                        setCustomerIdNumber(event.target.value);
-                        setRequestKey("");
-                      }}
-                      required
-                      minLength={2}
-                      maxLength={80}
-                    />
-                  </Field>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={customerIdChecked}
-                      onChange={(event) => {
-                        setCustomerIdChecked(event.target.checked);
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>I checked the physical ID</span>
-                  </label>
-                </div>
-              )}
-              {bnpcPolicy && !bnpcPolicy.enabled && (
-                <small className="field-hint">
-                  {bnpcPolicy.discountRateBasisPoints !== 500
-                    ? `BNPC is disabled because the saved rate is ${bnpcPolicy.discountRateBasisPoints / 100}%. Ask an owner to save a new policy version at the fixed 5% rate.`
-                    : "BNPC is disabled pending the current policy review, store eligibility decision, and owner/accountant approval."}
-                </small>
-              )}
-              {hasBnpc && benefitType !== "REGULAR" && (
-                <div className="checkout-customer-fields">
-                  <strong>BNPC booklet and prior usage</strong>
-                  <p className="field-hint">
-                    The allowance shown is local to this register. Medtryx
-                    cannot see purchases at other stores or online; staff must
-                    verify booklet amounts covering all channels.
-                  </p>
-                  <Field
-                    id="bnpc-external-purchase"
-                    label="Prior covered purchases elsewhere this Manila week (PHP)"
-                  >
-                    <input
-                      id="bnpc-external-purchase"
-                      className="text-input"
-                      inputMode="decimal"
-                      pattern="[0-9]+(\.[0-9]{1,2})?"
-                      value={bnpcExternalPurchase}
-                      onChange={(event) => {
-                        setBnpcExternalPurchase(event.target.value);
-                        setRequestKey("");
-                      }}
-                    />
-                  </Field>
-                  <Field
-                    id="bnpc-external-discount"
-                    label="Prior BNPC discounts used elsewhere this Manila week (PHP)"
-                  >
-                    <input
-                      id="bnpc-external-discount"
-                      className="text-input"
-                      inputMode="decimal"
-                      pattern="[0-9]+(\.[0-9]{1,2})?"
-                      value={bnpcExternalDiscount}
-                      onChange={(event) => {
-                        setBnpcExternalDiscount(event.target.value);
-                        setRequestKey("");
-                      }}
-                    />
-                  </Field>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      required
-                      checked={bnpcBookletChecked}
-                      onChange={(event) => {
-                        setBnpcBookletChecked(event.target.checked);
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>I checked the current booklet.</span>
-                  </label>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      required
-                      checked={bnpcPriorPurchaseConfirmed}
-                      onChange={(event) => {
-                        setBnpcPriorPurchaseConfirmed(event.target.checked);
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>
-                      I confirmed prior purchase and discount amounts against
-                      the booklet and customer information.
-                    </span>
-                  </label>
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={bnpcRepresentativePurchase}
-                      onChange={(event) => {
-                        const isRepresentative = event.target.checked;
-                        setBnpcRepresentativePurchase(isRepresentative);
-                        if (!isRepresentative) {
-                          setBnpcPrescriptionApplicable(false);
-                          setBnpcPrescriptionChecked(false);
-                        }
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>This purchase is through a representative.</span>
-                  </label>
-                  {bnpcRepresentativePurchase && (
-                    <>
-                      <Field
-                        id="bnpc-authorization-date"
-                        label="Authorization letter issue date"
-                      >
+                  {hasSelectedBenefit && benefitType !== "REGULAR" && (
+                    <div className="checkout-customer-fields">
+                      <Field id="benefit-customer-name" label="Customer name">
                         <input
-                          id="bnpc-authorization-date"
+                          id="benefit-customer-name"
+                          className="text-input"
+                          value={customerName}
+                          onChange={(event) => {
+                            setCustomerName(event.target.value);
+                            setCustomerIdType(
+                              benefitType === "SENIOR_CITIZEN"
+                                ? "Senior Citizen ID"
+                                : "PWD ID",
+                            );
+                            setCustomerIdNumber("");
+                            setCustomerLookupStatus("");
+                            setRequestKey("");
+                          }}
+                          required
+                          minLength={2}
+                          maxLength={160}
+                        />
+                      </Field>
+                      <Field id="benefit-customer-birthday" label="Birthday">
+                        <input
+                          id="benefit-customer-birthday"
                           className="text-input"
                           type="date"
-                          required
-                          value={bnpcAuthorizationLetterDate}
+                          value={customerBirthday}
                           onChange={(event) => {
-                            setBnpcAuthorizationLetterDate(event.target.value);
+                            setCustomerBirthday(event.target.value);
+                            setCustomerIdType(
+                              benefitType === "SENIOR_CITIZEN"
+                                ? "Senior Citizen ID"
+                                : "PWD ID",
+                            );
+                            setCustomerIdNumber("");
+                            setCustomerLookupStatus("");
+                            setRequestKey("");
+                          }}
+                          required
+                        />
+                      </Field>
+                      {customerLookupStatus && (
+                        <small className="field-hint" role="status">
+                          {customerLookupStatus}
+                        </small>
+                      )}
+                      <Field id="benefit-id-type" label="ID type">
+                        <input
+                          id="benefit-id-type"
+                          className="text-input"
+                          value={customerIdType}
+                          onChange={(event) => {
+                            setCustomerIdType(event.target.value);
+                            setRequestKey("");
+                          }}
+                          required
+                          minLength={2}
+                          maxLength={60}
+                        />
+                      </Field>
+                      <Field id="benefit-id-number" label="ID number">
+                        <input
+                          id="benefit-id-number"
+                          className="text-input"
+                          value={customerIdNumber}
+                          onChange={(event) => {
+                            setCustomerIdNumber(event.target.value);
+                            setRequestKey("");
+                          }}
+                          required
+                          minLength={2}
+                          maxLength={80}
+                        />
+                      </Field>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={customerIdChecked}
+                          onChange={(event) => {
+                            setCustomerIdChecked(event.target.checked);
+                            setRequestKey("");
+                          }}
+                        />
+                        <span>I checked the physical ID</span>
+                      </label>
+                    </div>
+                  )}
+                  {bnpcPolicy && !bnpcPolicy.enabled && (
+                    <small className="field-hint">
+                      {bnpcPolicy.discountRateBasisPoints !== 500
+                        ? `BNPC is disabled because the saved rate is ${bnpcPolicy.discountRateBasisPoints / 100}%. Ask an owner to save a new policy version at the fixed 5% rate.`
+                        : "BNPC is disabled pending the current policy review, store eligibility decision, and owner/accountant approval."}
+                    </small>
+                  )}
+                  {hasBnpc && benefitType !== "REGULAR" && (
+                    <div className="checkout-customer-fields">
+                      <strong>BNPC booklet and prior usage</strong>
+                      <p className="field-hint">
+                        The allowance shown is local to this register. Medtryx
+                        cannot see purchases at other stores or online; staff
+                        must verify booklet amounts covering all channels.
+                      </p>
+                      <Field
+                        id="bnpc-external-purchase"
+                        label={`Prior covered purchases elsewhere this Manila week (${currencyCode()})`}
+                      >
+                        <input
+                          id="bnpc-external-purchase"
+                          className="text-input"
+                          inputMode="decimal"
+                          pattern="[0-9]+(\.[0-9]{1,2})?"
+                          value={bnpcExternalPurchase}
+                          onChange={(event) => {
+                            setBnpcExternalPurchase(event.target.value);
+                            setRequestKey("");
+                          }}
+                        />
+                      </Field>
+                      <Field
+                        id="bnpc-external-discount"
+                        label={`Prior BNPC discounts used elsewhere this Manila week (${currencyCode()})`}
+                      >
+                        <input
+                          id="bnpc-external-discount"
+                          className="text-input"
+                          inputMode="decimal"
+                          pattern="[0-9]+(\.[0-9]{1,2})?"
+                          value={bnpcExternalDiscount}
+                          onChange={(event) => {
+                            setBnpcExternalDiscount(event.target.value);
                             setRequestKey("");
                           }}
                         />
@@ -6634,67 +6647,138 @@ export function CheckoutPage({
                         <input
                           type="checkbox"
                           required
-                          checked={bnpcRepresentativeDocsChecked}
+                          checked={bnpcBookletChecked}
                           onChange={(event) => {
-                            setBnpcRepresentativeDocsChecked(
-                              event.target.checked,
-                            );
+                            setBnpcBookletChecked(event.target.checked);
+                            setRequestKey("");
+                          }}
+                        />
+                        <span>I checked the current booklet.</span>
+                      </label>
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          required
+                          checked={bnpcPriorPurchaseConfirmed}
+                          onChange={(event) => {
+                            setBnpcPriorPurchaseConfirmed(event.target.checked);
                             setRequestKey("");
                           }}
                         />
                         <span>
-                          I checked the required representative and holder IDs,
-                          booklet, and authorization documents.
+                          I confirmed prior purchase and discount amounts
+                          against the booklet and customer information.
                         </span>
                       </label>
                       <label className="inventory-checkbox">
                         <input
                           type="checkbox"
-                          checked={bnpcPrescriptionApplicable}
+                          checked={bnpcRepresentativePurchase}
                           onChange={(event) => {
-                            setBnpcPrescriptionApplicable(event.target.checked);
-                            if (!event.target.checked) {
+                            const isRepresentative = event.target.checked;
+                            setBnpcRepresentativePurchase(isRepresentative);
+                            if (!isRepresentative) {
+                              setBnpcPrescriptionApplicable(false);
                               setBnpcPrescriptionChecked(false);
                             }
                             setRequestKey("");
                           }}
                         />
+                        <span>This purchase is through a representative.</span>
+                      </label>
+                      {bnpcRepresentativePurchase && (
+                        <>
+                          <Field
+                            id="bnpc-authorization-date"
+                            label="Authorization letter issue date"
+                          >
+                            <input
+                              id="bnpc-authorization-date"
+                              className="text-input"
+                              type="date"
+                              required
+                              value={bnpcAuthorizationLetterDate}
+                              onChange={(event) => {
+                                setBnpcAuthorizationLetterDate(
+                                  event.target.value,
+                                );
+                                setRequestKey("");
+                              }}
+                            />
+                          </Field>
+                          <label className="inventory-checkbox">
+                            <input
+                              type="checkbox"
+                              required
+                              checked={bnpcRepresentativeDocsChecked}
+                              onChange={(event) => {
+                                setBnpcRepresentativeDocsChecked(
+                                  event.target.checked,
+                                );
+                                setRequestKey("");
+                              }}
+                            />
+                            <span>
+                              I checked the required representative and holder
+                              IDs, booklet, and authorization documents.
+                            </span>
+                          </label>
+                          <label className="inventory-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={bnpcPrescriptionApplicable}
+                              onChange={(event) => {
+                                setBnpcPrescriptionApplicable(
+                                  event.target.checked,
+                                );
+                                if (!event.target.checked) {
+                                  setBnpcPrescriptionChecked(false);
+                                }
+                                setRequestKey("");
+                              }}
+                            />
+                            <span>
+                              A medical prescription applies to this
+                              representative purchase, if required.
+                            </span>
+                          </label>
+                          {bnpcPrescriptionApplicable && (
+                            <label className="inventory-checkbox">
+                              <input
+                                type="checkbox"
+                                required
+                                checked={bnpcPrescriptionChecked}
+                                onChange={(event) => {
+                                  setBnpcPrescriptionChecked(
+                                    event.target.checked,
+                                  );
+                                  setRequestKey("");
+                                }}
+                              />
+                              <span>
+                                I checked the applicable prescription.
+                              </span>
+                            </label>
+                          )}
+                        </>
+                      )}
+                      <label className="inventory-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={bnpcFourKindsChecked}
+                          onChange={(event) => {
+                            setBnpcFourKindsChecked(event.target.checked);
+                            setRequestKey("");
+                          }}
+                        />
                         <span>
-                          A medical prescription applies to this representative
-                          purchase, if required.
+                          I verified the four-kind condition from the booklet if
+                          this purchase reaches the full weekly purchase cap.
                         </span>
                       </label>
-                      {bnpcPrescriptionApplicable && (
-                        <label className="inventory-checkbox">
-                          <input
-                            type="checkbox"
-                            required
-                            checked={bnpcPrescriptionChecked}
-                            onChange={(event) => {
-                              setBnpcPrescriptionChecked(event.target.checked);
-                              setRequestKey("");
-                            }}
-                          />
-                          <span>I checked the applicable prescription.</span>
-                        </label>
-                      )}
-                    </>
+                    </div>
                   )}
-                  <label className="inventory-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={bnpcFourKindsChecked}
-                      onChange={(event) => {
-                        setBnpcFourKindsChecked(event.target.checked);
-                        setRequestKey("");
-                      }}
-                    />
-                    <span>
-                      I verified the four-kind condition from the booklet if
-                      this purchase reaches the full weekly purchase cap.
-                    </span>
-                  </label>
-                </div>
+                </>
               )}
               <Field id="sale-payment-method" label="Payment declaration">
                 <select
@@ -6770,17 +6854,17 @@ export function CheckoutPage({
                   <span>
                     Regular components{" "}
                     <b className="checkout-line-price">
-                      ₱{bundle.regularTotal}
+                      {formatCurrency(bundle.regularTotal)}
                     </b>
                     {" · advertised "}
                     <b className="checkout-line-price">
-                      ₱{bundle.promotionalPricePerBundle}
+                      {formatCurrency(bundle.promotionalPricePerBundle)}
                     </b>
                     {` × ${bundle.quantity}`}
                   </span>
                   <small className="checkout-line-discount">
-                    Promotion discount applied −₱
-                    {bundle.promotionalDiscountApplied}
+                    Promotion discount applied −
+                    {formatCurrency(`-${bundle.promotionalDiscountApplied}`)}
                   </small>
                   <small>
                     When a component receives a better SC/PWD treatment, that
@@ -6796,11 +6880,18 @@ export function CheckoutPage({
                   >
                     {line.bundle && (
                       <small>
-                        Regular ₱{line.bundle.regularGross}; allocated promotion
-                        ₱{line.bundle.allocatedPromotionDiscount}; promotion
-                        outcome ₱{line.bundle.promotionAlternativeAmountDue};
-                        statutory outcome ₱
-                        {line.bundle.statutoryAlternativeAmountDue}; selected{" "}
+                        Regular {formatCurrency(line.bundle.regularGross)};
+                        allocated promotion
+                        {formatCurrency(line.bundle.allocatedPromotionDiscount)}
+                        ; promotion outcome{" "}
+                        {formatCurrency(
+                          line.bundle.promotionAlternativeAmountDue,
+                        )}
+                        ; statutory outcome{" "}
+                        {formatCurrency(
+                          line.bundle.statutoryAlternativeAmountDue,
+                        )}
+                        ; selected{" "}
                         {line.bundle.promotionSelected
                           ? "promotion"
                           : line.bundle.selectedStatutoryTreatment}
@@ -6810,17 +6901,18 @@ export function CheckoutPage({
                       {line.name} × {line.quantity}
                     </strong>
                     <small>
-                      Tax basis ₱{line.taxBasis} · VAT ₱{line.vat}
+                      Tax basis {formatCurrency(line.taxBasis)} · VAT{" "}
+                      {formatCurrency(line.vat)}
                       {centsFromMoney(line.vatRemoved) > 0n
-                        ? ` · VAT removed ₱${line.vatRemoved}`
+                        ? ` · VAT removed ${formatCurrency(line.vatRemoved)}`
                         : ""}
                     </small>
                     <small className="checkout-line-discount">
-                      Discount −₱{line.discount}
+                      Discount −{formatCurrency(line.discount)}
                     </small>
                     {centsFromMoney(line.bnpcDiscount) > 0n && (
                       <small className="checkout-line-discount">
-                        BNPC discount −₱{line.bnpcDiscount}
+                        BNPC discount −{formatCurrency(line.bnpcDiscount)}
                       </small>
                     )}
                     {line.assignedLots.length > 0 && (
@@ -6835,7 +6927,7 @@ export function CheckoutPage({
                       </small>
                     )}
                     <span className="checkout-line-price">
-                      Line due ₱{line.amountDue}
+                      Line due {formatCurrency(line.amountDue)}
                     </span>
                   </div>
                 ))}
@@ -6847,7 +6939,7 @@ export function CheckoutPage({
                     ? "Rounded cash total"
                     : "Amount due"}
                 </span>
-                <strong>₱{preview.totals.amountDue}</strong>
+                <strong>{formatCurrency(preview.totals.amountDue)}</strong>
               </div>
               {!manualEntry && preview.paymentMethod === "CASH" && (
                 <div className="checkout-cash-tender">
@@ -6855,7 +6947,7 @@ export function CheckoutPage({
                     Cash received from customer
                   </label>
                   <div className="checkout-cash-tender-input">
-                    <span>₱</span>
+                    <span>{currencySymbol()}</span>
                     <input
                       id="cash-received-amount"
                       className="text-input"
@@ -6906,9 +6998,9 @@ export function CheckoutPage({
               {preview.paymentMethod === "CASH" &&
                 preview.policy.cashRoundingMode === "NEAREST_25_CENTAVOS" && (
                   <small className="field-hint checkout-rounding-note">
-                    Line total before cash rounding: ₱
-                    {preview.totals.amountBeforeCashRounding} · cash rounding
-                    adjustment:{" "}
+                    Line total before cash rounding:{" "}
+                    {formatCurrency(preview.totals.amountBeforeCashRounding)} ·
+                    cash rounding adjustment:{" "}
                     {formatCents(
                       centsFromMoney(preview.totals.cashRoundingAdjustment),
                     )}
@@ -6963,7 +7055,7 @@ export function CheckoutPage({
                 <span>Business date: {saleRecord.businessDate}</span>
               )}
               <span>
-                ₱{saleRecord.amountDue} ·{" "}
+                {formatCurrency(saleRecord.amountDue)} ·{" "}
                 {saleRecord.paymentMethod === "QR" ? "QR declared" : "Cash"}
               </span>
               {saleRecord.cashRoundingMode === "NEAREST_25_CENTAVOS" &&

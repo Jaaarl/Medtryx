@@ -1,3 +1,4 @@
+import { formatCents as formatCurrencyFromCents } from "./currency";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { ArrowDownToLine, Check, Search } from "lucide-react";
@@ -45,8 +46,8 @@ type OverrideRecord = {
 
 type ProductOption = { id: string; sku: string; name: string };
 
-function pesoFromCentavos(value: number): string {
-  return `₱${(value / 100).toFixed(2)}`;
+function currencyFromCents(value: number): string {
+  return formatCurrencyFromCents(value);
 }
 
 function manilaDateTime(value: string): string {
@@ -322,8 +323,9 @@ export function CheckoutOverridesPanel() {
                     {record.estimatedCost ? " · estimated" : ""}
                   </span>
                   <span>
-                    {pesoFromCentavos(record.unitCostCentavos)} each ·{" "}
-                    {pesoFromCentavos(record.inventoryValueDeltaCentavos)} added
+                    {currencyFromCents(record.unitCostCentavos)} each ·{" "}
+                    {currencyFromCents(record.inventoryValueDeltaCentavos)}{" "}
+                    added
                   </span>
                 </div>
                 {record.reviewStatus === "REVIEWED" && (

@@ -38,6 +38,11 @@ import {
 } from "lucide-react";
 import type { User } from "@medtryx/shared";
 import { api, ApiError } from "./api";
+import {
+  currencyCode,
+  currencySymbol,
+  usesPhpRegionalPolicies,
+} from "./currency";
 import { useAuth } from "./auth-context";
 import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
 import { SalesHistoryPage } from "./sales-history";
@@ -174,7 +179,7 @@ function Layout() {
             <span className="brand-mark">M</span>
             <span className="brand-copy">
               <strong>medtryx</strong>
-              <small>PHARMACY OPERATIONS</small>
+              <small>STORE OPERATIONS</small>
             </span>
           </Link>
         </div>
@@ -316,7 +321,7 @@ function LoginPage() {
           <span className="brand-mark">M</span>
           <span>
             <strong>medtryx</strong>
-            <small>PHARMACY OPERATIONS</small>
+            <small>STORE OPERATIONS</small>
           </span>
         </div>
         <div className="story-content">
@@ -330,12 +335,12 @@ function LoginPage() {
           </h1>
           <p>
             Sales, stock, and daily operations in one calm workspace built for
-            your pharmacy team.
+            your store team.
           </p>
           <div className="story-points">
             <div>
               <ShieldCheck size={17} />
-              <span>Private to your pharmacy network</span>
+              <span>Access controlled for your team</span>
             </div>
             <div>
               <Activity size={17} />
@@ -350,7 +355,7 @@ function LoginPage() {
           <span className="brand-mark">M</span>
           <span>
             <strong>medtryx</strong>
-            <small>PHARMACY OPERATIONS</small>
+            <small>STORE OPERATIONS</small>
           </span>
         </div>
         <div className="login-form-wrap">
@@ -659,6 +664,17 @@ function SettingsPage() {
           {notice}
         </div>
       )}
+      <div className="settings-main-card currency-summary-card">
+        <div className="card-heading">
+          <div>
+            <h2>Store currency</h2>
+            <p>
+              This installation uses {currencyCode()} ({currencySymbol()}) for
+              all money amounts.
+            </p>
+          </div>
+        </div>
+      </div>
       <div className="settings-grid">
         <div className="settings-main-card">
           <div className="card-heading">
@@ -836,7 +852,7 @@ function SettingsPage() {
         )}
       </div>
       <TaxPolicySettings />
-      <BnpcPolicySettings />
+      {usesPhpRegionalPolicies() && <BnpcPolicySettings />}
       <CheckoutInventorySettings />
     </section>
   );

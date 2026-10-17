@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { api } from "./api";
+import { currencyCode } from "./currency";
 
 type Policy = {
   versionId: string;
@@ -280,7 +281,7 @@ export function BnpcPolicySettings() {
           </div>
           <Field
             id="bnpc-policy-purchase-limit"
-            label="Weekly qualifying-purchase limit (PHP)"
+            label={`Weekly qualifying-purchase limit (${currencyCode()})`}
           >
             <input
               id="bnpc-policy-purchase-limit"
@@ -295,7 +296,7 @@ export function BnpcPolicySettings() {
           </Field>
           <Field
             id="bnpc-policy-discount-limit"
-            label="Weekly discount limit (PHP)"
+            label={`Weekly discount limit (${currencyCode()})`}
           >
             <input
               id="bnpc-policy-discount-limit"

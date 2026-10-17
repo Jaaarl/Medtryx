@@ -1,3 +1,4 @@
+import { formatCurrency, usesPhpRegionalPolicies } from "./currency";
 import { useEffect, useState } from "react";
 import { Check, Pencil, RefreshCw, X } from "lucide-react";
 import { api } from "./api";
@@ -170,6 +171,9 @@ export function JournalPage() {
     editingId === entry.sourceBusinessDate && draft !== null;
   const draftValue = (entry: JournalEntry) =>
     isEditing(entry) ? draft! : draftFor(entry);
+  const visibleMoneyFields = usesPhpRegionalPolicies()
+    ? moneyFields
+    : moneyFields.filter(({ key }) => key !== "seniorDiscount");
 
   return (
     <section className="page-section reports-page journal-page">
@@ -275,7 +279,7 @@ export function JournalPage() {
                     <th>MONTH</th>
                     <th>DATE</th>
                     <th>INVOICE NUMBER RANGE</th>
-                    {moneyFields.map(({ key, label }) => (
+                    {visibleMoneyFields.map(({ key, label }) => (
                       <th key={key}>{label.toUpperCase()}</th>
                     ))}
                     <th>ACTION</th>
@@ -347,7 +351,7 @@ export function JournalPage() {
                             entry.invoiceNumberRange
                           )}
                         </td>
-                        {moneyFields.map(({ key, label }) => (
+                        {visibleMoneyFields.map(({ key, label }) => (
                           <td key={key}>
                             {editing ? (
                               <input
@@ -365,7 +369,7 @@ export function JournalPage() {
                                 }
                               />
                             ) : (
-                              `₱${entry[key]}`
+                              `${formatCurrency(entry[key])}`
                             )}
                           </td>
                         ))}

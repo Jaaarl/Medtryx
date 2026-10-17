@@ -17,6 +17,7 @@ import {
   type ActivityLogResponse,
 } from "@medtryx/shared";
 import { api, ApiError } from "./api";
+import { formatCents as formatCurrencyFromCents } from "./currency";
 import "./activity-log-page.css";
 
 type Filters = {
@@ -83,10 +84,7 @@ function formatTime(value: string): string {
 }
 
 function money(centavos: number): string {
-  return (centavos / 100).toLocaleString("en-PH", {
-    style: "currency",
-    currency: "PHP",
-  });
+  return formatCurrencyFromCents(centavos);
 }
 
 function valueLabel(value: unknown, key: string): string {

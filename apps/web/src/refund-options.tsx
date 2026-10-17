@@ -1,3 +1,5 @@
+import { formatCurrency } from "./currency";
+import { formatCents as formatCurrencyFromCents } from "./currency";
 import { calculateRefundTotal, prorateCentavos } from "@medtryx/shared";
 
 export type RefundLine = {
@@ -184,8 +186,8 @@ export function RefundOptions({
                 </label>
                 {validQuantity && (
                   <small className="field-hint">
-                    Item refund: ₱
-                    {money(
+                    Item refund:{" "}
+                    {formatCurrencyFromCents(
                       prorateCentavos(
                         cents(line.amountDue),
                         quantity,
@@ -243,7 +245,9 @@ export function RefundOptions({
       <div className="sale-detail-total" role="status" aria-live="polite">
         <span>Amount to refund customer</span>
         <strong>
-          {review.valid ? `₱${review.total}` : "Select valid quantities"}
+          {review.valid
+            ? `${formatCurrency(review.total)}`
+            : "Select valid quantities"}
         </strong>
       </div>
       <small className="field-hint">

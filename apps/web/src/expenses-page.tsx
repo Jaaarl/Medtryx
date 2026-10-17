@@ -1,3 +1,4 @@
+import { currencySymbol, formatCurrency } from "./currency";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
@@ -160,7 +161,7 @@ export function ExpensesPage() {
           : {}),
       });
       setNotice(
-        `${stockPurchase ? "Stock purchase payment recorded; excluded from operating expenses." : result.expense.includedInUnitCost ? "Delivery payment recorded; already included in unit cost." : "Expense recorded."}${result.expectedCash !== null ? ` Expected cashier cash: ₱${result.expectedCash}.` : " Paid by owner."}`,
+        `${stockPurchase ? "Stock purchase payment recorded; excluded from operating expenses." : result.expense.includedInUnitCost ? "Delivery payment recorded; already included in unit cost." : "Expense recorded."}${result.expectedCash !== null ? ` Expected cashier cash: ${formatCurrency(result.expectedCash)}.` : " Paid by owner."}`,
       );
       requestKey.current = "";
       setAmount("");
@@ -238,30 +239,30 @@ export function ExpensesPage() {
         <div className="report-summary-strip expense-summary-strip">
           <div>
             <span>OPERATING EXPENSES</span>
-            <strong>₱{data.totals.operatingExpenses}</strong>
+            <strong>{formatCurrency(data.totals.operatingExpenses)}</strong>
           </div>
           <div>
             <span>PAID FROM CASHIER</span>
-            <strong>₱{data.totals.cashierPaid}</strong>
+            <strong>{formatCurrency(data.totals.cashierPaid)}</strong>
           </div>
           <div>
             <span>PAID BY OWNER</span>
-            <strong>₱{data.totals.ownerPaid}</strong>
+            <strong>{formatCurrency(data.totals.ownerPaid)}</strong>
           </div>
           <div>
             <span>STOCK PURCHASE / COD PAYMENTS</span>
-            <strong>₱{data.totals.stockPurchasePayments}</strong>
+            <strong>{formatCurrency(data.totals.stockPurchasePayments)}</strong>
           </div>
           <div>
             <span>STOCK PRODUCTS / DELIVERY FEES</span>
             <strong>
-              ₱{data.totals.stockProductPayments} / ₱
-              {data.totals.stockDeliveryFees}
+              {formatCurrency(data.totals.stockProductPayments)} /{" "}
+              {formatCurrency(data.totals.stockDeliveryFees)}
             </strong>
           </div>
           <div>
             <span>SEPARATE FEES ALREADY IN UNIT COST</span>
-            <strong>₱{data.totals.includedInUnitCost}</strong>
+            <strong>{formatCurrency(data.totals.includedInUnitCost)}</strong>
           </div>
         </div>
       )}
@@ -344,10 +345,10 @@ export function ExpensesPage() {
                 <label className="inventory-field">
                   <span>
                     {stockPurchase
-                      ? "Product amount (₱)"
+                      ? `Product amount (${currencySymbol()})`
                       : category === "DELIVERY"
-                        ? "Delivery fee (₱)"
-                        : "Amount (₱)"}
+                        ? `Delivery fee (${currencySymbol()})`
+                        : `Amount (${currencySymbol()})`}
                   </span>
                   <input
                     className="text-input"
@@ -365,7 +366,7 @@ export function ExpensesPage() {
                   <>
                     <div className="inventory-field">
                       <label htmlFor="expense-delivery-fee">
-                        Separate delivery fee (₱, optional)
+                        Separate delivery fee ({currencySymbol()}, optional)
                       </label>
                       <input
                         id="expense-delivery-fee"
@@ -443,18 +444,22 @@ export function ExpensesPage() {
                   <dl className="expense-payment-breakdown">
                     <div>
                       <dt>Products</dt>
-                      <dd>₱{paymentTotal(amount, "0") || "0.00"}</dd>
+                      <dd>
+                        {formatCurrency(paymentTotal(amount, "0") || "0.00")}
+                      </dd>
                     </div>
                     <div>
                       <dt>Delivery fee</dt>
                       <dd>
-                        ₱{paymentTotal(deliveryFee || "0", "0") || "0.00"}
+                        {formatCurrency(
+                          paymentTotal(deliveryFee || "0", "0") || "0.00",
+                        )}
                       </dd>
                     </div>
                   </dl>
                 )}
                 <strong className="expense-payment-total">
-                  Total payment: ₱{totalPayment || "0.00"}
+                  Total payment: {formatCurrency(totalPayment || "0.00")}
                 </strong>
                 <p className="expense-review-note">
                   {stockPurchase
@@ -471,8 +476,8 @@ export function ExpensesPage() {
                           Charged to {data.registerShift.cashierEmail}
                         </strong>
                         <span>
-                          Expected drawer cash: ₱
-                          {data.registerShift.expectedCash}
+                          Expected drawer cash:{" "}
+                          {formatCurrency(data.registerShift.expectedCash)}
                         </span>
                         <span>
                           Payments can be recorded even if this balance goes

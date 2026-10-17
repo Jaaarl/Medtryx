@@ -1,3 +1,4 @@
+import { formatCurrency, usesPhpRegionalPolicies } from "./currency";
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "./api";
@@ -168,12 +169,13 @@ export function DailySalesSummaryPage() {
             </div>
             <div>
               <span>TOTAL SALES</span>
-              <strong>₱{summary.totals.sales}</strong>
+              <strong>{formatCurrency(summary.totals.sales)}</strong>
             </div>
             <div>
               <span>CASH / QR</span>
               <strong>
-                ₱{summary.totals.cashSales} / ₱{summary.totals.qrSales}
+                {formatCurrency(summary.totals.cashSales)} /{" "}
+                {formatCurrency(summary.totals.qrSales)}
               </strong>
             </div>
           </div>
@@ -181,19 +183,25 @@ export function DailySalesSummaryPage() {
           <div className="report-summary-strip">
             <div>
               <span>OPERATING EXPENSES</span>
-              <strong>₱{summary.expenseTotals.operatingExpenses}</strong>
+              <strong>
+                {formatCurrency(summary.expenseTotals.operatingExpenses)}
+              </strong>
             </div>
             <div>
               <span>PAID FROM CASHIER</span>
-              <strong>₱{summary.expenseTotals.cashierPaid}</strong>
+              <strong>
+                {formatCurrency(summary.expenseTotals.cashierPaid)}
+              </strong>
             </div>
             <div>
               <span>PAID BY OWNER</span>
-              <strong>₱{summary.expenseTotals.ownerPaid}</strong>
+              <strong>{formatCurrency(summary.expenseTotals.ownerPaid)}</strong>
             </div>
             <div>
               <span>SEPARATE FEES ALREADY IN UNIT COST</span>
-              <strong>₱{summary.expenseTotals.includedInUnitCost}</strong>
+              <strong>
+                {formatCurrency(summary.expenseTotals.includedInUnitCost)}
+              </strong>
             </div>
           </div>
           <section className="settings-main-card report-low-stock">
@@ -209,25 +217,31 @@ export function DailySalesSummaryPage() {
             <div className="report-summary-strip">
               <div>
                 <span>TOTAL STOCK PAYMENTS</span>
-                <strong>₱{summary.expenseTotals.stockPurchasePayments}</strong>
+                <strong>
+                  {formatCurrency(summary.expenseTotals.stockPurchasePayments)}
+                </strong>
               </div>
               <div>
                 <span>PRODUCTS / DELIVERY FEES</span>
                 <strong>
-                  ₱{summary.expenseTotals.stockProductPayments} / ₱
-                  {summary.expenseTotals.stockDeliveryFees}
+                  {formatCurrency(summary.expenseTotals.stockProductPayments)} /{" "}
+                  {formatCurrency(summary.expenseTotals.stockDeliveryFees)}
                 </strong>
               </div>
               <div>
                 <span>STOCK PAID FROM CASHIER</span>
                 <strong>
-                  ₱{summary.expenseTotals.cashierPaidStockPurchases}
+                  {formatCurrency(
+                    summary.expenseTotals.cashierPaidStockPurchases,
+                  )}
                 </strong>
               </div>
               <div>
                 <span>STOCK PAID BY OWNER</span>
                 <strong>
-                  ₱{summary.expenseTotals.ownerPaidStockPurchases}
+                  {formatCurrency(
+                    summary.expenseTotals.ownerPaidStockPurchases,
+                  )}
                 </strong>
               </div>
             </div>
@@ -248,7 +262,7 @@ export function DailySalesSummaryPage() {
                     <tr>
                       <th>MONTH</th>
                       <th>INVOICE NUMBER RANGE</th>
-                      <th>SENIOR DISCOUNT</th>
+                      {usesPhpRegionalPolicies() && <th>SENIOR DISCOUNT</th>}
                       <th>NON-VAT SALES</th>
                       <th>VATABLE SALES</th>
                       <th>TOTAL VAT</th>
@@ -269,14 +283,32 @@ export function DailySalesSummaryPage() {
                         })}
                       </td>
                       <td>{summary.salesBreakdown.invoiceNumberRange}</td>
-                      <td>₱{summary.salesBreakdown.seniorDiscount}</td>
-                      <td>₱{summary.salesBreakdown.nonVat}</td>
-                      <td>₱{summary.salesBreakdown.vatableSales}</td>
-                      <td>₱{summary.salesBreakdown.totalVat}</td>
-                      <td>₱{summary.salesBreakdown.grossSales}</td>
-                      <td>₱{summary.salesBreakdown.netSales}</td>
-                      <td>₱{summary.expenseTotals.operatingExpenses}</td>
-                      <td>₱{summary.expenseTotals.stockPurchasePayments}</td>
+                      {usesPhpRegionalPolicies() && (
+                        <td>
+                          {formatCurrency(
+                            summary.salesBreakdown.seniorDiscount,
+                          )}
+                        </td>
+                      )}
+                      <td>{formatCurrency(summary.salesBreakdown.nonVat)}</td>
+                      <td>
+                        {formatCurrency(summary.salesBreakdown.vatableSales)}
+                      </td>
+                      <td>{formatCurrency(summary.salesBreakdown.totalVat)}</td>
+                      <td>
+                        {formatCurrency(summary.salesBreakdown.grossSales)}
+                      </td>
+                      <td>{formatCurrency(summary.salesBreakdown.netSales)}</td>
+                      <td>
+                        {formatCurrency(
+                          summary.expenseTotals.operatingExpenses,
+                        )}
+                      </td>
+                      <td>
+                        {formatCurrency(
+                          summary.expenseTotals.stockPurchasePayments,
+                        )}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -319,9 +351,9 @@ export function DailySalesSummaryPage() {
                           {shift.closedAt ? localTime(shift.closedAt) : "Open"}
                         </td>
                         <td>{shift.transactionCount}</td>
-                        <td>₱{shift.sales}</td>
-                        <td>₱{shift.cashSales}</td>
-                        <td>₱{shift.qrSales}</td>
+                        <td>{formatCurrency(shift.sales)}</td>
+                        <td>{formatCurrency(shift.cashSales)}</td>
+                        <td>{formatCurrency(shift.qrSales)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -378,7 +410,7 @@ export function DailySalesSummaryPage() {
                           <td>{product.name}</td>
                           <td>{product.sku}</td>
                           <td>{product.quantity}</td>
-                          <td>₱{product.sales}</td>
+                          <td>{formatCurrency(product.sales)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -411,7 +443,7 @@ export function DailySalesSummaryPage() {
                           <div className="daily-sales-transaction-meta">
                             {transaction.cashierEmail} ·{" "}
                             {transaction.paymentMethod}
-                            {" · "}Total ₱{transaction.sales}
+                            {" · "}Total {formatCurrency(transaction.sales)}
                           </div>
                         </td>
                       </tr>
@@ -423,7 +455,7 @@ export function DailySalesSummaryPage() {
                           <td>{product.name}</td>
                           <td>{product.sku}</td>
                           <td>{product.quantity}</td>
-                          <td>₱{product.sales}</td>
+                          <td>{formatCurrency(product.sales)}</td>
                         </tr>
                       ))}
                     </tbody>

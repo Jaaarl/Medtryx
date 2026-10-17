@@ -1,3 +1,4 @@
+import { formatCurrency } from "./currency";
 import type { ExpenseEntry } from "@medtryx/shared";
 
 export const expenseLabels = {
@@ -54,8 +55,8 @@ export function ExpenseHistory({
                     {expense.category === "STOCK_PURCHASE" && (
                       <>
                         <small>
-                          Products ₱{expense.productAmount} + delivery ₱
-                          {expense.deliveryFee}
+                          Products {formatCurrency(expense.productAmount)} +
+                          delivery {formatCurrency(expense.deliveryFee)}
                         </small>
                         {expense.supplier && (
                           <small>Supplier: {expense.supplier}</small>
@@ -75,9 +76,9 @@ export function ExpenseHistory({
                       <small>Already in inventory unit cost</small>
                     )}
                   </td>
-                  <td data-label="Payment">₱{expense.amount}</td>
+                  <td data-label="Payment">{formatCurrency(expense.amount)}</td>
                   <td data-label="Operating expense">
-                    ₱{expense.operatingExpense}
+                    {formatCurrency(expense.operatingExpense)}
                   </td>
                   <td data-label="Paid by">
                     {expense.paymentSource === "OWNER" ? "Owner" : "Cashier"}

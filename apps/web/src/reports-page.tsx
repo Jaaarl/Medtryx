@@ -1,3 +1,4 @@
+import { formatCurrency, usesPhpRegionalPolicies } from "./currency";
 import { useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { api } from "./api";
@@ -235,12 +236,15 @@ export function ReportsPage() {
         startDate: selectedStart,
         endDate: selectedEnd,
       });
+      const benefitsPromise = usesPhpRegionalPolicies()
+        ? api.get<{ transactions: BenefitTransaction[] }>(
+            `/reports/beneficiaries/range?${query}`,
+          )
+        : Promise.resolve({ transactions: [] as BenefitTransaction[] });
       const [nextReport, nextBenefits, nextDailySalesEntries] =
         await Promise.all([
           fetchReport(selectedStart, selectedEnd),
-          api.get<{ transactions: BenefitTransaction[] }>(
-            `/reports/beneficiaries/range?${query}`,
-          ),
+          benefitsPromise,
           fetchDailySales(selectedStart, selectedEnd),
         ]);
       setReport(nextReport);
@@ -260,11 +264,14 @@ export function ReportsPage() {
   useEffect(() => {
     let active = true;
     const query = new URLSearchParams({ startDate, endDate });
+    const benefitsPromise = usesPhpRegionalPolicies()
+      ? api.get<{ transactions: BenefitTransaction[] }>(
+          `/reports/beneficiaries/range?${query}`,
+        )
+      : Promise.resolve({ transactions: [] as BenefitTransaction[] });
     void Promise.all([
       fetchReport(startDate, endDate),
-      api.get<{ transactions: BenefitTransaction[] }>(
-        `/reports/beneficiaries/range?${query}`,
-      ),
+      benefitsPromise,
       fetchDailySales(startDate, endDate),
     ])
       .then(([nextReport, nextBenefits, nextDailySalesEntries]) => {
@@ -324,7 +331,7 @@ export function ReportsPage() {
   const metricValue = (key: string) =>
     key === "reversalCount"
       ? String(report?.reversalCount ?? 0)
-      : `₱${report?.metrics[key] ?? "0.00"}`;
+      : `${formatCurrency(report?.metrics[key] ?? "0.00")}`;
 
   return (
     <section className="page-section reports-page">
@@ -433,24 +440,33 @@ export function ReportsPage() {
             </div>
             <div>
               <span>CURRENT INVENTORY VALUE</span>
-              <strong>₱{report.inventory.inventoryValue}</strong>
+              <strong>{formatCurrency(report.inventory.inventoryValue)}</strong>
             </div>
           </div>
 
           <div className="report-group-grid">
-            {metricGroups.map((group) => (
-              <section className="report-group-card" key={group.heading}>
-                <h2>{group.heading}</h2>
-                <dl>
-                  {group.metrics.map(([label, key]) => (
-                    <div className="report-metric-row" key={key}>
-                      <dt>{label}</dt>
-                      <dd>{metricValue(key)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            ))}
+            {metricGroups.map((group) => {
+              const metrics = group.metrics.filter(
+                ([, key]) =>
+                  usesPhpRegionalPolicies() ||
+                  !["vatRemoved", "seniorDiscounts", "pwdDiscounts"].includes(
+                    key,
+                  ),
+              );
+              return (
+                <section className="report-group-card" key={group.heading}>
+                  <h2>{group.heading}</h2>
+                  <dl>
+                    {metrics.map(([label, key]) => (
+                      <div className="report-metric-row" key={key}>
+                        <dt>{label}</dt>
+                        <dd>{metricValue(key)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              );
+            })}
           </div>
 
           <section className="settings-main-card report-low-stock">
@@ -474,7 +490,7 @@ export function ReportsPage() {
                       <th>Month</th>
                       <th>Date</th>
                       <th>Invoice number range</th>
-                      <th>Senior discount</th>
+                      {usesPhpRegionalPolicies() && <th>Senior discount</th>}
                       <th>Non-VAT sales</th>
                       <th>VATable sales</th>
                       <th>Total VAT</th>
@@ -497,21 +513,25 @@ export function ReportsPage() {
                         <td>{monthLabel(entry.month)}</td>
                         <td>{entry.date}</td>
                         <td>{entry.invoiceNumberRange}</td>
-                        <td>₱{entry.seniorDiscount}</td>
-                        <td>₱{entry.nonVat}</td>
-                        <td>₱{entry.vatableSales}</td>
-                        <td>₱{entry.totalVat}</td>
-                        <td>₱{entry.grossSales}</td>
-                        <td>₱{entry.netSales}</td>
-                        <td>₱{entry.operatingExpenses}</td>
-                        <td>₱{entry.stockPurchasePayments}</td>
-                        <td>₱{entry.stockProductPayments}</td>
-                        <td>₱{entry.stockDeliveryFees}</td>
-                        <td>₱{entry.cashierPaidStockPurchases}</td>
-                        <td>₱{entry.ownerPaidStockPurchases}</td>
-                        <td>₱{entry.cashierPaidExpenses}</td>
-                        <td>₱{entry.ownerPaidExpenses}</td>
-                        <td>₱{entry.inventoryCostPayments}</td>
+                        {usesPhpRegionalPolicies() && (
+                          <td>{formatCurrency(entry.seniorDiscount)}</td>
+                        )}
+                        <td>{formatCurrency(entry.nonVat)}</td>
+                        <td>{formatCurrency(entry.vatableSales)}</td>
+                        <td>{formatCurrency(entry.totalVat)}</td>
+                        <td>{formatCurrency(entry.grossSales)}</td>
+                        <td>{formatCurrency(entry.netSales)}</td>
+                        <td>{formatCurrency(entry.operatingExpenses)}</td>
+                        <td>{formatCurrency(entry.stockPurchasePayments)}</td>
+                        <td>{formatCurrency(entry.stockProductPayments)}</td>
+                        <td>{formatCurrency(entry.stockDeliveryFees)}</td>
+                        <td>
+                          {formatCurrency(entry.cashierPaidStockPurchases)}
+                        </td>
+                        <td>{formatCurrency(entry.ownerPaidStockPurchases)}</td>
+                        <td>{formatCurrency(entry.cashierPaidExpenses)}</td>
+                        <td>{formatCurrency(entry.ownerPaidExpenses)}</td>
+                        <td>{formatCurrency(entry.inventoryCostPayments)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -581,9 +601,9 @@ export function ReportsPage() {
                         <td>{change.reason}</td>
                         <td>
                           {change.payment
-                            ? `Cash ₱${change.payment.cashAmount} → QR ₱${change.payment.qrAmount}`
+                            ? `Cash ${formatCurrency(change.payment.cashAmount)} → QR ${formatCurrency(change.payment.qrAmount)}`
                             : change.refund
-                              ? `${change.refund.method} refund ₱${change.refund.amount}`
+                              ? `${change.refund.method} refund ${formatCurrency(change.refund.amount)}`
                               : "—"}
                         </td>
                       </tr>
@@ -598,77 +618,79 @@ export function ReportsPage() {
             )}
           </section>
 
-          <section className="settings-main-card report-low-stock">
-            <div className="card-heading">
-              <div>
-                <h2>Senior citizen and PWD customers</h2>
-                <p>
-                  Benefit use and products for each sale in the selected Manila
-                  date range.
-                </p>
+          {usesPhpRegionalPolicies() && (
+            <section className="settings-main-card report-low-stock">
+              <div className="card-heading">
+                <div>
+                  <h2>Senior citizen and PWD customers</h2>
+                  <p>
+                    Benefit use and products for each sale in the selected
+                    Manila date range.
+                  </p>
+                </div>
+                <span className="count-chip">
+                  {benefitTransactions.length} transactions
+                </span>
               </div>
-              <span className="count-chip">
-                {benefitTransactions.length} transactions
-              </span>
-            </div>
-            {benefitTransactions.length ? (
-              <div className="inventory-table-wrap">
-                <table className="inventory-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Customer</th>
-                      <th>ID number</th>
-                      <th>Benefit</th>
-                      <th>Products</th>
-                      <th>Transaction</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {benefitTransactions.map((transaction) => (
-                      <tr key={transaction.transactionId}>
-                        <td>
-                          {new Date(transaction.createdAt).toLocaleString(
-                            "en-PH",
-                            {
-                              timeZone: "Asia/Manila",
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            },
-                          )}
-                        </td>
-                        <td>{transaction.customerName}</td>
-                        <td>{transaction.customerIdNumber}</td>
-                        <td>
-                          {transaction.benefitType === "SENIOR_CITIZEN"
-                            ? "Senior citizen"
-                            : "PWD"}
-                        </td>
-                        <td>
-                          {transaction.products
-                            .map(
-                              (product) =>
-                                `${product.name} × ${product.quantity}`,
-                            )
-                            .join(", ")}
-                        </td>
-                        <td>{transaction.transactionId}</td>
+              {benefitTransactions.length ? (
+                <div className="inventory-table-wrap">
+                  <table className="inventory-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Customer</th>
+                        <th>ID number</th>
+                        <th>Benefit</th>
+                        <th>Products</th>
+                        <th>Transaction</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="report-empty">
-                No senior citizen or PWD purchases appear in the selected
-                period.
-              </p>
-            )}
-            <small className="field-hint">
-              Customer names and ID numbers are shown to owners only. Each list
-              view is recorded in the audit history.
-            </small>
-          </section>
+                    </thead>
+                    <tbody>
+                      {benefitTransactions.map((transaction) => (
+                        <tr key={transaction.transactionId}>
+                          <td>
+                            {new Date(transaction.createdAt).toLocaleString(
+                              "en-PH",
+                              {
+                                timeZone: "Asia/Manila",
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              },
+                            )}
+                          </td>
+                          <td>{transaction.customerName}</td>
+                          <td>{transaction.customerIdNumber}</td>
+                          <td>
+                            {transaction.benefitType === "SENIOR_CITIZEN"
+                              ? "Senior citizen"
+                              : "PWD"}
+                          </td>
+                          <td>
+                            {transaction.products
+                              .map(
+                                (product) =>
+                                  `${product.name} × ${product.quantity}`,
+                              )
+                              .join(", ")}
+                          </td>
+                          <td>{transaction.transactionId}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="report-empty">
+                  No senior citizen or PWD purchases appear in the selected
+                  period.
+                </p>
+              )}
+              <small className="field-hint">
+                Customer names and ID numbers are shown to owners only. Each
+                list view is recorded in the audit history.
+              </small>
+            </section>
+          )}
 
           <section className="settings-main-card report-low-stock">
             <div className="card-heading">
@@ -700,10 +722,16 @@ export function ReportsPage() {
                           {bundle.code} · {bundle.name} · v{bundle.version}
                         </td>
                         <td>{bundle.quantity}</td>
-                        <td>₱{bundle.regularTotal}</td>
-                        <td>₱{bundle.promotionalPricePerBundle}</td>
-                        <td>₱{bundle.promotionalDiscountOffered}</td>
-                        <td>₱{bundle.promotionalDiscountApplied}</td>
+                        <td>{formatCurrency(bundle.regularTotal)}</td>
+                        <td>
+                          {formatCurrency(bundle.promotionalPricePerBundle)}
+                        </td>
+                        <td>
+                          {formatCurrency(bundle.promotionalDiscountOffered)}
+                        </td>
+                        <td>
+                          {formatCurrency(bundle.promotionalDiscountApplied)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -749,7 +777,7 @@ export function ReportsPage() {
                           {product.quantityOnHand} {product.unit}
                         </td>
                         <td>{product.reorderLevel}</td>
-                        <td>₱{product.inventoryValue}</td>
+                        <td>{formatCurrency(product.inventoryValue)}</td>
                       </tr>
                     ))}
                   </tbody>

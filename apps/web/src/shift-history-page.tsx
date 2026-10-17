@@ -1,3 +1,4 @@
+import { currencyCode, formatCurrency } from "./currency";
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "./api";
@@ -135,7 +136,7 @@ export function ShiftHistoryPage() {
           <div>
             <h2>Register shifts</h2>
             <p>
-              Most recent shifts appear first. Amounts are in Philippine pesos.
+              Most recent shifts appear first. Amounts are in {currencyCode()}.
             </p>
           </div>
           <span className="count-chip">{shifts.length} shifts</span>
@@ -181,21 +182,23 @@ export function ShiftHistoryPage() {
                       <strong>{shift.closedByEmail ?? "—"}</strong>
                       <small>{localTime(shift.closedAt)}</small>
                     </td>
-                    <td>₱{shift.openingCash}</td>
-                    <td>₱{shift.cashSales}</td>
-                    <td>₱{shift.qrSales}</td>
-                    <td>₱{shift.cashRefunds}</td>
-                    <td>₱{shift.qrRefunds}</td>
-                    <td>₱{shift.cashIn}</td>
-                    <td>₱{shift.cashOut}</td>
-                    <td>₱{shift.expectedCash}</td>
+                    <td>{formatCurrency(shift.openingCash)}</td>
+                    <td>{formatCurrency(shift.cashSales)}</td>
+                    <td>{formatCurrency(shift.qrSales)}</td>
+                    <td>{formatCurrency(shift.cashRefunds)}</td>
+                    <td>{formatCurrency(shift.qrRefunds)}</td>
+                    <td>{formatCurrency(shift.cashIn)}</td>
+                    <td>{formatCurrency(shift.cashOut)}</td>
+                    <td>{formatCurrency(shift.expectedCash)}</td>
                     <td>
                       {shift.actualCashCount === null
                         ? "—"
-                        : `₱${shift.actualCashCount}`}
+                        : `${formatCurrency(shift.actualCashCount)}`}
                     </td>
                     <td>
-                      {shift.variance === null ? "—" : `₱${shift.variance}`}
+                      {shift.variance === null
+                        ? "—"
+                        : `${formatCurrency(shift.variance)}`}
                     </td>
                     <td>{shift.varianceReason ?? "—"}</td>
                   </tr>
