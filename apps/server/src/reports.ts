@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireAuthentication, requireRole } from "./auth.js";
 import { decryptCustomerField, CustomerDataError } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
+import { databaseCurrency } from "./currency.js";
 import { getLotBalances, manilaCalendarDate } from "./lot-stock.js";
 import { getExpenseEntries, summarizeExpenses } from "./expenses.js";
 
@@ -490,6 +491,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     startDate: startDay,
     endDate: endDay,
     timeZone: "Asia/Manila",
+    currency: databaseCurrency(db),
     generatedAt: new Date().toISOString(),
     metrics: {
       grossSales: total("grossSales"),
@@ -657,6 +659,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
 function csvForReport(report: ReturnType<typeof reportRows>): string {
   const rows: Array<[string, string, string | number]> = [
     ["Report", "Manila business dates", report.businessDate],
+    ["Report", "Currency", report.currency],
     ["Sales", "Gross sales", report.metrics.grossSales],
     ["Sales", "Net sales excluding VAT", report.metrics.netSalesExcludingVat],
     ["Tax", "VATable sales base", report.metrics.vatableSalesBase],

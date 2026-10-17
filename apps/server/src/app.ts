@@ -26,6 +26,7 @@ import {
   type AuthenticatedUser,
 } from "./auth.js";
 import { selectedEnvironment, writeAuditEvent } from "./db.js";
+import { appConfig } from "./currency.js";
 import { registerInventoryRoutes } from "./inventory.js";
 import { registerBundleRoutes } from "./bundles.js";
 import { registerBnpcPolicyRoutes } from "./bnpc-policy.js";
@@ -399,6 +400,9 @@ export function createApp(
   app.use(cookieParser());
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", environment: selectedEnvironment() });
+  });
+  app.get("/api/config", (_req, res) => {
+    res.json(appConfig(db));
   });
   app.use(
     "/api/auth/login",

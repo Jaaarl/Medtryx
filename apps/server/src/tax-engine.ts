@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import type { CurrencyCode } from "@medtryx/shared";
 
 export type SaleBenefit = "REGULAR" | "SENIOR_CITIZEN" | "PWD";
 export type SaleTaxClass = "VATABLE" | "VAT_EXEMPT" | "ZERO_RATED";
@@ -56,6 +57,23 @@ export const PROVISIONAL_TAX_POLICY: TaxPolicy = {
   roundingMode: "HALF_UP",
   cashRoundingMode: "NONE",
 };
+
+export function provisionalTaxPolicyForCurrency(
+  currency: CurrencyCode,
+): TaxPolicy {
+  if (currency === "PHP") return PROVISIONAL_TAX_POLICY;
+  return {
+    version: "USD-PROVISIONAL-0-UNAPPROVED-1",
+    approved: false,
+    vatRateBasisPoints: 0,
+    seniorDiscountBasisPoints: 0,
+    pwdDiscountBasisPoints: 0,
+    vatInclusivePrices: true,
+    allowZeroRated: false,
+    roundingMode: "HALF_UP",
+    cashRoundingMode: "NONE",
+  };
+}
 
 export function cashRoundingAdjustment(
   totalCentavos: number,

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
+import { databaseCurrency } from "./currency.js";
 import {
   getLotBalances,
   manilaCalendarDate,
@@ -125,6 +126,7 @@ export type CsvParseResult =
 const MAX_CSV_CHARACTERS = 200_000;
 const MAX_CSV_ROWS = 500;
 const PRODUCT_CSV_HEADERS = [
+  "currency",
   "sku",
   "name",
   "barcode",
@@ -147,6 +149,7 @@ const PRODUCT_CSV_HEADERS = [
   "zerocostreason",
 ];
 const PRODUCT_UPDATE_CSV_HEADERS = [
+  "currency",
   "sku",
   "name",
   "barcode",
@@ -175,6 +178,12 @@ const PRODUCT_UPDATE_CSV_ALLOWED_HEADERS = [
   "description",
 ];
 const PRODUCT_UPDATE_CSV_REQUIRED_HEADERS = ["sku"];
+const PH_BENEFIT_CSV_HEADERS = new Set([
+  "issceligible",
+  "ispwdeligible",
+  "bnpceligible",
+  "bnpccategory",
+]);
 
 export function parseCsvRows(
   source: unknown,
@@ -360,6 +369,39 @@ export function productCsvValue(value: string): string {
   return /^'[\s\u0000-\u001f]*[=+\-@]/u.test(value) ? value.slice(1) : value;
 }
 
+function productHasUnsupportedUsdBenefits(value: {
+  isScEligible?: boolean | undefined;
+  isPwdEligible?: boolean | undefined;
+  bnpcEligible?: boolean | undefined;
+  bnpcCategory?: string | null | undefined;
+}): boolean {
+  return Boolean(
+    value.isScEligible ||
+      value.isPwdEligible ||
+      value.bnpcEligible ||
+      value.bnpcCategory,
+  );
+}
+
+function csvCurrencyMatches(
+  value: string | undefined,
+  currency: "PHP" | "USD",
+  row: number,
+  rowErrors: CsvIssue[],
+): boolean {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === currency) return true;
+  if (normalized === undefined && currency === "PHP") return true;
+  rowErrors.push({
+    row,
+    message:
+      normalized === undefined
+        ? `Currency column must contain ${currency}.`
+        : `Currency must match this installation (${currency}).`,
+  });
+  return false;
+}
+
 const updateProductSchema = z
   .object({
     name: z.string().trim().min(1).max(160).optional(),
@@ -420,6 +462,7 @@ export const receiptSchema = z
 export type ReceiptInput = z.infer<typeof receiptSchema>;
 
 const STOCK_RECEIPT_CSV_HEADERS = [
+  "currency",
   "sku",
   "quantity",
   "unitcost",
@@ -626,7 +669,8 @@ function grossProfitPolicy(db: Database.Database): GrossProfitPolicy {
   return {
     approved: false,
     version: null,
-    vatRateBasisPoints: PROVISIONAL_VAT_RATE_BASIS_POINTS,
+    vatRateBasisPoints:
+      databaseCurrency(db) === "PHP" ? PROVISIONAL_VAT_RATE_BASIS_POINTS : 0,
     vatInclusivePrices: true,
     roundingMode: "HALF_UP",
     costBasisDescription: null,
@@ -1456,39 +1500,120 @@ export function registerInventoryRoutes(
     });
   });
 
+  router.get(
+    "/products/import-csv/template",
+    requireAuth,
+    requireOwner,
+    (_req, res) => {
+      const currency = databaseCurrency(db);
+      const values: Record<string, string | number | boolean | null> = {
+        currency,
+        sku: "SAMPLE-NEW-PRODUCT-001",
+        name: "Example tracked product",
+        barcode: "",
+        unit: "tablet",
+        sellingprice: "25.00",
+        taxclass: "VATABLE",
+        producttype: "GENERIC",
+        issceligible: false,
+        ispwdeligible: false,
+        bnpceligible: false,
+        bnpccategory: "",
+        trackslots: true,
+        openingquantity: 10,
+        openingunitcost: "12.50",
+        reorderlevel: 2,
+        openingreference: "Opening stock example",
+        openinglotcode: "SAMPLE-LOT-001",
+        openingexpirydate: "2099-12-31",
+        openingsupplier: "Example supplier",
+        zerocostreason: "",
+      };
+      const csv = [
+        PRODUCT_CSV_HEADERS.join(","),
+        PRODUCT_CSV_HEADERS.map((header) =>
+          productCsvCell(values[header] ?? ""),
+        ).join(","),
+      ].join("\r\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="new-products-opening-stock.csv"',
+      );
+      res.send(csv);
+    },
+  );
+
+  router.get(
+    "/stock/receipts/import-csv/template",
+    requireAuth,
+    requireOwner,
+    (_req, res) => {
+      const values: Record<string, string | number | boolean | null> = {
+        currency: databaseCurrency(db),
+        sku: "REPLACE-WITH-EXISTING-SKU",
+        quantity: 10,
+        unitcost: "12.50",
+        reference: "Example delivery reference",
+        supplier: "Example supplier",
+        lotcode: "SAMPLE-LOT-001",
+        expirydate: "2099-12-31",
+        zerocostreason: "",
+      };
+      const csv = [
+        STOCK_RECEIPT_CSV_HEADERS.join(","),
+        STOCK_RECEIPT_CSV_HEADERS.map((header) =>
+          productCsvCell(values[header] ?? ""),
+        ).join(","),
+      ].join("\r\n");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="existing-products-stock.csv"',
+      );
+      res.send(csv);
+    },
+  );
+
   router.get("/products/export-csv", requireAuth, requireOwner, (_req, res) => {
+    const currency = databaseCurrency(db);
+    const sourceHeaders = PRODUCT_UPDATE_CSV_HEADERS;
+    const headers = sourceHeaders.filter(
+      (header) =>
+        currency !== "USD" || !PH_BENEFIT_CSV_HEADERS.has(header),
+    );
     const products = db
       .prepare(`${baseProductSelect()} ORDER BY p.name COLLATE NOCASE, p.sku`)
       .all() as ProductRow[];
-    const rows: Array<Array<string | number | boolean | null>> = [
-      PRODUCT_UPDATE_CSV_HEADERS,
-    ];
+    const rows: Array<Array<string | number | boolean | null>> = [headers];
     for (const row of products) {
       const product = presentProduct(db, row);
-      rows.push([
-        product.sku,
-        product.name,
-        product.barcode,
-        product.unit,
-        product.sellingPrice,
-        product.taxClass,
-        product.productType,
-        product.isScEligible,
-        product.isPwdEligible,
-        product.isBnpcEligible,
-        product.bnpcCategory,
-        product.tracksLots,
-        product.reorderLevel,
-        product.active,
-        product.quantityOnHand,
-        product.saleableQuantity,
-        product.latestAcquisitionCost,
-        product.weightedAverageUnitCost,
-        product.inventoryValue,
-        product.unitPriceSpread,
-        product.estimatedUnitGrossProfit,
-        product.grossProfitEstimateApproved,
-      ]);
+      const values: Record<string, string | number | boolean | null> = {
+        currency,
+        sku: product.sku,
+        name: product.name,
+        barcode: product.barcode,
+        unit: product.unit,
+        sellingprice: product.sellingPrice,
+        taxclass: product.taxClass,
+        producttype: product.productType,
+        issceligible: product.isScEligible,
+        ispwdeligible: product.isPwdEligible,
+        bnpceligible: product.isBnpcEligible,
+        bnpccategory: product.bnpcCategory,
+        trackslots: product.tracksLots,
+        reorderlevel: product.reorderLevel,
+        active: product.active,
+        quantityonhand: product.quantityOnHand,
+        saleablequantity: product.saleableQuantity,
+        latestacquisitioncost: product.latestAcquisitionCost,
+        weightedaverageunitcost: product.weightedAverageUnitCost,
+        inventoryvalue: product.inventoryValue,
+        unitpricespread: product.unitPriceSpread,
+        estimatedunitgrossprofit: product.estimatedUnitGrossProfit,
+        grossprofitestimateapproved: product.grossProfitEstimateApproved,
+      };
+      rows.push(headers.map((header) => values[header] ?? null));
     }
     const csv = rows
       .map((row) => row.map(productCsvCell).join(","))
@@ -1523,6 +1648,7 @@ export function registerInventoryRoutes(
       }
 
       const rowErrors: CsvIssue[] = [];
+      const currency = databaseCurrency(db);
       const updates: Array<{
         row: number;
         sku: string;
@@ -1533,6 +1659,7 @@ export function registerInventoryRoutes(
       const seenBarcodes = new Set<string>();
       for (const row of document.rows) {
         const values = row.values;
+        csvCurrencyMatches(values.currency, currency, row.row, rowErrors);
         const sku = skuSchema.safeParse(values.sku);
         if (!sku.success) {
           rowErrors.push({ row: row.row, message: "SKU is invalid." });
@@ -1643,6 +1770,15 @@ export function registerInventoryRoutes(
             continue;
           }
           input = parsed.data;
+        }
+        if (
+          currency === "USD" &&
+          productHasUnsupportedUsdBenefits(input)
+        ) {
+          rowErrors.push({
+            row: row.row,
+            message: "SC, PWD, and BNPC eligibility are unavailable for USD.",
+          });
         }
         try {
           productFromBody(db, input);
@@ -1757,11 +1893,13 @@ export function registerInventoryRoutes(
       }
 
       const rowErrors: CsvIssue[] = [];
+      const currency = databaseCurrency(db);
       const productRows: Array<{ row: number; input: CreateProductInput }> = [];
       const seenSkus = new Set<string>();
       const seenBarcodes = new Set<string>();
       for (const row of document.rows) {
         const values = row.values;
+        csvCurrencyMatches(values.currency, currency, row.row, rowErrors);
         const isScEligible = csvBoolean(
           values.issceligible,
           false,
@@ -1840,6 +1978,16 @@ export function registerInventoryRoutes(
               message: `${issue.path.join(".") || "row"}: ${issue.message}`,
             });
           }
+          continue;
+        }
+        if (
+          currency === "USD" &&
+          productHasUnsupportedUsdBenefits(parsed.data)
+        ) {
+          rowErrors.push({
+            row: row.row,
+            message: "SC, PWD, and BNPC eligibility are unavailable for USD.",
+          });
           continue;
         }
         const identityMatches = findProductIdentityMatches(
@@ -1962,6 +2110,15 @@ export function registerInventoryRoutes(
   router.post("/products", requireAuth, requireOwner, csrf, (req, res) => {
     const parsed = createProductSchema.safeParse(req.body);
     if (!parsed.success) return bodyValidation(res);
+    if (
+      databaseCurrency(db) === "USD" &&
+      productHasUnsupportedUsdBenefits(parsed.data)
+    ) {
+      return res.status(409).json({
+        error: "benefits_not_supported_for_currency",
+        currency: "USD",
+      });
+    }
     if (!req.user)
       return res.status(401).json({ error: "authentication_required" });
     try {
@@ -2226,6 +2383,15 @@ export function registerInventoryRoutes(
     const id = z.uuid().safeParse(req.params.id);
     const parsed = updateProductSchema.safeParse(req.body);
     if (!id.success || !parsed.success || !req.user) return bodyValidation(res);
+    if (
+      databaseCurrency(db) === "USD" &&
+      productHasUnsupportedUsdBenefits(parsed.data)
+    ) {
+      return res.status(409).json({
+        error: "benefits_not_supported_for_currency",
+        currency: "USD",
+      });
+    }
     const current = findProduct(db, id.data);
     if (!current) return res.status(404).json({ error: "product_not_found" });
     try {
@@ -2941,7 +3107,9 @@ export function registerInventoryRoutes(
 
       const rowErrors: CsvIssue[] = [];
       const receipts: Array<{ row: number; input: ReceiptInput }> = [];
+      const currency = databaseCurrency(db);
       for (const row of document.rows) {
+        csvCurrencyMatches(row.values.currency, currency, row.row, rowErrors);
         const sku = skuSchema.safeParse(row.values.sku);
         if (!sku.success) {
           rowErrors.push({

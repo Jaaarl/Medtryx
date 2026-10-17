@@ -6,6 +6,7 @@ import express from "express";
 import { z } from "zod";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
+import { databaseCurrency } from "./currency.js";
 
 const moneySchema = z
   .string()
@@ -233,6 +234,13 @@ export function registerBnpcPolicyRoutes(
     requireOwner,
     csrf,
     (req, res) => {
+      if (databaseCurrency(db) === "USD") {
+        res.status(409).json({
+          error: "benefits_not_supported_for_currency",
+          currency: "USD",
+        });
+        return;
+      }
       const parsed = policyUpdateSchema.safeParse(req.body);
       if (!parsed.success || !req.user) return sendInvalid(res);
       let purchaseLimitCentavos: number;

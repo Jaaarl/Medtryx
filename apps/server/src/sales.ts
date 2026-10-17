@@ -20,6 +20,7 @@ import {
   CustomerDataError,
 } from "./customer-data.js";
 import { writeAuditEvent } from "./db.js";
+import { databaseCurrency } from "./currency.js";
 import {
   checkoutInventoryPolicy,
   type CheckoutInventoryPolicy,
@@ -33,7 +34,7 @@ import {
 import {
   cashRoundingAdjustment,
   calculateTaxLine,
-  PROVISIONAL_TAX_POLICY,
+  provisionalTaxPolicyForCurrency,
   TaxCalculationError,
 } from "./tax-engine.js";
 import type {
@@ -582,7 +583,8 @@ function configuredTaxApproval(
 
 function taxPolicy(db: Database.Database): TaxPolicy {
   const configured = configuredTaxApproval(db);
-  if (!configured) return PROVISIONAL_TAX_POLICY;
+  if (!configured)
+    return provisionalTaxPolicyForCurrency(databaseCurrency(db));
   return {
     version: configured.version,
     approved: true,
@@ -608,6 +610,30 @@ function presentPolicy(policy: TaxPolicy) {
     roundingMode: policy.roundingMode,
     cashRoundingMode: policy.cashRoundingMode,
   };
+}
+
+function checkoutRequestsBenefit(
+  benefitType: SaleBenefit,
+  items: z.infer<typeof checkoutItemsSchema>,
+  bundleOffers: z.infer<typeof checkoutBundleOffersSchema>,
+): boolean {
+  return (
+    benefitType !== "REGULAR" ||
+    items.some(
+      (item) =>
+        item.benefitApplied ||
+        (item.benefitTreatment !== undefined &&
+          item.benefitTreatment !== "REGULAR"),
+    ) ||
+    bundleOffers.some((offer) =>
+      offer.components.some(
+        (component) =>
+          component.benefitApplied ||
+          (component.benefitTreatment !== undefined &&
+            component.benefitTreatment !== "REGULAR"),
+      ),
+    )
+  );
 }
 
 function validationFailure(res: Response): void {
@@ -2223,7 +2249,9 @@ export function registerSalesRoutes(
       policy: presentPolicy(policy),
       notice: policy.approved
         ? null
-        : "Tax and cost-basis approval is pending. Preview calculations are provisional; sale finalization is disabled.",
+        : databaseCurrency(db) === "USD"
+          ? "Regular-sale tax approval is pending. Preview calculations are provisional; sale finalization is disabled."
+          : "Tax and cost-basis approval is pending. Preview calculations are provisional; sale finalization is disabled.",
     });
   });
 
@@ -2239,7 +2267,9 @@ export function registerSalesRoutes(
             approvedBy: configured.approvedBy,
           }
         : {
-            ...presentPolicy(PROVISIONAL_TAX_POLICY),
+            ...presentPolicy(
+              provisionalTaxPolicyForCurrency(databaseCurrency(db)),
+            ),
             approvalReference: "",
             costBasisDescription: "",
           },
@@ -2254,6 +2284,16 @@ export function registerSalesRoutes(
     (req, res) => {
       const parsed = taxPolicyUpdateSchema.safeParse(req.body);
       if (!parsed.success || !req.user) return validationFailure(res);
+      if (
+        databaseCurrency(db) === "USD" &&
+        (parsed.data.seniorDiscountBasisPoints !== 0 ||
+          parsed.data.pwdDiscountBasisPoints !== 0)
+      ) {
+        return res.status(409).json({
+          error: "benefits_not_supported_for_currency",
+          currency: "USD",
+        });
+      }
       const now = new Date().toISOString();
       const approval = {
         version: parsed.data.version,
@@ -2988,6 +3028,18 @@ export function registerSalesRoutes(
     const parsed = checkoutBaseSchema.safeParse(req.body);
     if (!parsed.success) return validationFailure(res);
     if (
+      databaseCurrency(db) === "USD" &&
+      checkoutRequestsBenefit(
+        parsed.data.benefitType,
+        parsed.data.items,
+        parsed.data.bundleOffers,
+      )
+    ) {
+      return res
+        .status(409)
+        .json({ error: "benefits_not_supported_for_currency", currency: "USD" });
+    }
+    if (
       parsed.data.businessDate &&
       ((parsed.data.countOverrides?.length ?? 0) > 0 ||
         parsed.data.overrideStockStateHash !== undefined ||
@@ -3044,6 +3096,18 @@ export function registerSalesRoutes(
   router.post("/sales", requireAuth, csrf, (req, res) => {
     const parsed = saleRequestSchema.safeParse(req.body);
     if (!parsed.success || !req.user) return validationFailure(res);
+    if (
+      databaseCurrency(db) === "USD" &&
+      checkoutRequestsBenefit(
+        parsed.data.benefitType,
+        parsed.data.items,
+        parsed.data.bundleOffers,
+      )
+    ) {
+      return res
+        .status(409)
+        .json({ error: "benefits_not_supported_for_currency", currency: "USD" });
+    }
     if (
       parsed.data.businessDate &&
       ((parsed.data.countOverrides?.length ?? 0) > 0 ||

@@ -28,6 +28,11 @@ import {
 import { restrictDirectory, restrictFile } from "./secure-fs.js";
 import { restoreIsActive, waitForMutationsToDrain } from "./maintenance.js";
 import { lotLedgerIssues } from "./lot-stock.js";
+import {
+  backupDatabaseCurrency,
+  databaseCurrency,
+  writeRestoredCurrency,
+} from "./currency.js";
 
 const backupPurposeSchema = z.enum(["manual", "automatic", "safety"]);
 const storeProfileSchema = z
@@ -569,6 +574,7 @@ type VerifiedPackage = {
   path: string;
   manifest: BackupManifest;
   key: string;
+  currency: ReturnType<typeof backupDatabaseCurrency>;
 };
 
 function readManifest(packagePath: string): BackupManifest {
@@ -635,8 +641,10 @@ async function verifyPackageContents(
     readonly: true,
     fileMustExist: true,
   });
+  let currency: ReturnType<typeof backupDatabaseCurrency>;
   try {
     assertDatabaseIntegrity(snapshot);
+    currency = backupDatabaseCurrency(snapshot);
     if (
       JSON.stringify(migrationNames(snapshot)) !==
       JSON.stringify(manifest.migrations)
@@ -653,7 +661,7 @@ async function verifyPackageContents(
   } finally {
     snapshot.close();
   }
-  return { path: packagePath, manifest, key };
+  return { path: packagePath, manifest, key, currency };
 }
 
 export async function listBackups(): Promise<BackupSummary[]> {
@@ -958,6 +966,8 @@ export async function restoreBackup(
     throw new BackupError("backup_environment_mismatch");
   if (backup.manifest.store.id !== input.confirmStoreId)
     throw new BackupError("restore_store_confirmation_mismatch");
+  if (backup.currency !== databaseCurrency(db))
+    throw new BackupError("backup_currency_mismatch");
 
   const stageDirectory = resolve(dirname(db.name), `.restore-${randomUUID()}`);
   restrictDirectory(stageDirectory);
@@ -969,6 +979,7 @@ export async function restoreBackup(
     const staged = new Database(stagedDatabasePath);
     try {
       migrateDatabase(staged);
+      writeRestoredCurrency(staged, backup.currency);
       staged.pragma("foreign_keys = ON");
       assertDatabaseIntegrity(staged);
       validateCustomerCiphertexts(staged, backup.key);

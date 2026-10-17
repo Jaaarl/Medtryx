@@ -4,6 +4,10 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { restrictDirectory, restrictFile } from "./secure-fs.js";
+import {
+  assertCurrencyCompatibleBeforeMigrations,
+  initializeDatabaseCurrency,
+} from "./currency.js";
 
 export type AppEnvironment = "development" | "test" | "live";
 
@@ -72,7 +76,9 @@ export function openDatabase(
   db.pragma("foreign_keys = ON");
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
+  assertCurrencyCompatibleBeforeMigrations(db);
   migrateDatabase(db);
+  initializeDatabaseCurrency(db);
   if (environment === "live") restrictFile(db.name);
   return db;
 }
