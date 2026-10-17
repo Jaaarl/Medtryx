@@ -51,7 +51,9 @@ function manilaDate(now = new Date()) {
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(now);
-  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
   return `${values.year}-${values.month}-${values.day}`;
 }
 
@@ -210,7 +212,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   const sku = value("sku");
   if (sku) {
     if (sku.length > 48 || !SKU_PATTERN.test(sku)) {
-      error("sku", "must be 1–48 characters: letters, digits, dot, underscore, or hyphen; it must start with a letter or digit.");
+      error(
+        "sku",
+        "must be 1–48 characters: letters, digits, dot, underscore, or hyphen; it must start with a letter or digit.",
+      );
     }
     const normalizedSku = sku.toUpperCase();
     if (seenSkus.has(normalizedSku)) {
@@ -224,7 +229,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   if (value("barcode")) {
     const normalizedBarcode = value("barcode").toLowerCase();
     if (seenBarcodes.has(normalizedBarcode)) {
-      error("barcode", "repeats in this CSV (barcode comparison ignores case).");
+      error(
+        "barcode",
+        "repeats in this CSV (barcode comparison ignores case).",
+      );
     }
     seenBarcodes.add(normalizedBarcode);
   }
@@ -232,7 +240,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
 
   const sellingPrice = value("sellingprice");
   if (!MONEY_PATTERN.test(sellingPrice)) {
-    error("sellingPrice", "must be a positive amount with at most 2 decimal places and up to 7 digits before the decimal.");
+    error(
+      "sellingPrice",
+      "must be a positive amount with at most 2 decimal places and up to 7 digits before the decimal.",
+    );
   } else if (Number(sellingPrice) <= 0) {
     error("sellingPrice", "must be greater than zero.");
   }
@@ -241,7 +252,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   if (!TAX_CLASSES.has(taxClass)) {
     error("taxClass", "must be VATABLE, VAT_EXEMPT, or ZERO_RATED.");
   } else if (taxClass === "ZERO_RATED") {
-    warning("taxClass", "the destination app must have approved settings that allow zero-rated products.");
+    warning(
+      "taxClass",
+      "the destination app must have approved settings that allow zero-rated products.",
+    );
   }
 
   const productType = value("producttype").toUpperCase();
@@ -281,12 +295,18 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
     openingQuantity < 0 ||
     openingQuantity > MAX_QUANTITY
   ) {
-    error("openingQuantity", `must be a whole number from 0 to ${MAX_QUANTITY}.`);
+    error(
+      "openingQuantity",
+      `must be a whole number from 0 to ${MAX_QUANTITY}.`,
+    );
   }
 
   const openingUnitCost = value("openingunitcost");
   if (openingUnitCost && !MONEY_PATTERN.test(openingUnitCost)) {
-    error("openingUnitCost", "must have at most 2 decimal places and up to 7 digits before the decimal.");
+    error(
+      "openingUnitCost",
+      "must have at most 2 decimal places and up to 7 digits before the decimal.",
+    );
   }
   const zeroCostReason = value("zerocostreason");
   if (
@@ -294,7 +314,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
     !Number.isNaN(openingQuantity) &&
     !openingUnitCost
   ) {
-    error("openingUnitCost", "is required when openingQuantity is greater than zero.");
+    error(
+      "openingUnitCost",
+      "is required when openingQuantity is greater than zero.",
+    );
   }
   if (
     openingQuantity > 0 &&
@@ -302,21 +325,26 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
     Number(openingUnitCost) === 0
   ) {
     if (zeroCostReason.length < 3 || zeroCostReason.length > 500) {
-      error("zeroCostReason", "a zero-cost opening balance needs a reason of 3–500 characters.");
+      error(
+        "zeroCostReason",
+        "a zero-cost opening balance needs a reason of 3–500 characters.",
+      );
     }
-  } else if (zeroCostReason && (zeroCostReason.length < 3 || zeroCostReason.length > 500)) {
+  } else if (
+    zeroCostReason &&
+    (zeroCostReason.length < 3 || zeroCostReason.length > 500)
+  ) {
     error("zeroCostReason", "must be 3–500 characters when provided.");
   }
 
   const reorderLevel = value("reorderlevel");
   if (reorderLevel) {
     const parsed = Number(reorderLevel);
-    if (
-      !Number.isInteger(parsed) ||
-      parsed < 0 ||
-      parsed > MAX_QUANTITY
-    ) {
-      error("reorderLevel", `must be a whole number from 0 to ${MAX_QUANTITY}.`);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_QUANTITY) {
+      error(
+        "reorderLevel",
+        `must be a whole number from 0 to ${MAX_QUANTITY}.`,
+      );
     }
   }
 
@@ -327,7 +355,12 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   const expiryDate = value("openingexpirydate");
   if (expiryDate && !isCalendarDate(expiryDate)) {
     error("openingExpiryDate", "must be a real date in YYYY-MM-DD format.");
-  } else if (expiryDate && tracksLots && openingQuantity > 0 && expiryDate < today) {
+  } else if (
+    expiryDate &&
+    tracksLots &&
+    openingQuantity > 0 &&
+    expiryDate < today
+  ) {
     error("openingExpiryDate", `is expired as of the Manila date ${today}.`);
   }
   if (tracksLots && openingQuantity > 0) {
@@ -339,8 +372,13 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
     }
   }
 
-  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+$/u.test(value("openinglotcode"))) {
-    warning("openingLotCode", `"${value("openinglotcode")}" looks like spreadsheet scientific notation. Verify it against the printed lot/batch label; this checker will not infer the original code.`);
+  if (
+    /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+$/u.test(value("openinglotcode"))
+  ) {
+    warning(
+      "openingLotCode",
+      `"${value("openinglotcode")}" looks like spreadsheet scientific notation. Verify it against the printed lot/batch label; this checker will not infer the original code.`,
+    );
   }
 
   const noteCost = value("openingreference").match(
@@ -348,7 +386,10 @@ function checkCsvRow(row, errors, warnings, seenSkus, seenBarcodes, today) {
   );
   if (noteCost && openingUnitCost && MONEY_PATTERN.test(openingUnitCost)) {
     if (Number(noteCost[1]) !== Number(openingUnitCost)) {
-      warning("openingUnitCost", `the reference mentions cost ${noteCost[1]}, but the cost field is ${openingUnitCost}. Confirm the authoritative per-unit cost; do not silently round.`);
+      warning(
+        "openingUnitCost",
+        `the reference mentions cost ${noteCost[1]}, but the cost field is ${openingUnitCost}. Confirm the authoritative per-unit cost; do not silently round.`,
+      );
     }
   }
 }
@@ -383,7 +424,9 @@ async function main() {
   const errors = [];
   const warnings = [];
   if (buffer.byteLength > MAX_FILE_BYTES) {
-    errors.push(`File is ${buffer.byteLength} bytes; the import screen accepts at most ${MAX_FILE_BYTES} bytes.`);
+    errors.push(
+      `File is ${buffer.byteLength} bytes; the import screen accepts at most ${MAX_FILE_BYTES} bytes.`,
+    );
   }
 
   let source;

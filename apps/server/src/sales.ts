@@ -583,8 +583,7 @@ function configuredTaxApproval(
 
 function taxPolicy(db: Database.Database): TaxPolicy {
   const configured = configuredTaxApproval(db);
-  if (!configured)
-    return provisionalTaxPolicyForCurrency(databaseCurrency(db));
+  if (!configured) return provisionalTaxPolicyForCurrency(databaseCurrency(db));
   return {
     version: configured.version,
     approved: true,
@@ -3035,9 +3034,10 @@ export function registerSalesRoutes(
         parsed.data.bundleOffers,
       )
     ) {
-      return res
-        .status(409)
-        .json({ error: "benefits_not_supported_for_currency", currency: "USD" });
+      return res.status(409).json({
+        error: "benefits_not_supported_for_currency",
+        currency: "USD",
+      });
     }
     if (
       parsed.data.businessDate &&
@@ -3104,9 +3104,10 @@ export function registerSalesRoutes(
         parsed.data.bundleOffers,
       )
     ) {
-      return res
-        .status(409)
-        .json({ error: "benefits_not_supported_for_currency", currency: "USD" });
+      return res.status(409).json({
+        error: "benefits_not_supported_for_currency",
+        currency: "USD",
+      });
     }
     if (
       parsed.data.businessDate &&
