@@ -9,6 +9,14 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { api, ApiError } from "./api";
+import {
+  fullRefund,
+  RefundOptions,
+  refundLineRequest,
+  refundQuantity,
+  refundReview,
+  type RefundSelection,
+} from "./refund-options";
 
 type SaleSummary = {
   id: string;
@@ -19,7 +27,7 @@ type SaleSummary = {
   amountDue: string;
   cashRoundingAdjustment: string;
   createdAt: string;
-  status: "FINALIZED" | "REVERSED";
+  status: "FINALIZED" | "REVERSED" | "PARTIALLY_REFUNDED";
   lines: Array<{
     productName: string;
     sku: string;
@@ -70,7 +78,7 @@ type SaleLine = {
 
 type SaleChange = {
   id: string;
-  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL" | "PARTIAL_REFUND";
   createdAt: string;
   actorEmail: string;
   reason: string;
@@ -166,7 +174,13 @@ function requestError(error: unknown): string {
     return "The request could not be completed.";
   const messages: Record<string, string> = {
     reauthentication_failed: "The owner password was not accepted.",
-    sale_already_reversed: "This sale already has a saved full reversal.",
+    sale_already_reversed: "This sale already has a saved refund.",
+    invalid_refund_quantity:
+      "Enter a whole refund quantity between 0 and the quantity sold.",
+    refund_quantity_required: "Select at least one item to refund.",
+    refund_lot_quantities_required: "Enter which original lots were returned.",
+    invalid_refund_lot_quantities:
+      "Returned lot quantities must match the quantity being refunded.",
     lot_return_verification_required:
       "Confirm the returned items match their original lots before restocking.",
     returned_lot_not_saleable:
@@ -223,6 +237,8 @@ export function SalesHistoryPage() {
   const [selectedId, setSelectedId] = useState(requestedTransactionId);
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [restock, setRestock] = useState<Record<string, boolean>>({});
+  const [refundSelection, setRefundSelection] =
+    useState<RefundSelection>(fullRefund);
   const [lotVerified, setLotVerified] = useState<Record<string, boolean>>({});
   const [refundMethod, setRefundMethod] = useState<"CASH" | "QR">("CASH");
   const [refundShiftId, setRefundShiftId] = useState("");
@@ -267,7 +283,6 @@ export function SalesHistoryPage() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
     void Promise.all([
       api.get<{ sales: SaleSummary[] }>(`/sales?limit=${recordLimit}`),
       api.get<{ shifts: OpenShift[] }>("/shifts/open"),
@@ -309,6 +324,7 @@ export function SalesHistoryPage() {
             ),
           );
           setLotVerified({});
+          setRefundSelection(fullRefund);
         }
       })
       .catch(() => {
@@ -344,14 +360,23 @@ export function SalesHistoryPage() {
     sales.find((item) => item.transactionId === selectedId) ?? null;
   const selectedRefundShift =
     openShifts.find((shift) => shift.id === refundShiftId) ?? null;
+  const refund = sale
+    ? refundReview(sale.lines, sale.cashRoundingAdjustment, refundSelection)
+    : { valid: false, total: "0.00" };
   const refundHasEnoughCash =
     selectedRefundShift && sale
-      ? cents(selectedRefundShift.expectedCash) >= cents(sale.amountDue)
+      ? cents(selectedRefundShift.expectedCash) >= cents(refund.total)
       : false;
 
   async function reverseSale(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!sale) return;
+    if (!refund.valid) {
+      setError(
+        "Select at least one valid refund quantity and check the returned lot quantities.",
+      );
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -364,7 +389,7 @@ export function SalesHistoryPage() {
         refundMethod,
         ...(refundMethod === "CASH" ? { refundShiftId } : {}),
         lines: sale.lines.map((line) => ({
-          saleLineId: line.saleLineId,
+          ...refundLineRequest(line, refundSelection),
           restock: restock[line.saleLineId] === true,
           lotPickVerified: lotVerified[line.saleLineId] === true,
         })),
@@ -458,8 +483,8 @@ export function SalesHistoryPage() {
           <div className="eyebrow">OWNER CONTROLS</div>
           <h1>Sales history</h1>
           <p>
-            Review saved sale snapshots, approve a full reversal, and reconcile
-            cash movements.
+            Review saved sale snapshots, approve refunds, and reconcile cash
+            movements.
           </p>
         </div>
         <span className="secure-badge">
@@ -593,9 +618,10 @@ export function SalesHistoryPage() {
                   aria-label="Records to show"
                   className="text-input history-limit-select"
                   value={recordLimit}
-                  onChange={(event) =>
-                    setRecordLimit(Number(event.target.value))
-                  }
+                  onChange={(event) => {
+                    setLoading(true);
+                    setRecordLimit(Number(event.target.value));
+                  }}
                 >
                   {[10, 25, 50, 100, 200, 300].map((limit) => (
                     <option key={limit} value={limit}>
@@ -653,7 +679,9 @@ export function SalesHistoryPage() {
                         >
                           {item.status === "REVERSED"
                             ? "Reversed"
-                            : "Finalized"}
+                            : item.status === "PARTIALLY_REFUNDED"
+                              ? "Partially refunded"
+                              : "Finalized"}
                         </span>
                       </td>
                       <td>
@@ -707,6 +735,15 @@ export function SalesHistoryPage() {
                 {dateText(sale.createdAt)} · {sale.cashierEmail}
               </p>
               <strong className="sale-record-label">{sale.label}</strong>
+              {selectedSummary?.status === "FINALIZED" && (
+                <RefundOptions
+                  id={sale.transactionId}
+                  lines={sale.lines}
+                  adjustment={sale.cashRoundingAdjustment}
+                  selection={refundSelection}
+                  onChange={setRefundSelection}
+                />
+              )}
               <div className="sale-detail-lines">
                 {sale.lines.map((line) => (
                   <div className="sale-detail-line" key={line.saleLineId}>
@@ -739,45 +776,49 @@ export function SalesHistoryPage() {
                           .join("; ")}
                       </small>
                     )}
-                    {selectedSummary?.status === "FINALIZED" && (
-                      <>
-                        <label className="inventory-checkbox reversal-restock-choice">
-                          <input
-                            type="checkbox"
-                            checked={restock[line.saleLineId] === true}
-                            onChange={(event) =>
-                              setRestock((current) => ({
-                                ...current,
-                                [line.saleLineId]: event.target.checked,
-                              }))
-                            }
-                          />
-                          <span>
-                            Returned item is sellable; restore to stock
-                          </span>
-                        </label>
-                        {restock[line.saleLineId] &&
-                          line.lotAllocations.length > 0 && (
-                            <label className="inventory-checkbox reversal-restock-choice">
-                              <input
-                                type="checkbox"
-                                checked={lotVerified[line.saleLineId] === true}
-                                onChange={(event) =>
-                                  setLotVerified((current) => ({
-                                    ...current,
-                                    [line.saleLineId]: event.target.checked,
-                                  }))
-                                }
-                                required
-                              />
-                              <span>
-                                I physically verified the returned goods match
-                                their original lot(s)
-                              </span>
-                            </label>
-                          )}
-                      </>
-                    )}
+                    {selectedSummary?.status === "FINALIZED" &&
+                      refundQuantity(line, refundSelection) > 0 && (
+                        <>
+                          <label className="inventory-checkbox reversal-restock-choice">
+                            <input
+                              type="checkbox"
+                              checked={restock[line.saleLineId] === true}
+                              onChange={(event) =>
+                                setRestock((current) => ({
+                                  ...current,
+                                  [line.saleLineId]: event.target.checked,
+                                }))
+                              }
+                            />
+                            <span>
+                              Refunded items are sellable; restore{" "}
+                              {refundQuantity(line, refundSelection)} to stock
+                            </span>
+                          </label>
+                          {restock[line.saleLineId] &&
+                            line.lotAllocations.length > 0 && (
+                              <label className="inventory-checkbox reversal-restock-choice">
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    lotVerified[line.saleLineId] === true
+                                  }
+                                  onChange={(event) =>
+                                    setLotVerified((current) => ({
+                                      ...current,
+                                      [line.saleLineId]: event.target.checked,
+                                    }))
+                                  }
+                                  required
+                                />
+                                <span>
+                                  I physically verified the returned goods match
+                                  their original lot(s)
+                                </span>
+                              </label>
+                            )}
+                        </>
+                      )}
                   </div>
                 ))}
               </div>
@@ -789,7 +830,7 @@ export function SalesHistoryPage() {
                   </small>
                 )}
               <div className="sale-detail-total">
-                <span>Full refund amount</span>
+                <span>Original sale amount</span>
                 <strong>₱{sale.amountDue}</strong>
               </div>
 
@@ -804,7 +845,9 @@ export function SalesHistoryPage() {
                             ? "Payment switched"
                             : change.kind === "CANCELLATION"
                               ? "Sale cancelled"
-                              : "Sale reversed"}
+                              : change.kind === "PARTIAL_REFUND"
+                                ? "Partial refund"
+                                : "Sale reversed"}
                         </strong>
                         <small>
                           {dateText(change.createdAt)} · {change.actorEmail}
@@ -863,7 +906,7 @@ export function SalesHistoryPage() {
                   className="form-stack reversal-form"
                   onSubmit={(event) => void reverseSale(event)}
                 >
-                  <h3>Approve full reversal</h3>
+                  <h3>Approve refund</h3>
                   <p>
                     This creates a linked internal reversal. The original sale
                     cannot be edited or deleted.
@@ -918,7 +961,8 @@ export function SalesHistoryPage() {
                     selectedRefundShift &&
                     !refundHasEnoughCash && (
                       <small className="field-hint field-hint-error">
-                        This drawer's expected cash is below the full refund.
+                        This drawer's expected cash is below the selected
+                        refund.
                       </small>
                     )}
                   <Field id="reversal-reason" label="Reason for reversal">
@@ -946,8 +990,9 @@ export function SalesHistoryPage() {
                     />
                   </Field>
                   <small className="field-hint">
-                    Choose sellable stock per line. Items left out of stock are
-                    recorded as a cost write-off. Cash refunds reduce the
+                    Choose sellable stock for the refunded quantities. Refunded
+                    items left out of stock are recorded as a cost write-off.
+                    Kept or consumed items remain sold. Cash refunds reduce the
                     selected drawer; QR refunds do not change physical cash.
                   </small>
                   <button
@@ -957,11 +1002,16 @@ export function SalesHistoryPage() {
                       saving ||
                       selectedSummary?.status !== "FINALIZED" ||
                       !sale.lines.length ||
+                      !refund.valid ||
                       (refundMethod === "CASH" &&
                         (!refundShiftId || !refundHasEnoughCash))
                     }
                   >
-                    {saving ? "Saving reversal…" : "Approve full reversal"}
+                    {saving
+                      ? "Saving reversal…"
+                      : refundSelection.mode === "FULL"
+                        ? "Approve full reversal"
+                        : "Approve partial refund"}
                   </button>
                 </form>
               )}

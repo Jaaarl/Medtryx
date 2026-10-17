@@ -6269,3 +6269,32 @@ a {
     flex-direction: column;
   }
 }
+/* Quantity selection is shared by checkout cancellations and owner refunds. */
+.refund-options {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.refund-quantity-row {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border, #dce2e9);
+  border-radius: 10px;
+}
+
+.refund-quantity-row .inventory-field > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.refund-options .sale-detail-total {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recent-cancel-line-stock:disabled {
+  opacity: 0.55;
+}

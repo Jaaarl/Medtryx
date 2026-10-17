@@ -269,6 +269,402 @@ afterAll(() => {
 });
 
 describe("owner-approved full-sale reversals and cash movements", () => {
+  it.each(["CASH", "QR"] as const)(
+    "refunds one of three items paid by %s while keeping consumed units sold",
+    async (paymentMethod) => {
+      const owner = await signIn("owner.reversals@example.test", ownerPassword);
+      await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+      const product = await createProduct(owner, { sellingPrice: "112.13" });
+      const cashier = await signIn(
+        "cashier.reversals@example.test",
+        cashierPassword,
+      );
+      const shift = await openShift(cashier, "100.00");
+      const sold = await postWithCsrf(cashier, "/api/sales", {
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 3 }],
+        paymentMethod,
+        requestKey: randomUUID(),
+      });
+      expect(sold.status, JSON.stringify(sold.body)).toBe(201);
+      const sale = sold.body.sale;
+      const request = {
+        reason: "Customer consumed two and returned one",
+        refundMethod: paymentMethod,
+        qrRefundConfirmed: true,
+        ...(paymentMethod === "CASH"
+          ? { refundShiftId: shift.body.shift.id }
+          : {}),
+        lines: [
+          { saleLineId: sale.lines[0].saleLineId, quantity: 1, restock: true },
+        ],
+      };
+      const refunded = await postWithCsrf(
+        cashier,
+        `/api/sales/${sale.transactionId}/reversals`,
+        request,
+      );
+      expect(refunded.status, JSON.stringify(refunded.body)).toBe(201);
+      expect(refunded.body.reversal).toMatchObject({
+        amount: paymentMethod === "CASH" ? "112.17" : "112.13",
+        cashRoundingAdjustment: paymentMethod === "CASH" ? "0.04" : "0.00",
+        lines: [
+          {
+            quantity: 1,
+            refundAmount: "112.13",
+            cogsRestored: "40.00",
+            originalCogs: "40.00",
+          },
+        ],
+      });
+      expect(
+        db
+          .prepare(
+            "SELECT quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+          )
+          .get(product.id),
+      ).toEqual({ quantity_on_hand: 3, inventory_value_centavos: 12000 });
+      expect(
+        (await cashier.get("/api/shifts/current")).body.shift,
+      ).toMatchObject({
+        expectedCash: paymentMethod === "CASH" ? "324.33" : "100.00",
+        expectedQrSales: paymentMethod === "CASH" ? "0.00" : "224.26",
+      });
+      const report = (
+        await owner.get(`/api/reports/daily?date=${sale.businessDate}`)
+      ).body.report;
+      expect(report.metrics).toMatchObject({
+        grossSales: "224.26",
+        cogs: "80.00",
+        vatOutput: "24.03",
+        netSalesExcludingVat: "200.23",
+        cashRefunds: paymentMethod === "CASH" ? "112.17" : "0.00",
+        qrRefunds: paymentMethod === "QR" ? "112.13" : "0.00",
+      });
+      for (const actor of [owner, cashier]) {
+        const summary = (
+          await actor.get(
+            `/api/shifts/daily-sales-summary?date=${sale.businessDate}`,
+          )
+        ).body.summary;
+        expect(summary.totals).toMatchObject({
+          transactionCount: 1,
+          sales: paymentMethod === "CASH" ? "224.33" : "224.26",
+        });
+        expect(summary.products).toMatchObject([
+          { quantity: 2, sales: "224.26" },
+        ]);
+        expect(summary.transactions).toMatchObject([
+          { products: [{ quantity: 2, sales: "224.26" }] },
+        ]);
+      }
+      expect((await owner.get("/api/sales")).body.sales[0].status).toBe(
+        "PARTIALLY_REFUNDED",
+      );
+      expect(
+        (await cashier.get("/api/sales/recent")).body.sales[0].status,
+      ).toBe("PARTIALLY_REFUNDED");
+      expect(
+        (
+          await postWithCsrf(
+            cashier,
+            `/api/sales/${sale.transactionId}/reversals`,
+            request,
+          )
+        ).status,
+      ).toBe(409);
+      expect(
+        (await owner.get(`/api/sales/${sale.transactionId}`)).body.sale.lines[0]
+          .quantity,
+      ).toBe(3);
+    },
+  );
+
+  it("allows an owner to refund selected lines after the quick cancellation window, writing off only refunded units", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const first = await createProduct(owner);
+    const kept = await createProduct(owner, {
+      sku: "KEPT",
+      name: "Synthetic kept product",
+      sellingPrice: "10.00",
+    });
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    await openShift(cashier);
+    const sold = await postWithCsrf(cashier, "/api/sales", {
+      benefitType: "REGULAR",
+      items: [
+        { productId: first.id, quantity: 3 },
+        { productId: kept.id, quantity: 2 },
+      ],
+      paymentMethod: "QR",
+      requestKey: randomUUID(),
+    });
+    const sale = sold.body.sale;
+    db.prepare("UPDATE sales SET created_at = ? WHERE transaction_id = ?").run(
+      new Date(Date.now() - 7200000).toISOString(),
+      sale.transactionId,
+    );
+    const refunded = await postWithCsrf(
+      owner,
+      `/api/sales/${sale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "Refund only the one damaged item",
+        refundMethod: "QR",
+        lines: sale.lines.map(
+          (line: { saleLineId: string; productId: string }) => ({
+            saleLineId: line.saleLineId,
+            quantity: line.productId === first.id ? 1 : 0,
+            restock: false,
+          }),
+        ),
+      },
+    );
+    expect(refunded.status, JSON.stringify(refunded.body)).toBe(201);
+    expect(refunded.body.reversal).toMatchObject({
+      amount: "112.00",
+      lines: [{ quantity: 1, writeoff: "40.00", cogsRestored: "0.00" }],
+    });
+    expect(refunded.body.reversal.lines).toHaveLength(1);
+    expect(
+      db
+        .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+        .get(first.id),
+    ).toEqual({ quantity_on_hand: 2 });
+    expect(
+      db
+        .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+        .get(kept.id),
+    ).toEqual({ quantity_on_hand: 3 });
+    const summary = (
+      await owner.get(
+        `/api/shifts/daily-sales-summary?date=${sale.businessDate}`,
+      )
+    ).body.summary;
+    expect(summary.totals.sales).toBe("244.00");
+    expect(
+      summary.products.map((line: { quantity: number }) => line.quantity),
+    ).toEqual([2, 2]);
+  });
+
+  it.each([-1, 0, 4, 1.5])(
+    "rejects invalid refund quantity %s without changing money or stock",
+    async (quantity) => {
+      const owner = await signIn("owner.reversals@example.test", ownerPassword);
+      await configureApprovedPolicy(owner);
+      const product = await createProduct(owner);
+      await openShift(owner);
+      const sold = await postWithCsrf(owner, "/api/sales", {
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 3 }],
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+      });
+      const response = await postWithCsrf(
+        owner,
+        `/api/sales/${sold.body.sale.transactionId}/reversals`,
+        {
+          ownerPassword,
+          reason: "Invalid quantity test",
+          refundMethod: "QR",
+          lines: [
+            {
+              saleLineId: sold.body.sale.lines[0].saleLineId,
+              quantity,
+              restock: true,
+            },
+          ],
+        },
+      );
+      expect(response.status).toBe(400);
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM sale_reversals").get(),
+      ).toEqual({ count: 0 });
+      expect(
+        db
+          .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+          .get(product.id),
+      ).toEqual({ quantity_on_hand: 2 });
+    },
+  );
+
+  it("refunds the original discounted amount and retains the discount on consumed units", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    await openShift(owner);
+    const sold = await postWithCsrf(owner, "/api/sales", {
+      benefitType: "SENIOR_CITIZEN",
+      customerName: "Synthetic senior refund",
+      customerBirthday: "1945-03-14",
+      customerIdType: "OSCA",
+      customerIdNumber: "SYN-PARTIAL-REFUND",
+      customerIdChecked: true,
+      items: [{ productId: product.id, quantity: 3, benefitApplied: true }],
+      paymentMethod: "QR",
+      requestKey: randomUUID(),
+    });
+    expect(sold.status, JSON.stringify(sold.body)).toBe(201);
+    const refunded = await postWithCsrf(
+      owner,
+      `/api/sales/${sold.body.sale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "One unused item returned",
+        refundMethod: "QR",
+        lines: [
+          {
+            saleLineId: sold.body.sale.lines[0].saleLineId,
+            quantity: 1,
+            restock: true,
+          },
+        ],
+      },
+    );
+    expect(refunded.status, JSON.stringify(refunded.body)).toBe(201);
+    expect(refunded.body.reversal.amount).toBe("80.00");
+    const report = (
+      await owner.get(`/api/reports/daily?date=${sold.body.sale.businessDate}`)
+    ).body.report;
+    expect(report.metrics).toMatchObject({
+      seniorDiscounts: "40.00",
+      vatRemoved: "24.00",
+      vatOutput: "0.00",
+      cogs: "80.00",
+      netSalesExcludingVat: "160.00",
+    });
+    expect(report.transactionChanges[0].kind).toBe("PARTIAL_REFUND");
+    const summary = (
+      await owner.get(
+        `/api/shifts/daily-sales-summary?date=${sold.body.sale.businessDate}`,
+      )
+    ).body.summary;
+    expect(summary.salesBreakdown).toMatchObject({
+      seniorDiscount: "40.00",
+      totalVat: "0.00",
+      netSales: "160.00",
+    });
+  });
+
+  it("requires exact returned lot quantities and restores only the verified saleable lot", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner, { openingQuantity: 3 });
+    const trackingToken = await csrfFor(owner);
+    expect(
+      (
+        await owner
+          .patch(`/api/products/${product.id}`)
+          .set("x-csrf-token", trackingToken)
+          .send({ tracksLots: true })
+      ).status,
+    ).toBe(200);
+    const reconciled = await postWithCsrf(owner, "/api/stock/lots/reconcile", {
+      productId: product.id,
+      reason: "Synthetic multi lot refund",
+      physicalCountConfirmed: true,
+      allocations: [
+        { lotCode: "PARTIAL-A", expiryDate: manilaDayAfter(20), quantity: 2 },
+        { lotCode: "PARTIAL-B", expiryDate: manilaDayAfter(30), quantity: 1 },
+      ],
+    });
+    expect(reconciled.status, JSON.stringify(reconciled.body)).toBe(201);
+    await openShift(owner);
+    const preview = await postWithCsrf(owner, "/api/sales/preview", {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      items: [{ productId: product.id, quantity: 3 }],
+    });
+    const assignedLots = preview.body.lines[0].assignedLots as Array<{
+      lotId: string;
+      quantity: number;
+    }>;
+    const sold = await postWithCsrf(owner, "/api/sales", {
+      benefitType: "REGULAR",
+      paymentMethod: "QR",
+      requestKey: randomUUID(),
+      items: [
+        {
+          productId: product.id,
+          quantity: 3,
+          lotAllocations: assignedLots.map((lot) => ({
+            lotId: lot.lotId,
+            quantity: lot.quantity,
+          })),
+          lotPickConfirmed: true,
+        },
+      ],
+    });
+    expect(sold.status, JSON.stringify(sold.body)).toBe(201);
+    const [first, second] = assignedLots;
+    const quarantineToken = await csrfFor(owner);
+    expect(
+      (
+        await owner
+          .patch(`/api/stock/lots/${first!.lotId}/quarantine`)
+          .set("x-csrf-token", quarantineToken)
+          .send({ quarantined: true, reason: "Synthetic lot hold" })
+      ).status,
+    ).toBe(200);
+    const line = {
+      saleLineId: sold.body.sale.lines[0].saleLineId,
+      quantity: 1,
+      restock: true,
+      lotPickVerified: true,
+    };
+    const request = {
+      ownerPassword,
+      reason: "Return only lot B",
+      refundMethod: "QR",
+    };
+    for (const [lotQuantities, error] of [
+      [undefined, "refund_lot_quantities_required"],
+      [
+        [{ lotId: second!.lotId, quantity: 2 }],
+        "invalid_refund_lot_quantities",
+      ],
+      [[{ lotId: first!.lotId, quantity: 1 }], "returned_lot_not_saleable"],
+    ] as const) {
+      const rejected = await postWithCsrf(
+        owner,
+        `/api/sales/${sold.body.sale.transactionId}/reversals`,
+        { ...request, lines: [{ ...line, lotQuantities }] },
+      );
+      expect(rejected.body.error).toBe(error);
+    }
+    const refunded = await postWithCsrf(
+      owner,
+      `/api/sales/${sold.body.sale.transactionId}/reversals`,
+      {
+        ...request,
+        lines: [
+          { ...line, lotQuantities: [{ lotId: second!.lotId, quantity: 1 }] },
+        ],
+      },
+    );
+    expect(refunded.status, JSON.stringify(refunded.body)).toBe(201);
+    expect(refunded.body.reversal).toMatchObject({
+      amount: "112.00",
+      lines: [{ quantity: 1, cogsRestored: "40.00" }],
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT lot_id, SUM(quantity_delta) AS quantity FROM lot_stock_movements WHERE lot_id IN (?, ?) GROUP BY lot_id ORDER BY lot_id",
+        )
+        .all(first!.lotId, second!.lotId),
+    ).toEqual(
+      [
+        { lot_id: first!.lotId, quantity: 0 },
+        { lot_id: second!.lotId, quantity: 1 },
+      ].sort((a, b) => a.lot_id.localeCompare(b.lot_id)),
+    );
+  });
+
   it("switches a cash sale to QR and reconciles cash, QR, report, and shift totals", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
@@ -408,7 +804,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       "cashier.reversals@example.test",
       cashierPassword,
     );
-    const shift = await openShift(cashier, "100.00");
+    expect((await openShift(cashier, "100.00")).status).toBe(201);
     const sale = await sell(cashier, product.id, "CASH");
 
     const switched = await postWithCsrf(
@@ -710,7 +1106,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       "cashier.reversals@example.test",
       cashierPassword,
     );
-    const shift = await openShift(cashier, "100.00");
+    expect((await openShift(cashier, "100.00")).status).toBe(201);
     const sale = await sell(cashier, product.id, "QR");
     const saleLineId = sale.lines[0]!.saleLineId;
     const unconfirmed = await quickCancel(
@@ -835,6 +1231,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     });
     const secondProduct = await createProduct(owner, {
       sku: "SYN-LOT-RETURN-B",
+      name: "Synthetic second lot return product",
       openingQuantity: 1,
     });
     const firstTrackingToken = await csrfFor(owner);

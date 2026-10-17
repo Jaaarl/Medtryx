@@ -676,6 +676,71 @@ describe("virtual bundle offers", () => {
       bundlePromotionalDiscount: "0.61",
       amountDue: "125.80",
     });
+    expect((await openShift(cashier)).status).toBe(201);
+    const saleToken = await csrfFor(cashier);
+    const sold = await cashier
+      .post("/api/sales")
+      .set("x-csrf-token", saleToken)
+      .send({
+        benefitType: "PWD",
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+        customerName: "Synthetic partial bundle return",
+        customerBirthday: "1980-01-01",
+        customerIdType: "PWD",
+        customerIdNumber: "SYNTHETIC-BUNDLE-HOLDER",
+        customerIdChecked: true,
+        bnpcChecks: {
+          bookletChecked: true,
+          priorPurchaseConfirmed: true,
+          externalPurchaseAmount: "0.00",
+          externalDiscountUsedAmount: "0.00",
+          representativePurchase: false,
+          representativeDocumentsChecked: false,
+          authorizationLetterIssuedDate: null,
+          prescriptionApplicable: false,
+          prescriptionChecked: false,
+          fourKindsChecked: false,
+        },
+        items: [
+          { productId: covered.id, quantity: 2, benefitTreatment: "BNPC" },
+        ],
+        bundleOffers: [
+          {
+            ...offer,
+            quantity: 2,
+            components: [
+              { productId: covered.id, benefitTreatment: "REGULAR" },
+              { productId: exempt.id, benefitTreatment: "REGULAR" },
+            ],
+          },
+        ],
+      });
+    expect(sold.status, JSON.stringify(sold.body)).toBe(201);
+    expect(sold.body.sale.amountDue).toBe("468.80");
+    const refundToken = await csrfFor(owner);
+    const refunded = await owner
+      .post(`/api/sales/${sold.body.sale.transactionId}/reversals`)
+      .set("x-csrf-token", refundToken)
+      .send({
+        ownerPassword,
+        reason: "One of two bundles returned",
+        refundMethod: "QR",
+        lines: sold.body.sale.lines.map((line: { saleLineId: string }) => ({
+          saleLineId: line.saleLineId,
+          quantity: 1,
+          restock: true,
+        })),
+      });
+    expect(refunded.status, JSON.stringify(refunded.body)).toBe(201);
+    expect(refunded.body.reversal.amount).toBe("234.40");
+    expect(
+      db
+        .prepare(
+          "SELECT SUM(qualifying_purchase_delta_centavos) AS purchase, SUM(bnpc_discount_delta_centavos) AS discount FROM bnpc_usage_events",
+        )
+        .get(),
+    ).toEqual({ purchase: 11200, discount: 560 });
   });
 
   it("rejects stale, inactive, expired, or tampered offers and reserves tracked component lots", async () => {

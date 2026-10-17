@@ -6,6 +6,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { calculateRefundTotal, prorateCentavos } from "@medtryx/shared";
 import { requireAuthentication, requireCsrf, requireRole } from "./auth.js";
 import { writeAuditEvent } from "./db.js";
 import { getSavedSale } from "./sales.js";
@@ -35,8 +36,29 @@ const reversalSchema = z
         z
           .object({
             saleLineId: z.uuid(),
+            quantity: z
+              .number()
+              .int()
+              .min(0)
+              .max(Number.MAX_SAFE_INTEGER)
+              .optional(),
             restock: z.boolean(),
             lotPickVerified: z.boolean().default(false),
+            lotQuantities: z
+              .array(
+                z
+                  .object({
+                    lotId: z.uuid(),
+                    quantity: z
+                      .number()
+                      .int()
+                      .min(0)
+                      .max(Number.MAX_SAFE_INTEGER),
+                  })
+                  .strict(),
+              )
+              .max(100)
+              .optional(),
           })
           .strict(),
       )
@@ -157,6 +179,7 @@ type SaleSummaryRow = {
   created_at: string;
   reversal_transaction_id: string | null;
   reversal_created_at: string | null;
+  partially_refunded: number;
   refund_method: "CASH" | "QR" | null;
   refund_amount_centavos: number | null;
   reversal_cash_rounding_adjustment_centavos: number | null;
@@ -181,7 +204,11 @@ function presentSaleSummary(row: SaleSummaryRow) {
     amountDue: money(row.amount_due_centavos),
     cashRoundingAdjustment: money(row.cash_rounding_adjustment_centavos),
     createdAt: row.created_at,
-    status: row.reversal_transaction_id ? "REVERSED" : "FINALIZED",
+    status: row.reversal_transaction_id
+      ? row.partially_refunded
+        ? "PARTIALLY_REFUNDED"
+        : "REVERSED"
+      : "FINALIZED",
     reversal: row.reversal_transaction_id
       ? {
           transactionId: row.reversal_transaction_id,
@@ -246,7 +273,10 @@ export function registerReversalRoutes(
                 r.reversal_transaction_id, r.created_at AS reversal_created_at,
                 r.refund_method, r.amount_centavos AS refund_amount_centavos,
                 r.cash_rounding_adjustment_centavos
-                  AS reversal_cash_rounding_adjustment_centavos
+                  AS reversal_cash_rounding_adjustment_centavos,
+                EXISTS(SELECT 1 FROM sale_lines sl
+                  LEFT JOIN sale_reversal_lines rl ON rl.sale_line_id = sl.id
+                  WHERE sl.sale_id = s.id AND sl.quantity > COALESCE(rl.quantity, 0)) AS partially_refunded
          FROM sales s JOIN users u ON u.id = s.cashier_user_id
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
          ORDER BY s.created_at DESC, s.transaction_id DESC LIMIT ?`,
@@ -299,7 +329,10 @@ export function registerReversalRoutes(
                 s.amount_due_centavos, s.cash_rounding_adjustment_centavos,
                 s.cash_rounding_mode, p.id AS payment_switch_id,
                 s.created_at, r.reversal_transaction_id,
-                r.created_at AS reversal_created_at
+                r.created_at AS reversal_created_at,
+                EXISTS(SELECT 1 FROM sale_lines sl
+                  LEFT JOIN sale_reversal_lines rl ON rl.sale_line_id = sl.id
+                  WHERE sl.sale_id = s.id AND sl.quantity > COALESCE(rl.quantity, 0)) AS partially_refunded
          FROM sales s
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
          LEFT JOIN sale_payment_switches p ON p.sale_id = s.id
@@ -317,9 +350,11 @@ export function registerReversalRoutes(
       created_at: string;
       reversal_transaction_id: string | null;
       reversal_created_at: string | null;
+      partially_refunded: number;
     }>;
     const linesForSale = db.prepare(
-      `SELECT sl.id, sl.product_name_snapshot, sl.sku_snapshot, sl.quantity
+      `SELECT sl.id, sl.product_name_snapshot, sl.sku_snapshot, sl.quantity,
+              sl.amount_due_centavos
        FROM sale_lines sl WHERE sl.sale_id = ? ORDER BY sl.line_number`,
     );
     const lotsForLine = db.prepare(
@@ -333,6 +368,7 @@ export function registerReversalRoutes(
         transactionId: sale.transaction_id,
         paymentMethod: sale.payment_method,
         amountDue: money(sale.amount_due_centavos),
+        cashRoundingAdjustment: money(sale.cash_rounding_adjustment_centavos),
         qrAmountIfSwitched: money(
           sale.payment_method === "CASH"
             ? sale.amount_due_centavos - sale.cash_rounding_adjustment_centavos
@@ -349,7 +385,11 @@ export function registerReversalRoutes(
         ),
         paymentSwitchRecorded: sale.payment_switch_id !== null,
         createdAt: sale.created_at,
-        status: sale.reversal_transaction_id ? "REVERSED" : "FINALIZED",
+        status: sale.reversal_transaction_id
+          ? sale.partially_refunded
+            ? "PARTIALLY_REFUNDED"
+            : "REVERSED"
+          : "FINALIZED",
         reversalTransactionId: sale.reversal_transaction_id,
         lines: (
           linesForSale.all(sale.id) as Array<{
@@ -357,12 +397,14 @@ export function registerReversalRoutes(
             product_name_snapshot: string;
             sku_snapshot: string;
             quantity: number;
+            amount_due_centavos: number;
           }>
         ).map((line) => ({
           saleLineId: line.id,
           productName: line.product_name_snapshot,
           sku: line.sku_snapshot,
           quantity: line.quantity,
+          amountDue: money(line.amount_due_centavos),
           lotAllocations: (
             lotsForLine.all(line.id) as Array<{
               lot_id: string;
@@ -1094,11 +1136,12 @@ export function registerReversalRoutes(
             throw new ReversalError(409, "sale_already_reversed");
           }
 
-          const saleLines = db
+          const originalLines = db
             .prepare(
               `SELECT id, product_id, product_name_snapshot, sku_snapshot,
                       quantity, amount_due_centavos,
-                      allocated_cogs_centavos,
+                      allocated_cogs_centavos, bnpc_discount_centavos,
+                      unit_price_centavos, bnpc_policy_version,
                       EXISTS(SELECT 1 FROM sale_line_lot_allocations a
                              WHERE a.sale_line_id = sale_lines.id) AS lot_tracked
                FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
@@ -1111,61 +1154,169 @@ export function registerReversalRoutes(
             quantity: number;
             amount_due_centavos: number;
             allocated_cogs_centavos: number;
+            bnpc_discount_centavos: number;
+            unit_price_centavos: number;
+            bnpc_policy_version: string | null;
             lot_tracked: number;
           }[];
           const decisionByLine = new Map(
             parsed.data.lines.map((line) => [line.saleLineId, line]),
           );
           if (
-            saleLines.length !== parsed.data.lines.length ||
-            saleLines.some((line) => !decisionByLine.has(line.id))
+            originalLines.length !== parsed.data.lines.length ||
+            originalLines.some((line) => !decisionByLine.has(line.id))
           ) {
             throw new ReversalError(400, "reversal_lines_must_match_sale");
           }
-          for (const line of saleLines) {
+          const returnedLots = new Map<
+            string,
+            Array<{
+              lot_id: string;
+              quantity: number;
+              allocated_cogs_centavos: number;
+              expiry_date: string;
+              quarantined: number;
+            }>
+          >();
+          const saleLines = originalLines.flatMap((line) => {
             const decision = decisionByLine.get(line.id)!;
+            const quantity = decision.quantity ?? line.quantity;
+            if (quantity > line.quantity)
+              throw new ReversalError(400, "invalid_refund_quantity");
+            if (quantity === 0) return [];
+            const lots = db
+              .prepare(
+                `SELECT a.lot_id, a.quantity, a.allocated_cogs_centavos,
+                      l.expiry_date, l.quarantined
+               FROM sale_line_lot_allocations a
+               JOIN inventory_lots l ON l.id = a.lot_id
+               WHERE a.sale_line_id = ? ORDER BY l.expiry_date, l.lot_code`,
+              )
+              .all(line.id) as Array<{
+              lot_id: string;
+              quantity: number;
+              allocated_cogs_centavos: number;
+              expiry_date: string;
+              quarantined: number;
+            }>;
+            if (
+              decision.lotQuantities &&
+              (new Set(decision.lotQuantities.map((lot) => lot.lotId)).size !==
+                decision.lotQuantities.length ||
+                decision.lotQuantities.some(
+                  (lot) => !lots.some((saved) => saved.lot_id === lot.lotId),
+                ) ||
+                decision.lotQuantities.reduce(
+                  (sum, lot) => sum + lot.quantity,
+                  0,
+                ) !== quantity)
+            )
+              throw new ReversalError(400, "invalid_refund_lot_quantities");
+            if (
+              lots.length > 1 &&
+              quantity < line.quantity &&
+              !decision.lotQuantities
+            )
+              throw new ReversalError(400, "refund_lot_quantities_required");
+            const selectedLots = lots.flatMap((lot) => {
+              const returned = decision.lotQuantities
+                ? (decision.lotQuantities.find(
+                    (selected) => selected.lotId === lot.lot_id,
+                  )?.quantity ?? 0)
+                : lots.length === 1
+                  ? quantity
+                  : lot.quantity;
+              if (returned > lot.quantity)
+                throw new ReversalError(400, "invalid_refund_lot_quantities");
+              return returned === 0
+                ? []
+                : [
+                    {
+                      ...lot,
+                      quantity: returned,
+                      allocated_cogs_centavos: prorateCentavos(
+                        lot.allocated_cogs_centavos,
+                        returned,
+                        lot.quantity,
+                      ),
+                    },
+                  ];
+            });
+            returnedLots.set(line.id, selectedLots);
             if (line.lot_tracked === 1 && decision.restock) {
               if (!decision.lotPickVerified)
                 throw new ReversalError(
                   400,
                   "lot_return_verification_required",
                 );
-              const allocations = db
-                .prepare(
-                  `SELECT l.id, l.expiry_date, l.quarantined
-                   FROM sale_line_lot_allocations a
-                   JOIN inventory_lots l ON l.id = a.lot_id
-                   WHERE a.sale_line_id = ?`,
-                )
-                .all(line.id) as Array<{
-                id: string;
-                expiry_date: string;
-                quarantined: number;
-              }>;
               const today = manilaCalendarDate();
               if (
-                allocations.length === 0 ||
-                allocations.some(
+                selectedLots.length === 0 ||
+                selectedLots.some(
                   (lot) => lot.expiry_date < today || lot.quarantined === 1,
                 )
               ) {
                 throw new ReversalError(409, "returned_lot_not_saleable");
               }
             }
-          }
-          const lineRefundTotal = saleLines.reduce(
+            return [
+              {
+                ...line,
+                quantity,
+                amount_due_centavos: prorateCentavos(
+                  line.amount_due_centavos,
+                  quantity,
+                  line.quantity,
+                ),
+                allocated_cogs_centavos: selectedLots.length
+                  ? selectedLots.reduce(
+                      (sum, lot) => sum + lot.allocated_cogs_centavos,
+                      0,
+                    )
+                  : prorateCentavos(
+                      line.allocated_cogs_centavos,
+                      quantity,
+                      line.quantity,
+                    ),
+                bnpc_discount_centavos: prorateCentavos(
+                  line.bnpc_discount_centavos,
+                  quantity,
+                  line.quantity,
+                ),
+              },
+            ];
+          });
+          if (!saleLines.length)
+            throw new ReversalError(400, "refund_quantity_required");
+          const lineRefundTotal = originalLines.reduce(
             (total, line) => total + line.amount_due_centavos,
             0,
           );
-          const refundTotal =
+          const savedTotal =
             lineRefundTotal + original.cash_rounding_adjustment_centavos;
           if (
-            !Number.isSafeInteger(refundTotal) ||
-            refundTotal < 0 ||
-            refundTotal !== original.amount_due_centavos
+            !Number.isSafeInteger(savedTotal) ||
+            savedTotal < 0 ||
+            savedTotal !== original.amount_due_centavos
           ) {
             throw new ReversalError(409, "sale_totals_do_not_reconcile");
           }
+          const refund = calculateRefundTotal(
+            originalLines.map((line) => ({
+              quantity: line.quantity,
+              refundQuantity:
+                decisionByLine.get(line.id)!.quantity ?? line.quantity,
+              amountCentavos: line.amount_due_centavos,
+            })),
+            original.cash_rounding_adjustment_centavos,
+          );
+          const refundTotal = refund.amountCentavos;
+          if (
+            !Number.isSafeInteger(refundTotal) ||
+            refundTotal < 0 ||
+            refundTotal > savedTotal
+          )
+            throw new ReversalError(409, "sale_totals_do_not_reconcile");
 
           let cashShift:
             | { id: string; expected_cash_centavos: number }
@@ -1209,7 +1360,7 @@ export function registerReversalRoutes(
             refundTotal,
             cashShift?.id ?? null,
             createdAt,
-            original.cash_rounding_adjustment_centavos,
+            refund.cashRoundingAdjustmentCentavos,
           );
 
           const insertLine = db.prepare(
@@ -1279,19 +1430,7 @@ export function registerReversalRoutes(
               req.user!.id,
               createdAt,
             );
-            const originalLots =
-              line.lot_tracked === 1
-                ? (db
-                    .prepare(
-                      `SELECT lot_id, quantity, allocated_cogs_centavos
-                       FROM sale_line_lot_allocations WHERE sale_line_id = ?`,
-                    )
-                    .all(line.id) as Array<{
-                    lot_id: string;
-                    quantity: number;
-                    allocated_cogs_centavos: number;
-                  }>)
-                : [];
+            const originalLots = returnedLots.get(line.id) ?? [];
             if (line.lot_tracked === 1 && originalLots.length === 0)
               throw new ReversalError(409, "sale_lot_allocation_missing");
             reversalLotActions.push(
@@ -1427,8 +1566,20 @@ export function registerReversalRoutes(
               bnpcUsage.week_start_date,
               sale.id,
               reversalId,
-              -bnpcUsage.local_purchase_applied_centavos,
-              -bnpcUsage.bnpc_discount_centavos,
+              -Math.min(
+                bnpcUsage.local_purchase_applied_centavos,
+                saleLines
+                  .filter((line) => line.bnpc_policy_version !== null)
+                  .reduce(
+                    (sum, line) =>
+                      sum + line.quantity * line.unit_price_centavos,
+                    0,
+                  ),
+              ),
+              -saleLines.reduce(
+                (sum, line) => sum + line.bnpc_discount_centavos,
+                0,
+              ),
               createdAt,
             );
           }

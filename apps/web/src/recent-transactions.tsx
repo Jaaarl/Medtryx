@@ -2,6 +2,14 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, ApiError } from "./api";
 import {
+  fullRefund,
+  RefundOptions,
+  refundLineRequest,
+  refundQuantity,
+  refundReview,
+  type RefundSelection,
+} from "./refund-options";
+import {
   addMoney,
   moneyTimesQuantity,
   SampleReceiptModal,
@@ -12,17 +20,19 @@ type RecentTransaction = {
   transactionId: string;
   paymentMethod: "CASH" | "QR";
   amountDue: string;
+  cashRoundingAdjustment: string;
   qrAmountIfSwitched: string;
   cashAmountIfSwitched: string;
   paymentSwitchRecorded: boolean;
   createdAt: string;
-  status: "FINALIZED" | "REVERSED";
+  status: "FINALIZED" | "REVERSED" | "PARTIALLY_REFUNDED";
   reversalTransactionId: string | null;
   lines: Array<{
     saleLineId: string;
     productName: string;
     sku: string;
     quantity: number;
+    amountDue: string;
     lotAllocations: Array<{
       lotId: string;
       lotCode: string;
@@ -89,6 +99,12 @@ function transactionError(error: unknown): string {
       "The selected drawer does not have enough expected cash for this refund.",
     sale_totals_do_not_reconcile:
       "The saved sale total could not be reconciled. Ask an owner to review it.",
+    invalid_refund_quantity:
+      "Enter a whole refund quantity between 0 and the quantity sold.",
+    refund_quantity_required: "Select at least one item to refund.",
+    refund_lot_quantities_required: "Enter which original lots were returned.",
+    invalid_refund_lot_quantities:
+      "Returned lot quantities must match the quantity being refunded.",
   };
   return (
     messages[error.code] ?? "The cancellation was rejected. Refresh and retry."
@@ -113,6 +129,9 @@ export function RecentTransactions({
   onUpdated: () => Promise<void>;
 }) {
   const [transactions, setTransactions] = useState<RecentTransaction[]>([]);
+  const [refundSelections, setRefundSelections] = useState<
+    Record<string, RefundSelection>
+  >({});
   const [restockChoices, setRestockChoices] = useState<Record<string, boolean>>(
     {},
   );
@@ -140,7 +159,7 @@ export function RecentTransactions({
   const [receipt, setReceipt] = useState<SampleReceiptData | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [localRefresh, setLocalRefresh] = useState(0);
 
   useEffect(() => {
@@ -175,7 +194,22 @@ export function RecentTransactions({
     event.preventDefault();
     setError("");
     setNotice("");
+    const selection = refundSelections[transaction.transactionId] ?? fullRefund;
+    if (
+      !refundReview(
+        transaction.lines,
+        transaction.cashRoundingAdjustment,
+        selection,
+      ).valid
+    ) {
+      setError(
+        "Select at least one valid refund quantity and check the returned lot quantities.",
+      );
+      return;
+    }
     const lines = transaction.lines.map((line) => {
+      const selected = refundLineRequest(line, selection);
+      if (selected.quantity === 0) return { ...selected, restock: false };
       const restock = restockChoices[line.saleLineId];
       if (restock === undefined) return null;
       if (
@@ -186,7 +220,7 @@ export function RecentTransactions({
         return null;
       }
       return {
-        saleLineId: line.saleLineId,
+        ...selected,
         restock,
         ...(restock && line.lotAllocations.length > 0
           ? { lotPickVerified: true }
@@ -229,7 +263,7 @@ export function RecentTransactions({
         lines,
       });
       setNotice(
-        `Cancellation ${result.reversal.transactionId} recorded for ₱${result.reversal.amount}.`,
+        `${selection.mode === "FULL" ? "Cancellation" : "Partial refund"} ${result.reversal.transactionId} recorded for ₱${result.reversal.amount}.`,
       );
       setLocalRefresh((value) => value + 1);
       await onUpdated();
@@ -318,7 +352,9 @@ export function RecentTransactions({
         cancelled: transaction.status === "REVERSED",
       });
     } catch {
-      setReceiptError("Unable to load this receipt preview. Refresh and try again.");
+      setReceiptError(
+        "Unable to load this receipt preview. Refresh and try again.",
+      );
     } finally {
       setReceiptLoadingId("");
     }
@@ -361,6 +397,16 @@ export function RecentTransactions({
             const canCancel =
               transaction.status === "FINALIZED" && remainingMs > 0;
             const openAction = openActions[transaction.transactionId] ?? null;
+            const refundSelection =
+              refundSelections[transaction.transactionId] ?? fullRefund;
+            const refund = refundReview(
+              transaction.lines,
+              transaction.cashRoundingAdjustment,
+              refundSelection,
+            );
+            const enoughCash =
+              refundShift &&
+              Number(refundShift.expectedCash) >= Number(refund.total);
             const secondsRemaining = Math.max(
               0,
               Math.ceil(remainingMs / 1_000),
@@ -413,9 +459,12 @@ export function RecentTransactions({
                       : "View sample invoice"}
                   </button>
                 </div>
-                {transaction.status === "REVERSED" ? (
+                {transaction.status !== "FINALIZED" ? (
                   <small className="reversal-saved-note">
-                    Cancelled as {transaction.reversalTransactionId}.
+                    {transaction.status === "PARTIALLY_REFUNDED"
+                      ? "Partial refund"
+                      : "Full refund"}{" "}
+                    recorded as {transaction.reversalTransactionId}.
                   </small>
                 ) : canCancel ? (
                   <>
@@ -552,13 +601,29 @@ export function RecentTransactions({
                           <span className="recent-action-kicker">
                             Separate action
                           </span>
-                          <h3>Cancel and refund this sale</h3>
+                          <h3>Cancel or partially refund this sale</h3>
                           <p>
                             {transaction.paymentMethod === "QR"
-                              ? "This reverses the sale. Send the QR refund first, then confirm it below."
-                              : "This reverses the sale and refunds cash from the open drawer."}
+                              ? "Choose quantities below. Send the displayed QR refund first, then confirm it."
+                              : "Choose quantities below. Return the displayed cash amount from the open drawer."}
                           </p>
                         </div>
+                        <RefundOptions
+                          id={transaction.transactionId}
+                          lines={transaction.lines}
+                          adjustment={transaction.cashRoundingAdjustment}
+                          selection={refundSelection}
+                          onChange={(selection) => {
+                            setRefundSelections((current) => ({
+                              ...current,
+                              [transaction.transactionId]: selection,
+                            }));
+                            setQrRefundConfirmed((current) => ({
+                              ...current,
+                              [transaction.transactionId]: false,
+                            }));
+                          }}
+                        />
                         <div className="recent-cancel-stock">
                           <div className="recent-cancel-section-heading">
                             <strong>
@@ -573,11 +638,16 @@ export function RecentTransactions({
                             <fieldset
                               className="recent-cancel-line-stock"
                               key={line.saleLineId}
+                              disabled={
+                                refundQuantity(line, refundSelection) === 0
+                              }
                             >
                               <legend>
                                 <strong>{line.productName}</strong>
                                 <small>
-                                  {line.sku} / quantity {line.quantity}
+                                  {line.sku} / refund quantity{" "}
+                                  {refundQuantity(line, refundSelection)} of{" "}
+                                  {line.quantity}
                                 </small>
                               </legend>
                               <div className="recent-stock-choice">
@@ -585,7 +655,9 @@ export function RecentTransactions({
                                   <input
                                     type="radio"
                                     name={`stock-${line.saleLineId}`}
-                                    required
+                                    required={
+                                      refundQuantity(line, refundSelection) > 0
+                                    }
                                     checked={
                                       restockChoices[line.saleLineId] === true
                                     }
@@ -602,7 +674,9 @@ export function RecentTransactions({
                                   <input
                                     type="radio"
                                     name={`stock-${line.saleLineId}`}
-                                    required
+                                    required={
+                                      refundQuantity(line, refundSelection) > 0
+                                    }
                                     checked={
                                       restockChoices[line.saleLineId] === false
                                     }
@@ -705,7 +779,10 @@ export function RecentTransactions({
                                   }))
                                 }
                               />
-                              <span>I sent the QR refund to the customer.</span>
+                              <span>
+                                I sent the ₱{refund.total} QR refund to the
+                                customer.
+                              </span>
                             </label>
                           ) : refundShift ? (
                             <small className="field-hint">
@@ -718,6 +795,15 @@ export function RecentTransactions({
                               refund.
                             </small>
                           )}
+                          {transaction.paymentMethod === "CASH" &&
+                            refundShift &&
+                            refund.valid &&
+                            !enoughCash && (
+                              <small className="field-hint field-hint-error">
+                                The drawer does not have enough expected cash
+                                for this refund.
+                              </small>
+                            )}
                           <small className="field-hint">
                             Cancellation window closes in{" "}
                             {Math.floor(secondsRemaining / 60)}:
@@ -729,13 +815,16 @@ export function RecentTransactions({
                           type="submit"
                           disabled={
                             savingId === transaction.transactionId ||
+                            !refund.valid ||
                             (transaction.paymentMethod === "CASH" &&
-                              !refundShift)
+                              !enoughCash)
                           }
                         >
                           {savingId === transaction.transactionId
                             ? "Recording cancellation…"
-                            : "Cancel and refund sale"}
+                            : refundSelection.mode === "FULL"
+                              ? "Cancel and refund sale"
+                              : "Record partial refund"}
                         </button>
                       </form>
                     )}
