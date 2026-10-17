@@ -18,7 +18,7 @@ type SalesReport = {
     changedAt: string;
     changedByEmail: string;
     changedByRole: "owner" | "cashier";
-    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL" | "PARTIAL_REFUND";
     reason: string;
     payment: {
       fromMethod: "CASH" | "QR";
@@ -571,7 +571,9 @@ export function ReportsPage() {
                             ? "Cash to QR"
                             : change.kind === "CANCELLATION"
                               ? "Cancelled"
-                              : "Reversed"}
+                              : change.kind === "PARTIAL_REFUND"
+                                ? "Partial refund"
+                                : "Reversed"}
                         </td>
                         <td>
                           {change.changedByEmail} ({change.changedByRole})

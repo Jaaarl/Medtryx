@@ -1794,7 +1794,7 @@ type SaleRow = {
 
 type SaleChange = {
   id: string;
-  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+  kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL" | "PARTIAL_REFUND";
   createdAt: string;
   actorEmail: string;
   reason: string;
@@ -1971,7 +1971,13 @@ export function getSavedSale(
     }>;
     changes.push({
       id: reversal.id,
-      kind: reversal.action === "sale.cancelled" ? "CANCELLATION" : "REVERSAL",
+      kind:
+        reversalLines.reduce((sum, line) => sum + line.quantity, 0) <
+        lines.reduce((sum, line) => sum + line.quantity, 0)
+          ? "PARTIAL_REFUND"
+          : reversal.action === "sale.cancelled"
+            ? "CANCELLATION"
+            : "REVERSAL",
       createdAt: reversal.created_at,
       actorEmail: reversal.actor_email,
       reason: reversal.reason,
@@ -2369,14 +2375,39 @@ export function registerSalesRoutes(
     const expenseTotals = summarizeExpenses(expenses);
     const cashierOnly =
       req.user!.role === "owner" ? "" : "AND s.cashier_user_id = ?";
-    const activeSaleOnly = `AND NOT EXISTS (
-      SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
+    // Keep consumed/retained units in the daily summary after a partial refund.
+    // Integer quotient/remainder allocation matches the shared half-up calculation.
+    const remainingAmount = (column: string) => `sl.${column} - (
+      (sl.${column} / sl.quantity) * COALESCE(rl.quantity, 0) +
+      ((sl.${column} % sl.quantity) * COALESCE(rl.quantity, 0) * 2 + sl.quantity) / (sl.quantity * 2)
+    )`;
+    const netSales = `WITH sale_lines AS (
+      SELECT sl.sale_id, sl.product_id, sl.sku_snapshot, sl.product_name_snapshot,
+             sl.line_number, sl.unit_price_centavos, sl.tax_class_snapshot,
+             sl.benefit_treatment_snapshot,
+             sl.quantity - COALESCE(rl.quantity, 0) AS quantity,
+             sl.amount_due_centavos - COALESCE(rl.refund_amount_centavos, 0) AS amount_due_centavos,
+             ${remainingAmount("vat_centavos")} AS vat_centavos,
+             ${remainingAmount("tax_basis_centavos")} AS tax_basis_centavos,
+             ${remainingAmount("discount_centavos")} AS discount_centavos
+      FROM main.sale_lines sl LEFT JOIN sale_reversal_lines rl ON rl.sale_line_id = sl.id
+    ), sales AS (
+      SELECT s.id, s.transaction_id, s.business_date, s.cashier_user_id, s.shift_id,
+             s.created_at, s.payment_method,
+             s.amount_due_centavos - COALESCE(r.amount_centavos, 0) AS amount_due_centavos,
+             (SELECT COALESCE(SUM(discount_centavos), 0) FROM sale_lines
+              WHERE sale_id = s.id AND benefit_treatment_snapshot = 'SENIOR_CITIZEN') AS senior_discount_centavos,
+             (SELECT COALESCE(SUM(vat_centavos), 0) FROM sale_lines WHERE sale_id = s.id) AS vat_centavos
+      FROM main.sales s LEFT JOIN sale_reversals r ON r.sale_id = s.id
+    )`;
+    const activeSaleOnly = `AND EXISTS (
+      SELECT 1 FROM sale_lines sl WHERE sl.sale_id = s.id AND sl.quantity > 0
     )`;
     const parameters =
       req.user!.role === "owner" ? [date] : [date, req.user!.id];
     const totals = db
       .prepare(
-        `SELECT COUNT(*) AS transaction_count,
+        `${netSales} SELECT COUNT(*) AS transaction_count,
                 COALESCE(SUM(amount_due_centavos), 0) AS sales_centavos,
                 COALESCE(SUM(CASE WHEN payment_method = 'CASH' THEN amount_due_centavos ELSE 0 END), 0)
                   AS cash_sales_centavos,
@@ -2393,7 +2424,7 @@ export function registerSalesRoutes(
     };
     const shifts = db
       .prepare(
-        `SELECT sh.id, sh.opened_at, sh.closed_at, u.email AS cashier_email,
+        `${netSales} SELECT sh.id, sh.opened_at, sh.closed_at, u.email AS cashier_email,
                 COUNT(s.id) AS transaction_count,
                 COALESCE(SUM(s.amount_due_centavos), 0) AS sales_centavos,
                 COALESCE(SUM(CASE WHEN s.payment_method = 'CASH' THEN s.amount_due_centavos ELSE 0 END), 0)
@@ -2419,13 +2450,14 @@ export function registerSalesRoutes(
     }>;
     const products = db
       .prepare(
-        `SELECT sl.sku_snapshot AS sku,
+        `${netSales} SELECT sl.sku_snapshot AS sku,
                 sl.product_name_snapshot AS name,
                 SUM(sl.quantity) AS quantity,
                 SUM(sl.amount_due_centavos) AS sales_centavos
          FROM sales s JOIN sale_lines sl ON sl.sale_id = s.id
          WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
          GROUP BY sl.product_id, sl.sku_snapshot, sl.product_name_snapshot
+         HAVING SUM(sl.quantity) > 0
          ORDER BY sales_centavos DESC, name COLLATE NOCASE`,
       )
       .all(...parameters) as Array<{
@@ -2436,7 +2468,7 @@ export function registerSalesRoutes(
     }>;
     const transactionRows = db
       .prepare(
-        `SELECT s.transaction_id, s.created_at, s.payment_method,
+        `${netSales} SELECT s.transaction_id, s.created_at, s.payment_method,
                 s.amount_due_centavos AS sales_centavos,
                 u.email AS cashier_email,
                 sl.line_number, sl.sku_snapshot AS sku,
@@ -2445,7 +2477,7 @@ export function registerSalesRoutes(
          FROM sales s
          JOIN users u ON u.id = s.cashier_user_id
          JOIN sale_lines sl ON sl.sale_id = s.id
-         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}
+         WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly} AND sl.quantity > 0
          ORDER BY s.created_at, s.transaction_id, sl.line_number`,
       )
       .all(...parameters) as Array<{
@@ -2499,7 +2531,7 @@ export function registerSalesRoutes(
       req.user!.role === "owner"
         ? (db
             .prepare(
-              `SELECT
+              `${netSales} SELECT
                  (SELECT MIN(s.transaction_id) FROM sales s
                   WHERE s.business_date = ? ${cashierOnly} ${activeSaleOnly}) AS first_invoice,
                  (SELECT MAX(s.transaction_id) FROM sales s

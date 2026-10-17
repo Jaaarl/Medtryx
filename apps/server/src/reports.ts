@@ -1,4 +1,5 @@
 import { Decimal } from "decimal.js";
+import { prorateCentavos } from "@medtryx/shared";
 import type Database from "better-sqlite3";
 import express from "express";
 import { z } from "zod";
@@ -37,6 +38,7 @@ type SaleLineRow = {
 };
 
 type ReversalLineRow = SaleLineRow & {
+  refund_quantity: number;
   refund_amount_centavos: number;
   original_cogs_centavos: number;
 };
@@ -202,6 +204,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
               sl.bnpc_discount_centavos,
               sl.bundle_promotion_discount_centavos,
               sl.amount_due_centavos, sl.allocated_cogs_centavos,
+              rl.quantity AS refund_quantity,
               rl.refund_amount_centavos, rl.original_cogs_centavos
        FROM sale_reversal_lines rl
        JOIN sale_reversals r ON r.id = rl.reversal_id
@@ -211,34 +214,42 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     )
     .all(window.start, window.end) as ReversalLineRow[];
   for (const line of reversalLines) {
-    const gross = BigInt(line.quantity) * BigInt(line.unit_price_centavos);
+    const portion = (total: number) =>
+      prorateCentavos(total, line.refund_quantity, line.quantity);
+    const vat = portion(line.vat_centavos);
+    const gross =
+      BigInt(line.refund_quantity) * BigInt(line.unit_price_centavos);
     add(totals, "grossSales", -gross);
     add(
       totals,
       "netSalesExcludingVat",
-      -BigInt(line.refund_amount_centavos - line.vat_centavos),
+      -BigInt(line.refund_amount_centavos - vat),
     );
     if (line.tax_class_snapshot === "VATABLE") {
-      add(totals, "vatableSalesBase", -BigInt(line.tax_basis_centavos));
+      add(
+        totals,
+        "vatableSalesBase",
+        -BigInt(portion(line.tax_basis_centavos)),
+      );
     } else if (line.tax_class_snapshot === "VAT_EXEMPT") {
       add(totals, "vatExemptSales", -BigInt(line.refund_amount_centavos));
     } else {
       add(totals, "zeroRatedSales", -BigInt(line.refund_amount_centavos));
     }
-    add(totals, "vatOutput", -BigInt(line.vat_centavos));
-    add(totals, "vatRemoved", -BigInt(line.vat_removed_centavos));
+    add(totals, "vatOutput", -BigInt(vat));
+    add(totals, "vatRemoved", -BigInt(portion(line.vat_removed_centavos)));
     add(totals, "cogs", -BigInt(line.original_cogs_centavos));
     add(
       totals,
       "bundlePromotionalDiscounts",
-      -BigInt(line.bundle_promotion_discount_centavos),
+      -BigInt(portion(line.bundle_promotion_discount_centavos)),
     );
     if (line.benefit_treatment_snapshot === "SENIOR_CITIZEN") {
-      add(totals, "seniorDiscounts", -BigInt(line.discount_centavos));
+      add(totals, "seniorDiscounts", -BigInt(portion(line.discount_centavos)));
     } else if (line.benefit_treatment_snapshot === "PWD") {
-      add(totals, "pwdDiscounts", -BigInt(line.discount_centavos));
+      add(totals, "pwdDiscounts", -BigInt(portion(line.discount_centavos)));
     }
-    add(totals, "bnpcDiscounts", -BigInt(line.bnpc_discount_centavos));
+    add(totals, "bnpcDiscounts", -BigInt(portion(line.bnpc_discount_centavos)));
   }
 
   const cashRows = db
@@ -273,7 +284,11 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
        UNION ALL
        SELECT s.transaction_id, r.created_at AS changed_at, r.reason,
               u.email AS actor_email, u.role AS actor_role,
-              CASE WHEN a.action = 'sale.cancelled'
+              CASE WHEN EXISTS(SELECT 1 FROM sale_lines sl
+                LEFT JOIN sale_reversal_lines rl ON rl.sale_line_id = sl.id
+                WHERE sl.sale_id = s.id AND sl.quantity > COALESCE(rl.quantity, 0))
+                   THEN 'PARTIAL_REFUND'
+                   WHEN a.action = 'sale.cancelled'
                    THEN 'CANCELLATION' ELSE 'REVERSAL' END AS kind,
               NULL AS from_method, NULL AS to_method,
               NULL AS cash_amount_centavos, NULL AS qr_amount_centavos,
@@ -293,7 +308,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     reason: string;
     actor_email: string;
     actor_role: "owner" | "cashier";
-    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL";
+    kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL" | "PARTIAL_REFUND";
     from_method: "CASH" | "QR" | null;
     to_method: "CASH" | "QR" | null;
     cash_amount_centavos: number | null;
