@@ -239,7 +239,7 @@ describe("owner-only verified backup and restore", () => {
       );
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-      ).toEqual({ count: 27 });
+      ).toEqual({ count: 28 });
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
       ).toEqual({ count: 0 });

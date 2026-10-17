@@ -479,6 +479,10 @@ export function createApp(
     }
   }
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+    if (error instanceof Error && error.message === "product_is_deleted") {
+      res.status(409).json({ error: "product_deleted" });
+      return;
+    }
     if (error instanceof Error && "type" in error) {
       if (error.type === "entity.too.large") {
         res.status(413).json({ error: "request_too_large" });

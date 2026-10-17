@@ -318,7 +318,7 @@ function reportRows(db: Database.Database, startDay: string, endDay: string) {
     .prepare(
       `SELECT id, sku, name, unit, tracks_lots, quantity_on_hand, reorder_level,
               inventory_value_centavos, is_active
-       FROM products ORDER BY name COLLATE NOCASE`,
+       FROM products WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE`,
     )
     .all() as {
     id: string;

@@ -46,6 +46,7 @@ type Product = {
   saleableQuantity: number;
   reorderLevel: number | null;
   active: boolean;
+  deletionBlockedReason: "product_has_sales_history" | null;
   latestAcquisitionCost: string | null;
   weightedAverageUnitCost: string;
   inventoryValue: string;
@@ -346,6 +347,14 @@ function errorMessage(error: unknown): string {
       "Zero-rated products are unavailable until tax settings are approved.",
     product_not_found:
       "That product could not be found. Refresh and try again.",
+    product_has_sales_history:
+      "This product has customer sales history and cannot be deleted. Deactivate it instead.",
+    product_deleted:
+      "This product was deleted. Refresh the page and choose another product.",
+    product_inventory_changed:
+      "Stock changed after you opened this product. Close this dialog and reload the page before deleting.",
+    product_inventory_inconsistent:
+      "The stock records need reconciliation before this product can be deleted. No changes were made.",
     product_already_exists:
       "This product is already in the catalog. Enter a quantity to add stock instead.",
     duplicate_product_ambiguous:
@@ -1124,8 +1133,120 @@ function StockCsvImportPanel({
   );
 }
 
+function ProductDeleteDialog({
+  product,
+  onCancel,
+  onDeleted,
+}: {
+  product: Product;
+  onCancel: () => void;
+  onDeleted: (product: Product) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const submittingRef = useRef(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    cancelRef.current?.focus();
+    return () => dialog?.close();
+  }, []);
+
+  async function confirmDelete(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setDeleting(true);
+    setError("");
+    try {
+      await api.delete(`/products/${product.id}`, {
+        expectedQuantityOnHand: product.quantityOnHand,
+        expectedInventoryValue: product.inventoryValue,
+      });
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setDeleting(false);
+      submittingRef.current = false;
+      return;
+    }
+    onDeleted(product);
+  }
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="product-delete-dialog"
+      aria-labelledby="product-delete-title"
+      aria-describedby="product-delete-description"
+      aria-busy={deleting}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!submittingRef.current) onCancel();
+      }}
+    >
+      <form onSubmit={(event) => void confirmDelete(event)}>
+        <h2 id="product-delete-title">Delete product?</h2>
+        <p className="product-delete-identity">
+          <strong>{product.name}</strong>
+          <span>SKU: {product.sku}</span>
+        </p>
+        <p id="product-delete-description">
+          This hides the product from the catalog, stock list, and checkout. Its
+          database record, receipts, and payment history will be kept. Products
+          previously sold to a customer cannot be deleted.
+        </p>
+        {product.quantityOnHand > 0 && (
+          <p className="product-delete-stock-note">
+            Remaining stock:{" "}
+            <strong>
+              {product.quantityOnHand.toLocaleString("en-PH")} {product.unit}
+            </strong>
+            , valued at{" "}
+            <strong>
+              ₱
+              {Number(product.inventoryValue).toLocaleString("en-PH", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+            </strong>
+            . This will be removed with a recorded inventory correction.
+            Existing supplier payments and expenses will stay unchanged.
+          </p>
+        )}
+        {error && (
+          <div className="banner banner-error" role="alert">
+            {error}
+          </div>
+        )}
+        <div className="product-delete-actions">
+          <button
+            ref={cancelRef}
+            className="button button-secondary"
+            type="button"
+            disabled={deleting}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            className="button button-danger"
+            type="submit"
+            disabled={deleting}
+          >
+            {deleting ? "Deleting…" : "Delete product"}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
 export function ProductsPage() {
-  const { products, loading, error, setError, refresh } = useProducts();
+  const { products, setProducts, loading, error, setError, refresh } =
+    useProducts();
   const [searchParams, setSearchParams] = useSearchParams();
   const productTableRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
@@ -1136,6 +1257,7 @@ export function ProductsPage() {
   }>({ key: "product", direction: "asc" });
   const [form, setForm] = useState(EMPTY_FORM);
   const [editing, setEditing] = useState<Product | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [duplicateProductId, setDuplicateProductId] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -1550,6 +1672,8 @@ export function ProductsPage() {
   }
 
   async function toggleActive(product: Product) {
+    if (saving) return;
+    setSaving(true);
     setError("");
     setNotice("");
     try {
@@ -1563,7 +1687,24 @@ export function ProductsPage() {
       setEditing({ ...product, active: !product.active });
     } catch (caught) {
       setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
     }
+  }
+
+  function productDeleted(product: Product) {
+    setDeleteTarget(null);
+    cancelEdit();
+    setProducts((current) => current.filter((item) => item.id !== product.id));
+    setProductPage(1);
+    setNotice(
+      `Deleted ${product.name} (${product.sku}) from the catalog. Its history has been kept.`,
+    );
+    void refresh().catch(() => {
+      setError(
+        "The product was deleted, but the catalog could not be refreshed. Reload this page.",
+      );
+    });
   }
 
   return (
@@ -2288,6 +2429,7 @@ export function ProductsPage() {
                   className="button button-quiet"
                   type="button"
                   onClick={() => void toggleActive(editing)}
+                  disabled={saving}
                 >
                   {editing.active ? "Deactivate product" : "Reactivate product"}
                 </button>
@@ -2295,14 +2437,41 @@ export function ProductsPage() {
                   className="button button-quiet"
                   type="button"
                   onClick={cancelEdit}
+                  disabled={saving}
                 >
                   Cancel editing
                 </button>
+                <div className="product-delete-section">
+                  <button
+                    className="button button-danger"
+                    type="button"
+                    disabled={saving || editing.deletionBlockedReason !== null}
+                    aria-describedby="product-delete-help"
+                    onClick={() => setDeleteTarget(editing)}
+                  >
+                    Delete product
+                  </button>
+                  <p id="product-delete-help" className="field-help">
+                    {editing.deletionBlockedReason ===
+                    "product_has_sales_history"
+                      ? "This product has customer sales history. Deactivate it to keep its records."
+                      : editing.deletionBlockedReason === null
+                        ? "Delete a product never sold to a customer. Stock removal will be recorded and its history kept."
+                        : "Refresh products to check whether deletion is available."}
+                  </p>
+                </div>
               </>
             )}
           </form>
         </aside>
       </div>
+      {deleteTarget && (
+        <ProductDeleteDialog
+          product={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onDeleted={productDeleted}
+        />
+      )}
     </section>
   );
 }

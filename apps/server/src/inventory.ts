@@ -689,11 +689,105 @@ function withBaseCost(row: ProductRow, policy: GrossProfitPolicy) {
   };
 }
 
+function productDeletionBlockedReason(
+  db: Database.Database,
+  row: ProductRow,
+): "product_has_sales_history" | null {
+  const history = db
+    .prepare(
+      `SELECT
+    EXISTS(SELECT 1 FROM sale_lines WHERE product_id = @id) OR
+    EXISTS(SELECT 1 FROM sale_reversal_lines WHERE product_id = @id) OR
+    EXISTS(SELECT 1 FROM sale_bundle_component_snapshots WHERE product_id = @id) OR
+    EXISTS(SELECT 1 FROM stock_events WHERE product_id = @id AND event_type IN ('SALE', 'REVERSAL'))
+    AS has_sales`,
+    )
+    .get({ id: row.id }) as { has_sales: number };
+  return history.has_sales ? "product_has_sales_history" : null;
+}
+
+function removeMistakenProductStock(
+  db: Database.Database,
+  product: ProductRow,
+  actorUserId: string,
+  now: string,
+): string[] {
+  const unallocated = unallocatedBalance(db, product.id);
+  const balances = [
+    {
+      lotId: null as string | null,
+      quantity: unallocated.quantity,
+      value: unallocated.valueCentavos,
+    },
+    ...getLotBalances(db, product.id).map((lot) => ({
+      lotId: lot.id,
+      quantity: lot.quantity,
+      value: lot.inventoryValueCentavos,
+    })),
+  ];
+  const ledger = db
+    .prepare(
+      `SELECT
+    coalesce((SELECT sum(quantity_delta) FROM stock_events WHERE product_id = @id), 0) AS quantity,
+    coalesce((SELECT sum(inventory_value_delta_centavos) FROM stock_events WHERE product_id = @id), 0) +
+    coalesce((SELECT sum(inventory_value_delta_centavos) FROM stock_cost_corrections WHERE product_id = @id), 0) AS value
+  `,
+    )
+    .get({ id: product.id }) as { quantity: number; value: number };
+  if (
+    balances.some(
+      (balance) =>
+        balance.quantity < 0 ||
+        balance.value < 0 ||
+        (balance.quantity === 0 && balance.value !== 0),
+    ) ||
+    balances.reduce((sum, balance) => sum + balance.quantity, 0) !==
+      product.quantity_on_hand ||
+    balances.reduce((sum, balance) => sum + balance.value, 0) !==
+      product.inventory_value_centavos ||
+    ledger.quantity !== product.quantity_on_hand ||
+    ledger.value !== product.inventory_value_centavos
+  )
+    throw new InventoryError(409, "product_inventory_inconsistent");
+
+  const eventIds: string[] = [];
+  for (const balance of balances) {
+    if (balance.quantity === 0) continue;
+    const reason =
+      "Product entered by mistake; soft deleted before any customer sale.";
+    const stockEventId = writeStockEvent(db, {
+      productId: product.id,
+      type: "ADJUSTMENT",
+      quantityDelta: -balance.quantity,
+      unitCostCents: null,
+      inventoryValueDeltaCents: -balance.value,
+      reference: `SOFT-DELETE:${product.sku}`,
+      reason,
+      actorUserId,
+      createdAt: now,
+    });
+    writeLotMovement(db, {
+      productId: product.id,
+      lotId: balance.lotId,
+      type: "ADJUSTMENT",
+      stockEventId,
+      quantityDelta: -balance.quantity,
+      inventoryValueDeltaCentavos: -balance.value,
+      reason,
+      actorUserId,
+      createdAt: now,
+    });
+    eventIds.push(stockEventId);
+  }
+  return eventIds;
+}
+
 function presentProduct(db: Database.Database, row: ProductRow) {
   const unallocated = unallocatedBalance(db, row.id);
   const lots = row.tracks_lots === 1 ? getLotBalances(db, row.id) : [];
   return {
     ...withBaseCost(row, grossProfitPolicy(db)),
+    deletionBlockedReason: productDeletionBlockedReason(db, row),
     unallocatedQuantity: unallocated.quantity,
     saleableQuantity:
       row.tracks_lots === 1
@@ -717,9 +811,9 @@ function findProduct(
   db: Database.Database,
   id: string,
 ): ProductRow | undefined {
-  return db.prepare(`${baseProductSelect()} WHERE p.id = ?`).get(id) as
-    | ProductRow
-    | undefined;
+  return db
+    .prepare(`${baseProductSelect()} WHERE p.id = ? AND p.deleted_at IS NULL`)
+    .get(id) as ProductRow | undefined;
 }
 
 type ProductIdentityRow = {
@@ -750,7 +844,7 @@ function findProductIdentityMatches(
   return (
     db
       .prepare(
-        "SELECT id, sku, name, unit, tracks_lots, is_active FROM products",
+        "SELECT id, sku, name, unit, tracks_lots, is_active FROM products WHERE deleted_at IS NULL",
       )
       .all() as ProductIdentityRow[]
   ).filter(
@@ -766,7 +860,7 @@ function listProducts(
   activeOnly = false,
   limit: number | null = 500,
 ): ProductRow[] {
-  const conditions: string[] = [];
+  const conditions: string[] = ["p.deleted_at IS NULL"];
   const values: (string | number)[] = [];
   if (activeOnly) conditions.push("p.is_active = 1");
   if (query) {
@@ -1157,7 +1251,7 @@ export function receiveStockRecord(
     throw new InventoryError(400, "inventory_value_overflow");
   const product = db
     .prepare(
-      "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+      "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ? AND deleted_at IS NULL",
     )
     .get(input.productId) as
     | {
@@ -1591,7 +1685,7 @@ export function registerInventoryRoutes(
           } else {
             const owner = db
               .prepare(
-                "SELECT id FROM products WHERE barcode = ? COLLATE NOCASE",
+                "SELECT id FROM products WHERE barcode = ? COLLATE NOCASE AND deleted_at IS NULL",
               )
               .get(input.barcode) as { id: string } | undefined;
             if (owner && owner.id !== current.id) {
@@ -1789,7 +1883,9 @@ export function registerInventoryRoutes(
         if (parsed.data.barcode) {
           const barcode = parsed.data.barcode.toLowerCase();
           const existingBarcode = db
-            .prepare("SELECT id FROM products WHERE barcode = ? COLLATE NOCASE")
+            .prepare(
+              "SELECT id FROM products WHERE barcode = ? COLLATE NOCASE AND deleted_at IS NULL",
+            )
             .get(parsed.data.barcode) as { id: string } | undefined;
           if (seenBarcodes.has(barcode)) {
             rowErrors.push({
@@ -1889,7 +1985,9 @@ export function registerInventoryRoutes(
         }
         if (parsed.data.barcode) {
           const existingBarcode = db
-            .prepare("SELECT id FROM products WHERE barcode = ? COLLATE NOCASE")
+            .prepare(
+              "SELECT id FROM products WHERE barcode = ? COLLATE NOCASE AND deleted_at IS NULL",
+            )
             .get(parsed.data.barcode) as { id: string } | undefined;
           if (existingBarcode && existingBarcode.id !== duplicateProduct.id) {
             throw new InventoryError(409, "barcode_already_exists");
@@ -2058,6 +2156,72 @@ export function registerInventoryRoutes(
     }
   });
 
+  router.delete(
+    "/products/:id",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const id = z.uuid().safeParse(req.params.id);
+      const input = z
+        .object({
+          expectedQuantityOnHand: z.number().int().min(0),
+          expectedInventoryValue: moneySchema,
+        })
+        .strict()
+        .safeParse(req.body);
+      if (!id.success || !input.success || !req.user)
+        return bodyValidation(res);
+      const actorUserId = req.user.id;
+      try {
+        db.transaction(() => {
+          const product = findProduct(db, id.data);
+          if (!product) throw new InventoryError(404, "product_not_found");
+          const blockedReason = productDeletionBlockedReason(db, product);
+          if (blockedReason) throw new InventoryError(409, blockedReason);
+          if (
+            product.quantity_on_hand !== input.data.expectedQuantityOnHand ||
+            product.inventory_value_centavos !==
+              parseMoney(input.data.expectedInventoryValue)
+          )
+            throw new InventoryError(409, "product_inventory_changed");
+          const now = new Date().toISOString();
+          const adjustmentIds = removeMistakenProductStock(
+            db,
+            product,
+            actorUserId,
+            now,
+          );
+          db.prepare(
+            `UPDATE products SET is_active = 0, quantity_on_hand = 0,
+          inventory_value_centavos = 0, deleted_at = ?, updated_at = ? WHERE id = ?`,
+          ).run(now, now, product.id);
+          writeAuditEvent(db, {
+            actorUserId,
+            action: "product.soft_deleted",
+            entityType: "product",
+            entityId: product.id,
+            details: {
+              sku: product.sku,
+              name: product.name,
+              barcode: product.barcode,
+              unit: product.unit,
+              sellingPriceCentavos: product.selling_price_centavos,
+              active: product.is_active === 1,
+              removedQuantity: product.quantity_on_hand,
+              removedInventoryValueCentavos: product.inventory_value_centavos,
+              stockAdjustmentIds: adjustmentIds,
+              deletedAt: now,
+            },
+          });
+        }).immediate();
+        res.status(204).end();
+      } catch (error) {
+        if (!handleInventoryError(error, res)) throw error;
+      }
+    },
+  );
+
   router.patch("/products/:id", requireAuth, requireOwner, csrf, (req, res) => {
     const id = z.uuid().safeParse(req.params.id);
     const parsed = updateProductSchema.safeParse(req.body);
@@ -2103,7 +2267,7 @@ export function registerInventoryRoutes(
       .prepare(
         `SELECT id, sku, name, tracks_lots, quantity_on_hand,
                 inventory_value_centavos, selling_price_centavos
-         FROM products WHERE tracks_lots = 1
+         FROM products WHERE tracks_lots = 1 AND deleted_at IS NULL
          ORDER BY name COLLATE NOCASE`,
       )
       .all() as Array<{
@@ -2225,7 +2389,9 @@ export function registerInventoryRoutes(
       try {
         const reconciliationId = db.transaction(() => {
           const product = db
-            .prepare("SELECT id, sku, tracks_lots FROM products WHERE id = ?")
+            .prepare(
+              "SELECT id, sku, tracks_lots FROM products WHERE id = ? AND deleted_at IS NULL",
+            )
             .get(parsed.data.productId) as
             | { id: string; sku: string; tracks_lots: number }
             | undefined;
@@ -2360,7 +2526,7 @@ export function registerInventoryRoutes(
                       p.sku, p.tracks_lots, p.quantity_on_hand,
                       p.inventory_value_centavos, p.selling_price_centavos
                FROM inventory_lots l JOIN products p ON p.id = l.product_id
-               WHERE l.id = ?`,
+               WHERE l.id = ? AND p.deleted_at IS NULL`,
             )
             .get(lotId.data) as
             | {
@@ -2638,7 +2804,7 @@ export function registerInventoryRoutes(
         return bodyValidation(res);
       const lot = db
         .prepare(
-          "SELECT id, product_id, lot_code, expiry_date FROM inventory_lots WHERE id = ?",
+          "SELECT id, product_id, lot_code, expiry_date FROM inventory_lots WHERE id = ? AND EXISTS (SELECT 1 FROM products WHERE products.id = inventory_lots.product_id AND products.deleted_at IS NULL)",
         )
         .get(lotId.data) as
         | {
@@ -2699,7 +2865,7 @@ export function registerInventoryRoutes(
         return bodyValidation(res);
       const lot = db
         .prepare(
-          "SELECT id, product_id, quarantined FROM inventory_lots WHERE id = ?",
+          "SELECT id, product_id, quarantined FROM inventory_lots WHERE id = ? AND EXISTS (SELECT 1 FROM products WHERE products.id = inventory_lots.product_id AND products.deleted_at IS NULL)",
         )
         .get(lotId.data) as
         | { id: string; product_id: string; quarantined: number }
@@ -2786,7 +2952,7 @@ export function registerInventoryRoutes(
         }
         const product = db
           .prepare(
-            "SELECT id, tracks_lots FROM products WHERE sku = ? COLLATE NOCASE",
+            "SELECT id, tracks_lots FROM products WHERE sku = ? COLLATE NOCASE AND deleted_at IS NULL",
           )
           .get(sku.data) as { id: string; tracks_lots: number } | undefined;
         if (!product) {
@@ -2886,7 +3052,7 @@ export function registerInventoryRoutes(
         const receipt = db.transaction(() => {
           const product = db
             .prepare(
-              "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos, selling_price_centavos FROM products WHERE id = ?",
+              "SELECT id, sku, name, tracks_lots, quantity_on_hand, inventory_value_centavos, selling_price_centavos FROM products WHERE id = ? AND deleted_at IS NULL",
             )
             .get(parsed.data.productId) as
             | {
@@ -2998,7 +3164,7 @@ export function registerInventoryRoutes(
         const adjustment = db.transaction(() => {
           const product = db
             .prepare(
-              "SELECT id, sku, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ?",
+              "SELECT id, sku, tracks_lots, quantity_on_hand, inventory_value_centavos FROM products WHERE id = ? AND deleted_at IS NULL",
             )
             .get(parsed.data.productId) as
             | {
@@ -3180,7 +3346,7 @@ export function registerInventoryRoutes(
           const product = db
             .prepare(
               `SELECT id, sku, quantity_on_hand, inventory_value_centavos
-               FROM products WHERE id = ?`,
+               FROM products WHERE id = ? AND deleted_at IS NULL`,
             )
             .get(parsed.data.productId) as
             | {

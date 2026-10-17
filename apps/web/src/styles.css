@@ -5083,6 +5083,61 @@ a {
   background: #913b2e;
 }
 
+.product-delete-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.product-delete-section .field-help {
+  margin: 0;
+  line-height: 1.5;
+}
+.product-delete-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  color: inherit;
+  box-shadow: 0 24px 72px rgb(15 23 42 / 24%);
+}
+.product-delete-dialog::backdrop {
+  background: rgb(15 23 42 / 48%);
+}
+.product-delete-dialog h2 {
+  margin: 0 0 18px;
+  font-size: 20px;
+}
+.product-delete-dialog p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.product-delete-identity {
+  display: grid;
+  gap: 4px;
+}
+.product-delete-identity span {
+  font-size: 13px;
+}
+.product-delete-stock-note {
+  padding: 12px;
+  border: 1px solid #ead9b7;
+  border-radius: 10px;
+  background: #fff9ed;
+}
+.product-delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
 @media (min-width: 621px) and (max-width: 1400px),
   (min-width: 621px) and (pointer: coarse) {
   .checkout-app-shell .topbar {

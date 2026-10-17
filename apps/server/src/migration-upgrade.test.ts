@@ -48,7 +48,7 @@ describe("single payments migration from the committed 0026 schema", () => {
           .all();
         const originalOtherSchema = db
           .prepare(
-            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' ORDER BY type, name",
+            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' AND tbl_name <> 'products' AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
           )
           .all();
         db.close();
@@ -65,7 +65,7 @@ describe("single payments migration from the committed 0026 schema", () => {
         expect(
           db
             .prepare(
-              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' AND tbl_name <> 'expenses' ORDER BY type, name",
+              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' AND tbl_name <> 'expenses' AND tbl_name <> 'products' AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
             )
             .all(),
         ).toEqual(originalOtherSchema);
@@ -73,7 +73,10 @@ describe("single payments migration from the committed 0026 schema", () => {
           db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
         ).toEqual({ count: 0 });
         const applied = appliedRows(db);
-        expect(applied).toHaveLength(27);
+        expect(applied).toHaveLength(28);
+        expect(applied[27]).toMatchObject({
+          name: "0028_product_soft_delete.sql",
+        });
         expect(applied[26]).toMatchObject({ name: migrationName });
         expectHealthy(db);
         const upgraded = snapshotMigrationTables(db);

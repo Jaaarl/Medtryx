@@ -643,7 +643,7 @@ function parseReviewedCsv(
       } else {
         const product = db
           .prepare(
-            "SELECT id, name, unit, tracks_lots, is_active FROM products WHERE id = ?",
+            "SELECT id, name, unit, tracks_lots, is_active FROM products WHERE id = ? AND deleted_at IS NULL",
           )
           .get(selectedId) as
           | Pick<
@@ -910,7 +910,7 @@ async function makeDraftCsv(
 
   const products = db
     .prepare(
-      "SELECT id, sku, name, unit, selling_price_centavos, tracks_lots, is_active FROM products ORDER BY name COLLATE NOCASE LIMIT 5000",
+      "SELECT id, sku, name, unit, selling_price_centavos, tracks_lots, is_active FROM products WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE LIMIT 5000",
     )
     .all() as CatalogProduct[];
   const itemsForMatching = sourceLines.map((line) => {

@@ -145,6 +145,12 @@ async function postEventStream<T>(
 }
 
 export const api = {
+  delete<T = void>(path: string, body?: unknown): Promise<T> {
+    return request<T>(path, {
+      method: "DELETE",
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  },
   get<T>(path: string): Promise<T> {
     return request<T>(path);
   },
