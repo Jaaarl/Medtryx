@@ -6059,13 +6059,14 @@ export function CheckoutPage({
                         <input
                           id="emergency-shift-cash-count"
                           className="text-input"
+                          type="number"
+                          step="0.01"
                           inputMode="decimal"
                           value={emergencyClosingCash}
                           onChange={(event) =>
                             setEmergencyClosingCash(event.target.value)
                           }
                           required
-                          pattern="-?[0-9]+(\.[0-9]{1,2})?"
                         />
                       </Field>
                       <Field
@@ -6152,12 +6153,13 @@ export function CheckoutPage({
                     <input
                       id="shift-closing-cash"
                       className="text-input"
+                      type="number"
+                      step="0.01"
                       inputMode="decimal"
                       autoFocus
                       value={closingCash}
                       onChange={(event) => setClosingCash(event.target.value)}
                       required
-                      pattern="-?[0-9]+(\.[0-9]{1,2})?"
                     />
                   </Field>
                   <Field

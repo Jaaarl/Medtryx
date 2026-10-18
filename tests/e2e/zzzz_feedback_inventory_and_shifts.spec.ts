@@ -555,7 +555,18 @@ test("checkout gates a missing shift with a modal and closes shifts inside check
     name: "Close cashier shift",
   });
   await expect(closeDialog).toBeVisible();
-  await page.getByLabel("Actual cash count (₱)").fill("25.00");
+  const actualCashInput = page.locator("#shift-closing-cash");
+  await expect(actualCashInput).toHaveAttribute("type", "number");
+  await expect(actualCashInput).toHaveAttribute("step", "0.01");
+  await actualCashInput.fill("-1.00");
+  expect(
+    await actualCashInput.evaluate(
+      (input) => (input as HTMLInputElement).validity.valid,
+    ),
+  ).toBe(true);
+  await page
+    .getByLabel("Variance reason if count differs")
+    .selectOption("Cashier Fault");
   await closeDialog.getByRole("button", { name: "Close shift" }).click();
   await expect(closeDialog).toBeHidden();
   await expect(openDialog).toBeVisible();
