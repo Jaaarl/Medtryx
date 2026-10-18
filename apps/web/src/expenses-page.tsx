@@ -8,7 +8,7 @@ import type {
   ExpenseTotals,
 } from "@medtryx/shared";
 import { Link } from "react-router";
-import { Plus, RefreshCw } from "lucide-react";
+import { CreditCard, Plus, RefreshCw } from "lucide-react";
 import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
 import { createBrowserUuid } from "./browser-uuid";
@@ -269,8 +269,13 @@ export function ExpensesPage() {
       <div className="expense-layout">
         <section className="create-card expense-form-card">
           <div className="expense-section-heading">
-            <h2>Record payment or expense</h2>
-            <p>New payments are recorded for today’s Manila business date.</p>
+            <span className="expense-form-heading-icon" aria-hidden="true">
+              <CreditCard size={19} />
+            </span>
+            <div>
+              <h2>Record payment or expense</h2>
+              <p>New payments are recorded for today’s Manila business date.</p>
+            </div>
           </div>
           <form
             className="expense-payment-form"
@@ -278,162 +283,207 @@ export function ExpensesPage() {
           >
             <div className="expense-form-layout">
               <fieldset className="expense-form-fields" disabled={saving}>
-                <label className="inventory-field">
-                  <span>Category</span>
-                  <select
-                    className="text-input"
-                    value={category}
-                    onChange={(event) => {
-                      draftChanged();
-                      setCategory(event.target.value as ExpenseCategory);
-                      setPaymentSource("CASHIER");
-                      setIncludedInUnitCost(false);
-                    }}
-                  >
-                    <option value="LUNCH">Lunch</option>
-                    <option value="STOCK_PURCHASE">Stock purchase / COD</option>
-                    <option value="DELIVERY">Delivery fee only</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                </label>
-                {choosesPayer && (
-                  <label className="inventory-field">
-                    <span>
-                      {stockPurchase
-                        ? "Who paid the stock purchase?"
-                        : "Who pays the delivery fee?"}
-                    </span>
-                    <select
-                      className="text-input"
-                      value={paymentSource}
-                      onChange={(event) => {
-                        draftChanged();
-                        setPaymentSource(
-                          event.target.value as ExpensePaymentSource,
-                        );
-                      }}
-                    >
-                      <option value="CASHIER">
-                        Charge to the open cashier
-                      </option>
-                      <option value="OWNER">Already paid by the owner</option>
-                    </select>
-                  </label>
-                )}
-                {category === "DELIVERY" && (
-                  <div className="expense-field-wide expense-delivery-options">
-                    <label className="inventory-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={includedInUnitCost}
-                        onChange={(event) => {
-                          draftChanged();
-                          setIncludedInUnitCost(event.target.checked);
-                        }}
-                      />
-                      <span>
-                        This delivery fee is already included in product unit
-                        cost
-                      </span>
-                    </label>
-                    <p className="field-hint">
-                      Enter the delivery fee only. Use Stock purchase / COD for
-                      the full product invoice.
-                    </p>
+                <section className="expense-form-section">
+                  <div className="expense-form-section-heading">
+                    <h3>Payment details</h3>
+                    <p>Choose a category and enter the payment amount.</p>
                   </div>
-                )}
-                <label className="inventory-field">
-                  <span>
-                    {stockPurchase
-                      ? `Product amount (${currencySymbol()})`
-                      : category === "DELIVERY"
-                        ? `Delivery fee (${currencySymbol()})`
-                        : `Amount (${currencySymbol()})`}
-                  </span>
-                  <input
-                    className="text-input"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(event) => {
-                      draftChanged();
-                      setAmount(event.target.value);
-                    }}
-                    pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
-                    required
-                  />
-                </label>
-                {stockPurchase && (
-                  <>
-                    <div className="inventory-field">
-                      <label htmlFor="expense-delivery-fee">
-                        Separate delivery fee ({currencySymbol()}, optional)
-                      </label>
-                      <input
-                        id="expense-delivery-fee"
-                        aria-describedby="expense-delivery-fee-hint"
+                  <div className="expense-payment-details-grid">
+                    <label
+                      className={`inventory-field${stockPurchase ? " expense-field-wide" : ""}`}
+                    >
+                      <span>Category</span>
+                      <select
                         className="text-input"
-                        inputMode="decimal"
-                        value={deliveryFee}
-                        placeholder="0.00"
-                        pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                        value={category}
                         onChange={(event) => {
                           draftChanged();
-                          setDeliveryFee(event.target.value);
+                          setCategory(event.target.value as ExpenseCategory);
+                          setPaymentSource("CASHIER");
+                          setIncludedInUnitCost(false);
                         }}
-                      />
-                      <small
-                        id="expense-delivery-fee-hint"
-                        className="field-hint"
                       >
-                        Leave at zero if delivery is included in the product
-                        amount.
-                      </small>
+                        <option value="LUNCH">Lunch</option>
+                        <option value="STOCK_PURCHASE">
+                          Stock purchase / COD
+                        </option>
+                        <option value="DELIVERY">Delivery fee only</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </label>
+                    {!stockPurchase && (
+                      <label className="inventory-field">
+                        <span>
+                          {category === "DELIVERY"
+                            ? `Delivery fee (${currencySymbol()})`
+                            : `Amount (${currencySymbol()})`}
+                        </span>
+                        <input
+                          className="text-input"
+                          inputMode="decimal"
+                          value={amount}
+                          onChange={(event) => {
+                            draftChanged();
+                            setAmount(event.target.value);
+                          }}
+                          pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                          required
+                        />
+                      </label>
+                    )}
+                  </div>
+                  {stockPurchase && (
+                    <div className="expense-stock-amounts">
+                      <label className="inventory-field">
+                        <span>Product amount ({currencySymbol()})</span>
+                        <input
+                          className="text-input"
+                          inputMode="decimal"
+                          value={amount}
+                          onChange={(event) => {
+                            draftChanged();
+                            setAmount(event.target.value);
+                          }}
+                          pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                          required
+                        />
+                      </label>
+                      <div className="inventory-field">
+                        <label htmlFor="expense-delivery-fee">
+                          Separate delivery fee ({currencySymbol()}, optional)
+                        </label>
+                        <input
+                          id="expense-delivery-fee"
+                          aria-describedby="expense-delivery-fee-hint"
+                          className="text-input"
+                          inputMode="decimal"
+                          value={deliveryFee}
+                          placeholder="0.00"
+                          pattern="[0-9]{1,7}(\.[0-9]{1,2})?"
+                          onChange={(event) => {
+                            draftChanged();
+                            setDeliveryFee(event.target.value);
+                          }}
+                        />
+                        <small
+                          id="expense-delivery-fee-hint"
+                          className="field-hint"
+                        >
+                          Leave at zero if delivery is included in the product
+                          amount.
+                        </small>
+                      </div>
+                    </div>
+                  )}
+                </section>
+                {choosesPayer && (
+                  <section className="expense-form-section">
+                    <div className="expense-form-section-heading">
+                      <h3>Payment source</h3>
+                      <p>Choose who is paying for this transaction.</p>
                     </div>
                     <label className="inventory-field">
-                      <span>Supplier (optional)</span>
-                      <input
+                      <span>
+                        {stockPurchase
+                          ? "Who paid the stock purchase?"
+                          : "Who pays the delivery fee?"}
+                      </span>
+                      <select
                         className="text-input"
-                        value={supplier}
-                        maxLength={200}
+                        value={paymentSource}
                         onChange={(event) => {
                           draftChanged();
-                          setSupplier(event.target.value);
+                          setPaymentSource(
+                            event.target.value as ExpensePaymentSource,
+                          );
                         }}
-                      />
+                      >
+                        <option value="CASHIER">
+                          Charge to the open cashier
+                        </option>
+                        <option value="OWNER">Already paid by the owner</option>
+                      </select>
                     </label>
-                    <label className="inventory-field">
-                      <span>Invoice / receipt reference (optional)</span>
-                      <input
-                        className="text-input"
-                        value={invoiceReference}
-                        maxLength={200}
-                        onChange={(event) => {
-                          draftChanged();
-                          setInvoiceReference(event.target.value);
-                        }}
-                      />
-                    </label>
-                  </>
+                    {category === "DELIVERY" && (
+                      <div className="expense-delivery-options">
+                        <label className="inventory-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={includedInUnitCost}
+                            onChange={(event) => {
+                              draftChanged();
+                              setIncludedInUnitCost(event.target.checked);
+                            }}
+                          />
+                          <span>
+                            This delivery fee is already included in product
+                            unit cost
+                          </span>
+                        </label>
+                        <p className="field-hint">
+                          Enter the delivery fee only. Use Stock purchase / COD
+                          for the full product invoice.
+                        </p>
+                      </div>
+                    )}
+                  </section>
                 )}
-                <label className="inventory-field expense-field-wide">
-                  <span>
-                    {category === "OTHER"
-                      ? "Description"
-                      : "Description (optional)"}
-                  </span>
-                  <textarea
-                    className="text-input expense-description"
-                    rows={3}
-                    value={description}
-                    maxLength={500}
-                    minLength={category === "OTHER" ? 3 : undefined}
-                    required={category === "OTHER"}
-                    onChange={(event) => {
-                      draftChanged();
-                      setDescription(event.target.value);
-                    }}
-                  />
-                </label>
+                <section className="expense-form-section">
+                  <div className="expense-form-section-heading">
+                    <h3>Additional details</h3>
+                    <p>
+                      Add a description and, for stock purchases, supplier or
+                      receipt references.
+                    </p>
+                  </div>
+                  {stockPurchase && (
+                    <div className="expense-reference-grid">
+                      <label className="inventory-field">
+                        <span>Supplier (optional)</span>
+                        <input
+                          className="text-input"
+                          value={supplier}
+                          maxLength={200}
+                          onChange={(event) => {
+                            draftChanged();
+                            setSupplier(event.target.value);
+                          }}
+                        />
+                      </label>
+                      <label className="inventory-field">
+                        <span>Invoice / receipt reference (optional)</span>
+                        <input
+                          className="text-input"
+                          value={invoiceReference}
+                          maxLength={200}
+                          onChange={(event) => {
+                            draftChanged();
+                            setInvoiceReference(event.target.value);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  <label className="inventory-field">
+                    <span>
+                      {category === "OTHER"
+                        ? "Description"
+                        : "Description (optional)"}
+                    </span>
+                    <textarea
+                      className="text-input expense-description"
+                      rows={3}
+                      value={description}
+                      maxLength={500}
+                      minLength={category === "OTHER" ? 3 : undefined}
+                      required={category === "OTHER"}
+                      onChange={(event) => {
+                        draftChanged();
+                        setDescription(event.target.value);
+                      }}
+                    />
+                  </label>
+                </section>
               </fieldset>
               <aside
                 className="expense-payment-review"
@@ -459,7 +509,8 @@ export function ExpensesPage() {
                   </dl>
                 )}
                 <strong className="expense-payment-total">
-                  Total payment: {formatCurrency(totalPayment || "0.00")}
+                  <span>Total payment:</span>{" "}
+                  <span>{formatCurrency(totalPayment || "0.00")}</span>
                 </strong>
                 <p className="expense-review-note">
                   {stockPurchase
@@ -472,13 +523,16 @@ export function ExpensesPage() {
                   {cashierPaid ? (
                     data?.registerShift ? (
                       <>
-                        <strong>
-                          Charged to {data.registerShift.cashierEmail}
-                        </strong>
-                        <span>
-                          Expected drawer cash:{" "}
-                          {formatCurrency(data.registerShift.expectedCash)}
-                        </span>
+                        <div className="expense-drawer-row">
+                          <span>Charged to</span>
+                          <strong>{data.registerShift.cashierEmail}</strong>
+                        </div>
+                        <div className="expense-drawer-row">
+                          <span>Expected drawer cash:</span>
+                          <strong>
+                            {formatCurrency(data.registerShift.expectedCash)}
+                          </strong>
+                        </div>
                         <span>
                           Payments can be recorded even if this balance goes
                           below zero.
