@@ -492,7 +492,19 @@ function centsFromMoney(value: string): bigint {
 }
 
 function cashCountDefault(expectedCash: string): string {
-  return centsFromMoney(expectedCash) < 0n ? "0.00" : expectedCash;
+  return expectedCash;
+}
+
+function cashCountRequiresVarianceReason(
+  actualCash: string,
+  expectedCash: string,
+): boolean {
+  if (!/^-?\d+(?:\.\d{1,2})?$/.test(actualCash)) return true;
+  try {
+    return centsFromMoney(actualCash) !== centsFromMoney(expectedCash);
+  } catch {
+    return true;
+  }
 }
 
 function parseCashTenderAmount(value: string): bigint | null {
@@ -4549,6 +4561,10 @@ export function CheckoutPage({
           setCheckoutInventorySetting(inventorySettingResult);
           if (shiftResult.shift)
             setClosingCash(cashCountDefault(shiftResult.shift.expectedCash));
+          if (shiftResult.registerShift)
+            setEmergencyClosingCash(
+              cashCountDefault(shiftResult.registerShift.expectedCash),
+            );
         },
       )
       .catch(() => {
@@ -5085,6 +5101,10 @@ export function CheckoutPage({
     setRegisterOpen(result.registerOpen);
     if (result.shift)
       setClosingCash(cashCountDefault(result.shift.expectedCash));
+    if (result.registerShift)
+      setEmergencyClosingCash(
+        cashCountDefault(result.registerShift.expectedCash),
+      );
   }
 
   async function openCurrentShift(event: FormEvent<HTMLFormElement>) {
@@ -5431,6 +5451,10 @@ export function CheckoutPage({
       setRegisterOpen(shiftResult.registerOpen);
       if (shiftResult.shift)
         setClosingCash(cashCountDefault(shiftResult.shift.expectedCash));
+      if (shiftResult.registerShift)
+        setEmergencyClosingCash(
+          cashCountDefault(shiftResult.registerShift.expectedCash),
+        );
       setProducts(catalogResult.products);
       setBundleOffers(bundleResult.bundles);
       setNotice(
@@ -6041,7 +6065,7 @@ export function CheckoutPage({
                             setEmergencyClosingCash(event.target.value)
                           }
                           required
-                          pattern="[0-9]+(\.[0-9]{1,2})?"
+                          pattern="-?[0-9]+(\.[0-9]{1,2})?"
                         />
                       </Field>
                       <Field
@@ -6052,6 +6076,10 @@ export function CheckoutPage({
                           id="emergency-shift-variance-reason"
                           className="text-input select-input"
                           value={varianceReason}
+                          required={cashCountRequiresVarianceReason(
+                            emergencyClosingCash,
+                            registerShift.expectedCash,
+                          )}
                           onChange={(event) =>
                             setVarianceReason(
                               event.target.value as typeof varianceReason,
@@ -6129,7 +6157,7 @@ export function CheckoutPage({
                       value={closingCash}
                       onChange={(event) => setClosingCash(event.target.value)}
                       required
-                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                      pattern="-?[0-9]+(\.[0-9]{1,2})?"
                     />
                   </Field>
                   <Field
@@ -6140,6 +6168,10 @@ export function CheckoutPage({
                       id="shift-variance-reason"
                       className="text-input select-input"
                       value={varianceReason}
+                      required={cashCountRequiresVarianceReason(
+                        closingCash,
+                        shift.expectedCash,
+                      )}
                       onChange={(event) =>
                         setVarianceReason(
                           event.target.value as typeof varianceReason,

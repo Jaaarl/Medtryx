@@ -239,7 +239,12 @@ describe("owner-only verified backup and restore", () => {
       );
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-      ).toEqual({ count: 28 });
+      ).toEqual({ count: 29 });
+      expect(
+        db
+          .prepare("SELECT name FROM schema_migrations WHERE name = ?")
+          .get("0029_signed_shift_cash_counts.sql"),
+      ).toEqual({ name: "0029_signed_shift_cash_counts.sql" });
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
       ).toEqual({ count: 0 });

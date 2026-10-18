@@ -1661,6 +1661,39 @@ describe("checkout, sales, and cashier shifts", () => {
     ).toMatchObject({ closedByEmail: "owner.sales@example.test" });
   });
 
+  it("closes and records a shift with a negative actual cash count", async () => {
+    const cashier = await signIn("cashier.sales@example.test", cashierPassword);
+    const owner = await signIn("owner.sales@example.test", ownerPassword);
+    const opened = await openShift(cashier, "0.00");
+    const shiftId = opened.body.shift.id as string;
+    db.prepare("UPDATE shifts SET expected_cash_centavos = ? WHERE id = ?").run(
+      -86_300,
+      shiftId,
+    );
+
+    const csrf = await csrfFor(cashier);
+    const closed = await cashier
+      .post(`/api/shifts/${shiftId}/close`)
+      .set("x-csrf-token", csrf)
+      .send({ actualCashCount: "-863.00" });
+
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+    expect(closed.body.shift).toMatchObject({
+      expectedCash: "-863.00",
+      actualCashCount: "-863.00",
+      variance: "0.00",
+    });
+    const history = await owner.get("/api/shifts/history");
+    expect(
+      history.body.shifts.find((shift: { id: string }) => shift.id === shiftId),
+    ).toMatchObject({
+      status: "CLOSED",
+      expectedCash: "-863.00",
+      actualCashCount: "-863.00",
+      variance: "0.00",
+    });
+  });
+
   it("allows only one of two simultaneous cashier shift opens", async () => {
     const cashier = await signIn("cashier.sales@example.test", cashierPassword);
     const secondCashier = await signIn(

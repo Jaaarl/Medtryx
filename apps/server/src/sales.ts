@@ -50,6 +50,10 @@ const moneySchema = z
   .string()
   .trim()
   .regex(/^\d{1,7}(?:\.\d{1,2})?$/);
+const signedCashCountSchema = z
+  .string()
+  .trim()
+  .regex(/^-?\d{1,7}(?:\.\d{1,2})?$/);
 const benefitSchema = z.enum(["REGULAR", "SENIOR_CITIZEN", "PWD"]);
 const lineTreatmentSchema = z.enum([
   "REGULAR",
@@ -370,7 +374,7 @@ const taxPolicyUpdateSchema = z
 const openShiftSchema = z.object({ openingCash: moneySchema }).strict();
 const closeShiftSchema = z
   .object({
-    actualCashCount: moneySchema,
+    actualCashCount: signedCashCountSchema,
     varianceReason: z
       .enum(["Cashier Fault", "Customer Fault", "No Fault"])
       .optional(),

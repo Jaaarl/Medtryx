@@ -73,7 +73,10 @@ describe("single payments migration from the committed 0026 schema", () => {
           db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
         ).toEqual({ count: 0 });
         const applied = appliedRows(db);
-        expect(applied).toHaveLength(28);
+        expect(applied).toHaveLength(29);
+        expect(applied[28]).toMatchObject({
+          name: "0029_signed_shift_cash_counts.sql",
+        });
         expect(applied[27]).toMatchObject({
           name: "0028_product_soft_delete.sql",
         });
@@ -174,16 +177,27 @@ describe("single payments migration from the committed 0026 schema", () => {
           )
           .run(),
       ).toThrow();
-      expect(() =>
-        db
-          .prepare(
-            "UPDATE shifts SET actual_cash_count_centavos = -1 WHERE id = 'upgrade-closed-APPROVED'",
-          )
-          .run(),
-      ).toThrow();
       const original = snapshotMigrationTables(db);
       migrateDatabase(db);
       expect(snapshotMigrationTables(db)).toEqual(original);
+      expect(() =>
+        db
+          .prepare(
+            `UPDATE shifts
+             SET actual_cash_count_centavos = -1,
+                 variance_centavos = -1 - expected_cash_centavos,
+                 variance_reason = 'Negative count supported'
+             WHERE id = 'upgrade-closed-APPROVED'`,
+          )
+          .run(),
+      ).not.toThrow();
+      expect(
+        db
+          .prepare(
+            "SELECT actual_cash_count_centavos FROM shifts WHERE id = 'upgrade-closed-APPROVED'",
+          )
+          .get(),
+      ).toEqual({ actual_cash_count_centavos: -1 });
       expectHealthy(db);
     } finally {
       db.close();
