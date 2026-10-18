@@ -2216,6 +2216,9 @@ a {
   letter-spacing: inherit;
   padding: 0;
 }
+.inventory-sort-button.is-active {
+  color: #326f5e;
+}
 .inventory-sort-button:hover,
 .inventory-sort-button:focus-visible {
   color: #326f5e;
@@ -2226,9 +2229,26 @@ a {
   outline-offset: 3px;
 }
 .inventory-sort-indicator {
-  color: #6c9384;
-  font-size: var(--type-body);
+  align-items: center;
+  color: #82958d;
+  display: grid;
+  flex: 0 0 12px;
+  grid-template-rows: 7px 7px;
+  height: 14px;
+  justify-items: center;
   line-height: 1;
+  overflow: visible;
+  width: 12px;
+}
+.inventory-sort-indicator svg {
+  display: block;
+  grid-column: 1;
+  height: 12px;
+  width: 12px;
+}
+.inventory-sort-indicator.is-ascending svg:first-child,
+.inventory-sort-indicator.is-descending svg:last-child {
+  color: #176b5b;
 }
 .inventory-table td {
   border-bottom: 1px solid #edf1ef;

@@ -14,8 +14,10 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CirclePlus,
   Package,
   Search,
@@ -281,6 +283,8 @@ function SortableHeader({
   direction: SortDirection;
   onClick: () => void;
 }) {
+  const nextDirection =
+    active && direction === "asc" ? "descending" : "ascending";
   return (
     <th
       aria-sort={
@@ -288,14 +292,19 @@ function SortableHeader({
       }
     >
       <button
-        className="inventory-sort-button"
+        className={`inventory-sort-button${active ? " is-active" : ""}`}
         type="button"
         aria-label={`Sort by ${label}`}
+        title={`${active ? `Currently sorted ${direction === "asc" ? "ascending" : "descending"}. ` : ""}Click to sort ${nextDirection}.`}
         onClick={onClick}
       >
         <span>{label}</span>
-        <span className="inventory-sort-indicator" aria-hidden="true">
-          {active ? (direction === "asc" ? "↑" : "↓") : "↕"}
+        <span
+          className={`inventory-sort-indicator${active ? (direction === "asc" ? " is-ascending" : " is-descending") : ""}`}
+          aria-hidden="true"
+        >
+          <ChevronUp size={12} strokeWidth={2.5} />
+          <ChevronDown size={12} strokeWidth={2.5} />
         </span>
       </button>
     </th>
