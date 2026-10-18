@@ -1918,6 +1918,52 @@ a {
   padding: 14px 18px;
   border-bottom: 1px solid #edf1ef;
 }
+.day-reversal-form {
+  background: #fff9f7;
+  border-bottom: 1px solid #f0dfdc;
+  gap: 12px;
+  padding: 16px 18px;
+}
+.day-reversal-form > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+.day-reversal-form h3 {
+  font-size: 13px;
+  margin: 0;
+}
+.day-reversal-form p {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 760px;
+}
+.day-reversal-form textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+.day-reversal-restock {
+  align-items: flex-start;
+}
+.day-reversal-restock > span {
+  display: grid;
+  gap: 4px;
+}
+.day-reversal-restock small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  max-width: 760px;
+}
+.day-reversal-confirmation-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+.day-reversal-form > .button {
+  justify-self: start;
+}
 .history-sales-pagination {
   flex-wrap: wrap;
   gap: 8px;

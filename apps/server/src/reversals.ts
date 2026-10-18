@@ -106,6 +106,14 @@ const reversalSchema = z
       });
     }
   });
+const dayReversalSchema = z
+  .object({
+    businessDate: z.string().refine(validCalendarDate),
+    ownerPassword: z.string().min(1).max(128),
+    reason: z.string().trim().min(3).max(500),
+    restockReturnedGoods: z.boolean().default(false),
+  })
+  .strict();
 const paymentSwitchSchema = z
   .object({ reason: z.string().trim().min(3).max(500) })
   .strict();
@@ -1085,337 +1093,366 @@ export function registerReversalRoutes(
     },
   );
 
-  router.post(
-    "/sales/:transactionId/reversals",
-    requireAuth,
-    csrf,
-    reversalRateLimit,
-    async (req, res): Promise<void> => {
-      const transactionId = z
-        .string()
-        .regex(/^MTX-\d{8}-\d{6,}$/)
-        .safeParse(req.params.transactionId);
-      const parsed = reversalSchema.safeParse(req.body);
-      if (!transactionId.success || !parsed.success || !req.user)
-        return validationFailure(res);
+  const handleSingleReversal = (
+    req: Request,
+    res: Response,
+    verifiedOwnerPasswordHash?: string,
+  ): void => {
+    const transactionId = z
+      .string()
+      .regex(/^MTX-\d{8}-\d{6,}$/)
+      .safeParse(req.params.transactionId);
+    const parsed = reversalSchema.safeParse(req.body);
+    if (!transactionId.success || !parsed.success || !req.user)
+      return validationFailure(res);
 
-      const sale = db
-        .prepare(
-          `SELECT id, cashier_user_id, payment_method, created_at,
+    const sale = db
+      .prepare(
+        `SELECT id, cashier_user_id, payment_method, created_at,
                   amount_due_centavos, cash_rounding_adjustment_centavos
            FROM sales WHERE transaction_id = ?`,
-        )
-        .get(transactionId.data) as
-        | {
-            id: string;
-            cashier_user_id: string;
-            payment_method: "CASH" | "QR";
-            created_at: string;
-            amount_due_centavos: number;
-            cash_rounding_adjustment_centavos: number;
-          }
-        | undefined;
-      if (!sale) {
-        res.status(404).json({ error: "sale_not_found" });
+      )
+      .get(transactionId.data) as
+      | {
+          id: string;
+          cashier_user_id: string;
+          payment_method: "CASH" | "QR";
+          created_at: string;
+          amount_due_centavos: number;
+          cash_rounding_adjustment_centavos: number;
+        }
+      | undefined;
+    if (!sale) {
+      res.status(404).json({ error: "sale_not_found" });
+      return;
+    }
+
+    const quickCancel = parsed.data.ownerPassword === undefined;
+    let owner: { password_hash: string } | undefined;
+    if (quickCancel) {
+      if (sale.cashier_user_id !== req.user.id) {
+        res.status(403).json({ error: "forbidden" });
         return;
       }
-
-      const quickCancel = parsed.data.ownerPassword === undefined;
-      let owner: { password_hash: string } | undefined;
-      if (quickCancel) {
-        if (sale.cashier_user_id !== req.user.id) {
-          res.status(403).json({ error: "forbidden" });
-          return;
-        }
-        if (!isWithinQuickActionWindow(sale.created_at)) {
-          res.status(409).json({ error: "quick_action_window_expired" });
-          return;
-        }
-        if (parsed.data.refundMethod !== sale.payment_method) {
-          res
-            .status(400)
-            .json({ error: "quick_cancel_refund_method_must_match" });
-          return;
-        }
-        if (
-          sale.payment_method === "QR" &&
-          parsed.data.qrRefundConfirmed !== true
-        ) {
-          res.status(400).json({ error: "qr_refund_confirmation_required" });
-          return;
-        }
-      } else {
-        if (req.user.role !== "owner") {
-          res.status(403).json({ error: "forbidden" });
-          return;
-        }
-        owner = db
-          .prepare(
-            "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
-          )
-          .get(req.user.id) as { password_hash: string } | undefined;
-        let verified = false;
-        try {
-          verified =
-            !!owner &&
-            (await argon2.verify(
-              owner.password_hash,
-              parsed.data.ownerPassword!,
-            ));
-        } catch {
-          verified = false;
-        }
-        if (!verified || !owner) {
-          res.status(403).json({ error: "reauthentication_failed" });
-          return;
-        }
+      if (!isWithinQuickActionWindow(sale.created_at)) {
+        res.status(409).json({ error: "quick_action_window_expired" });
+        return;
       }
+      if (parsed.data.refundMethod !== sale.payment_method) {
+        res
+          .status(400)
+          .json({ error: "quick_cancel_refund_method_must_match" });
+        return;
+      }
+      if (
+        sale.payment_method === "QR" &&
+        parsed.data.qrRefundConfirmed !== true
+      ) {
+        res.status(400).json({ error: "qr_refund_confirmation_required" });
+        return;
+      }
+    } else {
+      if (req.user.role !== "owner") {
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      owner = db
+        .prepare(
+          "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+        )
+        .get(req.user.id) as { password_hash: string } | undefined;
+      if (!owner) {
+        res.status(403).json({ error: "reauthentication_failed" });
+        return;
+      }
+      if (verifiedOwnerPasswordHash === undefined) {
+        const ownerPasswordHash = owner.password_hash;
+        void argon2
+          .verify(ownerPasswordHash, parsed.data.ownerPassword!)
+          .then((passwordMatches) => {
+            if (!passwordMatches) {
+              res.status(403).json({ error: "reauthentication_failed" });
+              return;
+            }
+            handleSingleReversal(req, res, ownerPasswordHash);
+          })
+          .catch(() =>
+            res.status(403).json({ error: "reauthentication_failed" }),
+          );
+        return;
+      }
+      const verified = owner.password_hash === verifiedOwnerPasswordHash;
+      if (!verified || !owner) {
+        res.status(403).json({ error: "reauthentication_failed" });
+        return;
+      }
+    }
 
-      try {
-        const result = db.transaction(() => {
-          if (quickCancel) {
-            const currentSale = db
-              .prepare(
-                "SELECT cashier_user_id, payment_method, created_at FROM sales WHERE id = ?",
-              )
-              .get(sale.id) as
-              | {
-                  cashier_user_id: string;
-                  payment_method: "CASH" | "QR";
-                  created_at: string;
-                }
-              | undefined;
-            if (!currentSale || currentSale.cashier_user_id !== req.user!.id) {
-              throw new ReversalError(403, "forbidden");
-            }
-            if (!isWithinQuickActionWindow(currentSale.created_at)) {
-              throw new ReversalError(409, "quick_action_window_expired");
-            }
-            if (currentSale.payment_method !== parsed.data.refundMethod) {
-              throw new ReversalError(
-                409,
-                "quick_cancel_refund_method_must_match",
-              );
-            }
-          } else {
-            const currentOwner = db
-              .prepare(
-                "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
-              )
-              .get(req.user!.id) as { password_hash: string } | undefined;
-            if (
-              !owner ||
-              !currentOwner ||
-              currentOwner.password_hash !== owner.password_hash
-            ) {
-              throw new ReversalError(403, "reauthentication_failed");
-            }
-          }
-          const original = db
+    try {
+      const result = db.transaction(() => {
+        if (quickCancel) {
+          const currentSale = db
             .prepare(
-              `SELECT id, shift_id, amount_due_centavos, cash_rounding_adjustment_centavos
-               FROM sales WHERE id = ?`,
+              "SELECT cashier_user_id, payment_method, created_at FROM sales WHERE id = ?",
             )
             .get(sale.id) as
             | {
-                id: string;
-                shift_id: string | null;
-                amount_due_centavos: number;
-                cash_rounding_adjustment_centavos: number;
+                cashier_user_id: string;
+                payment_method: "CASH" | "QR";
+                created_at: string;
               }
             | undefined;
-          if (!original) throw new ReversalError(404, "sale_not_found");
-          if (
-            db
-              .prepare("SELECT 1 FROM sale_reversals WHERE sale_id = ?")
-              .get(sale.id)
-          ) {
-            throw new ReversalError(409, "sale_already_reversed");
+          if (!currentSale || currentSale.cashier_user_id !== req.user!.id) {
+            throw new ReversalError(403, "forbidden");
           }
-
-          const originalLines = db
+          if (!isWithinQuickActionWindow(currentSale.created_at)) {
+            throw new ReversalError(409, "quick_action_window_expired");
+          }
+          if (currentSale.payment_method !== parsed.data.refundMethod) {
+            throw new ReversalError(
+              409,
+              "quick_cancel_refund_method_must_match",
+            );
+          }
+        } else {
+          const currentOwner = db
             .prepare(
-              `SELECT id, product_id, product_name_snapshot, sku_snapshot,
+              "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+            )
+            .get(req.user!.id) as { password_hash: string } | undefined;
+          if (
+            !owner ||
+            !currentOwner ||
+            currentOwner.password_hash !== owner.password_hash
+          ) {
+            throw new ReversalError(403, "reauthentication_failed");
+          }
+        }
+        const original = db
+          .prepare(
+            `SELECT id, shift_id, amount_due_centavos, cash_rounding_adjustment_centavos
+               FROM sales WHERE id = ?`,
+          )
+          .get(sale.id) as
+          | {
+              id: string;
+              shift_id: string | null;
+              amount_due_centavos: number;
+              cash_rounding_adjustment_centavos: number;
+            }
+          | undefined;
+        if (!original) throw new ReversalError(404, "sale_not_found");
+        if (
+          db
+            .prepare("SELECT 1 FROM sale_reversals WHERE sale_id = ?")
+            .get(sale.id)
+        ) {
+          throw new ReversalError(409, "sale_already_reversed");
+        }
+
+        const originalLines = db
+          .prepare(
+            `SELECT id, product_id, product_name_snapshot, sku_snapshot,
                       quantity, amount_due_centavos,
                       allocated_cogs_centavos, bnpc_discount_centavos,
                       unit_price_centavos, bnpc_policy_version,
                       EXISTS(SELECT 1 FROM sale_line_lot_allocations a
                              WHERE a.sale_line_id = sale_lines.id) AS lot_tracked
                FROM sale_lines WHERE sale_id = ? ORDER BY line_number`,
-            )
-            .all(sale.id) as {
-            id: string;
-            product_id: string;
-            product_name_snapshot: string;
-            sku_snapshot: string;
+          )
+          .all(sale.id) as {
+          id: string;
+          product_id: string;
+          product_name_snapshot: string;
+          sku_snapshot: string;
+          quantity: number;
+          amount_due_centavos: number;
+          allocated_cogs_centavos: number;
+          bnpc_discount_centavos: number;
+          unit_price_centavos: number;
+          bnpc_policy_version: string | null;
+          lot_tracked: number;
+        }[];
+        const decisionByLine = new Map(
+          parsed.data.lines.map((line) => [line.saleLineId, line]),
+        );
+        if (
+          originalLines.length !== parsed.data.lines.length ||
+          originalLines.some((line) => !decisionByLine.has(line.id))
+        ) {
+          throw new ReversalError(400, "reversal_lines_must_match_sale");
+        }
+        const returnedLots = new Map<
+          string,
+          Array<{
+            lot_id: string;
             quantity: number;
-            amount_due_centavos: number;
             allocated_cogs_centavos: number;
-            bnpc_discount_centavos: number;
-            unit_price_centavos: number;
-            bnpc_policy_version: string | null;
-            lot_tracked: number;
-          }[];
-          const decisionByLine = new Map(
-            parsed.data.lines.map((line) => [line.saleLineId, line]),
-          );
-          if (
-            originalLines.length !== parsed.data.lines.length ||
-            originalLines.some((line) => !decisionByLine.has(line.id))
-          ) {
-            throw new ReversalError(400, "reversal_lines_must_match_sale");
-          }
-          const returnedLots = new Map<
-            string,
-            Array<{
-              lot_id: string;
-              quantity: number;
-              allocated_cogs_centavos: number;
-              expiry_date: string;
-              quarantined: number;
-            }>
-          >();
-          const saleLines = originalLines.flatMap((line) => {
-            const decision = decisionByLine.get(line.id)!;
-            const quantity = decision.quantity ?? line.quantity;
-            if (quantity > line.quantity)
-              throw new ReversalError(400, "invalid_refund_quantity");
-            if (quantity === 0) return [];
-            const lots = db
-              .prepare(
-                `SELECT a.lot_id, a.quantity, a.allocated_cogs_centavos,
+            expiry_date: string;
+            quarantined: number;
+          }>
+        >();
+        const saleLines = originalLines.flatMap((line) => {
+          const decision = decisionByLine.get(line.id)!;
+          const quantity = decision.quantity ?? line.quantity;
+          if (quantity > line.quantity)
+            throw new ReversalError(400, "invalid_refund_quantity");
+          if (quantity === 0) return [];
+          const lots = db
+            .prepare(
+              `SELECT a.lot_id, a.quantity, a.allocated_cogs_centavos,
                       l.expiry_date, l.quarantined
                FROM sale_line_lot_allocations a
                JOIN inventory_lots l ON l.id = a.lot_id
                WHERE a.sale_line_id = ? ORDER BY l.expiry_date, l.lot_code`,
-              )
-              .all(line.id) as Array<{
-              lot_id: string;
-              quantity: number;
-              allocated_cogs_centavos: number;
-              expiry_date: string;
-              quarantined: number;
-            }>;
-            if (
-              decision.lotQuantities &&
-              (new Set(decision.lotQuantities.map((lot) => lot.lotId)).size !==
-                decision.lotQuantities.length ||
-                decision.lotQuantities.some(
-                  (lot) => !lots.some((saved) => saved.lot_id === lot.lotId),
-                ) ||
-                decision.lotQuantities.reduce(
-                  (sum, lot) => sum + lot.quantity,
-                  0,
-                ) !== quantity)
             )
-              throw new ReversalError(400, "invalid_refund_lot_quantities");
-            if (
-              lots.length > 1 &&
-              quantity < line.quantity &&
-              !decision.lotQuantities
-            )
-              throw new ReversalError(400, "refund_lot_quantities_required");
-            const selectedLots = lots.flatMap((lot) => {
-              const returned = decision.lotQuantities
-                ? (decision.lotQuantities.find(
-                    (selected) => selected.lotId === lot.lot_id,
-                  )?.quantity ?? 0)
-                : lots.length === 1
-                  ? quantity
-                  : lot.quantity;
-              if (returned > lot.quantity)
-                throw new ReversalError(400, "invalid_refund_lot_quantities");
-              return returned === 0
-                ? []
-                : [
-                    {
-                      ...lot,
-                      quantity: returned,
-                      allocated_cogs_centavos: prorateCentavos(
-                        lot.allocated_cogs_centavos,
-                        returned,
-                        lot.quantity,
-                      ),
-                    },
-                  ];
-            });
-            returnedLots.set(line.id, selectedLots);
-            if (line.lot_tracked === 1 && decision.restock) {
-              if (!decision.lotPickVerified)
-                throw new ReversalError(
-                  400,
-                  "lot_return_verification_required",
-                );
-              const today = manilaCalendarDate();
-              if (
-                selectedLots.length === 0 ||
-                selectedLots.some(
-                  (lot) => lot.expiry_date < today || lot.quarantined === 1,
-                )
-              ) {
-                throw new ReversalError(409, "returned_lot_not_saleable");
-              }
-            }
-            return [
-              {
-                ...line,
-                quantity,
-                amount_due_centavos: prorateCentavos(
-                  line.amount_due_centavos,
-                  quantity,
-                  line.quantity,
-                ),
-                allocated_cogs_centavos: selectedLots.length
-                  ? selectedLots.reduce(
-                      (sum, lot) => sum + lot.allocated_cogs_centavos,
-                      0,
-                    )
-                  : prorateCentavos(
-                      line.allocated_cogs_centavos,
-                      quantity,
-                      line.quantity,
-                    ),
-                bnpc_discount_centavos: prorateCentavos(
-                  line.bnpc_discount_centavos,
-                  quantity,
-                  line.quantity,
-                ),
-              },
-            ];
-          });
-          if (!saleLines.length)
-            throw new ReversalError(400, "refund_quantity_required");
-          const lineRefundTotal = originalLines.reduce(
-            (total, line) => total + line.amount_due_centavos,
-            0,
-          );
-          const savedTotal =
-            lineRefundTotal + original.cash_rounding_adjustment_centavos;
+            .all(line.id) as Array<{
+            lot_id: string;
+            quantity: number;
+            allocated_cogs_centavos: number;
+            expiry_date: string;
+            quarantined: number;
+          }>;
           if (
-            !Number.isSafeInteger(savedTotal) ||
-            savedTotal < 0 ||
-            savedTotal !== original.amount_due_centavos
-          ) {
-            throw new ReversalError(409, "sale_totals_do_not_reconcile");
-          }
-          const refund = calculateRefundTotal(
-            originalLines.map((line) => ({
-              quantity: line.quantity,
-              refundQuantity:
-                decisionByLine.get(line.id)!.quantity ?? line.quantity,
-              amountCentavos: line.amount_due_centavos,
-            })),
-            original.cash_rounding_adjustment_centavos,
-          );
-          const refundTotal = refund.amountCentavos;
-          if (
-            !Number.isSafeInteger(refundTotal) ||
-            refundTotal < 0 ||
-            refundTotal > savedTotal
+            decision.lotQuantities &&
+            (new Set(decision.lotQuantities.map((lot) => lot.lotId)).size !==
+              decision.lotQuantities.length ||
+              decision.lotQuantities.some(
+                (lot) => !lots.some((saved) => saved.lot_id === lot.lotId),
+              ) ||
+              decision.lotQuantities.reduce(
+                (sum, lot) => sum + lot.quantity,
+                0,
+              ) !== quantity)
           )
-            throw new ReversalError(409, "sale_totals_do_not_reconcile");
+            throw new ReversalError(400, "invalid_refund_lot_quantities");
+          if (
+            lots.length > 1 &&
+            quantity < line.quantity &&
+            !decision.lotQuantities
+          )
+            throw new ReversalError(400, "refund_lot_quantities_required");
+          const selectedLots = lots.flatMap((lot) => {
+            const returned = decision.lotQuantities
+              ? (decision.lotQuantities.find(
+                  (selected) => selected.lotId === lot.lot_id,
+                )?.quantity ?? 0)
+              : lots.length === 1
+                ? quantity
+                : lot.quantity;
+            if (returned > lot.quantity)
+              throw new ReversalError(400, "invalid_refund_lot_quantities");
+            return returned === 0
+              ? []
+              : [
+                  {
+                    ...lot,
+                    quantity: returned,
+                    allocated_cogs_centavos: prorateCentavos(
+                      lot.allocated_cogs_centavos,
+                      returned,
+                      lot.quantity,
+                    ),
+                  },
+                ];
+          });
+          returnedLots.set(line.id, selectedLots);
+          if (line.lot_tracked === 1 && decision.restock) {
+            if (!decision.lotPickVerified)
+              throw new ReversalError(400, "lot_return_verification_required");
+            const today = manilaCalendarDate();
+            if (
+              selectedLots.length === 0 ||
+              selectedLots.some(
+                (lot) => lot.expiry_date < today || lot.quarantined === 1,
+              )
+            ) {
+              throw new ReversalError(409, "returned_lot_not_saleable");
+            }
+          }
+          return [
+            {
+              ...line,
+              quantity,
+              amount_due_centavos: prorateCentavos(
+                line.amount_due_centavos,
+                quantity,
+                line.quantity,
+              ),
+              allocated_cogs_centavos: selectedLots.length
+                ? selectedLots.reduce(
+                    (sum, lot) => sum + lot.allocated_cogs_centavos,
+                    0,
+                  )
+                : prorateCentavos(
+                    line.allocated_cogs_centavos,
+                    quantity,
+                    line.quantity,
+                  ),
+              bnpc_discount_centavos: prorateCentavos(
+                line.bnpc_discount_centavos,
+                quantity,
+                line.quantity,
+              ),
+            },
+          ];
+        });
+        if (!saleLines.length)
+          throw new ReversalError(400, "refund_quantity_required");
+        const lineRefundTotal = originalLines.reduce(
+          (total, line) => total + line.amount_due_centavos,
+          0,
+        );
+        const savedTotal =
+          lineRefundTotal + original.cash_rounding_adjustment_centavos;
+        if (
+          !Number.isSafeInteger(savedTotal) ||
+          savedTotal < 0 ||
+          savedTotal !== original.amount_due_centavos
+        ) {
+          throw new ReversalError(409, "sale_totals_do_not_reconcile");
+        }
+        const refund = calculateRefundTotal(
+          originalLines.map((line) => ({
+            quantity: line.quantity,
+            refundQuantity:
+              decisionByLine.get(line.id)!.quantity ?? line.quantity,
+            amountCentavos: line.amount_due_centavos,
+          })),
+          original.cash_rounding_adjustment_centavos,
+        );
+        const refundTotal = refund.amountCentavos;
+        if (
+          !Number.isSafeInteger(refundTotal) ||
+          refundTotal < 0 ||
+          refundTotal > savedTotal
+        )
+          throw new ReversalError(409, "sale_totals_do_not_reconcile");
 
-          let cashShift:
+        let cashShift:
+          | {
+              id: string;
+              cashier_user_id: string;
+              expected_cash_centavos: number;
+              closed_at: string | null;
+              actual_cash_count_centavos: number | null;
+              variance_reason: string | null;
+            }
+          | undefined;
+        if (parsed.data.refundMethod === "CASH") {
+          if (
+            parsed.data.refundSource === "ORIGINAL" &&
+            (!original.shift_id ||
+              parsed.data.refundShiftId !== original.shift_id)
+          )
+            throw new ReversalError(409, "original_refund_shift_mismatch");
+          cashShift = db
+            .prepare(
+              `SELECT id, cashier_user_id, closed_at, actual_cash_count_centavos, variance_reason,
+                   COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts
+                 WHERE id = ?`,
+            )
+            .get(parsed.data.refundShiftId!) as
             | {
                 id: string;
                 cashier_user_id: string;
@@ -1425,468 +1462,619 @@ export function registerReversalRoutes(
                 variance_reason: string | null;
               }
             | undefined;
-          if (parsed.data.refundMethod === "CASH") {
-            if (
-              parsed.data.refundSource === "ORIGINAL" &&
-              (!original.shift_id ||
-                parsed.data.refundShiftId !== original.shift_id)
-            )
-              throw new ReversalError(409, "original_refund_shift_mismatch");
-            cashShift = db
-              .prepare(
-                `SELECT id, cashier_user_id, closed_at, actual_cash_count_centavos, variance_reason,
-                   COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts
-                 WHERE id = ?`,
-              )
-              .get(parsed.data.refundShiftId!) as
-              | {
-                  id: string;
-                  cashier_user_id: string;
-                  expected_cash_centavos: number;
-                  closed_at: string | null;
-                  actual_cash_count_centavos: number | null;
-                  variance_reason: string | null;
-                }
-              | undefined;
-            if (!cashShift)
-              throw new ReversalError(409, "refund_shift_unavailable");
-            if (
-              parsed.data.refundSource === "CURRENT" &&
-              cashShift.closed_at !== null
-            )
-              throw new ReversalError(409, "cash_refund_requires_open_shift");
-            if (cashShift.closed_at !== null) {
-              if (quickCancel || req.user!.role !== "owner")
-                throw new ReversalError(
-                  403,
-                  "closed_shift_refund_requires_owner_approval",
-                );
-              if (!parsed.data.allowClosedOriginalShift)
-                throw new ReversalError(409, "refund_shift_changed");
-              if (cashShift.actual_cash_count_centavos === null)
-                throw new ReversalError(409, "cash_shift_unavailable");
-            }
-            if (
-              !Number.isSafeInteger(
-                cashShift.expected_cash_centavos - refundTotal,
-              )
-            ) {
-              throw new ReversalError(409, "cash_amount_overflow");
-            }
-            if (
-              cashShift.closed_at !== null &&
-              !Number.isSafeInteger(
-                cashShift.actual_cash_count_centavos! -
-                  (cashShift.expected_cash_centavos - refundTotal),
-              )
-            )
-              throw new ReversalError(409, "cash_amount_overflow");
+          if (!cashShift)
+            throw new ReversalError(
+              409,
+              parsed.data.refundSource === "CURRENT"
+                ? "cash_refund_requires_open_shift"
+                : "refund_shift_unavailable",
+            );
+          if (
+            parsed.data.refundSource === "CURRENT" &&
+            cashShift.closed_at !== null
+          )
+            throw new ReversalError(409, "cash_refund_requires_open_shift");
+          if (cashShift.closed_at !== null) {
+            if (quickCancel || req.user!.role !== "owner")
+              throw new ReversalError(
+                403,
+                "closed_shift_refund_requires_owner_approval",
+              );
+            if (!parsed.data.allowClosedOriginalShift)
+              throw new ReversalError(409, "refund_shift_changed");
+            if (cashShift.actual_cash_count_centavos === null)
+              throw new ReversalError(409, "cash_shift_unavailable");
           }
+          if (
+            !Number.isSafeInteger(
+              cashShift.expected_cash_centavos - refundTotal,
+            )
+          ) {
+            throw new ReversalError(409, "cash_amount_overflow");
+          }
+          if (
+            cashShift.closed_at !== null &&
+            !Number.isSafeInteger(
+              cashShift.actual_cash_count_centavos! -
+                (cashShift.expected_cash_centavos - refundTotal),
+            )
+          )
+            throw new ReversalError(409, "cash_amount_overflow");
+        }
 
-          const now = new Date();
-          const createdAt = now.toISOString();
-          const reversalId = randomUUID();
-          const reversalTransactionId = internalReversalId(
-            db,
-            businessDate(now),
-          );
-          db.prepare(
-            `INSERT INTO sale_reversals
+        const now = new Date();
+        const createdAt = now.toISOString();
+        const reversalId = randomUUID();
+        const reversalTransactionId = internalReversalId(db, businessDate(now));
+        db.prepare(
+          `INSERT INTO sale_reversals
               (id, reversal_transaction_id, sale_id, approved_by_user_id, reason,
                refund_method, amount_centavos, cash_shift_id, created_at,
                cash_rounding_adjustment_centavos)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            reversalId,
-            reversalTransactionId,
-            sale.id,
-            req.user!.id,
-            parsed.data.reason,
-            parsed.data.refundMethod,
-            refundTotal,
-            cashShift?.id ?? null,
-            createdAt,
-            refund.cashRoundingAdjustmentCentavos,
-          );
+        ).run(
+          reversalId,
+          reversalTransactionId,
+          sale.id,
+          req.user!.id,
+          parsed.data.reason,
+          parsed.data.refundMethod,
+          refundTotal,
+          cashShift?.id ?? null,
+          createdAt,
+          refund.cashRoundingAdjustmentCentavos,
+        );
 
-          const insertLine = db.prepare(
-            `INSERT INTO sale_reversal_lines
+        const insertLine = db.prepare(
+          `INSERT INTO sale_reversal_lines
               (id, reversal_id, sale_line_id, product_id, quantity,
                refund_amount_centavos, stock_treatment, original_cogs_centavos,
                cogs_restored_centavos, writeoff_centavos, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          );
-          const insertStockEvent = db.prepare(
-            `INSERT INTO stock_events
+        );
+        const insertStockEvent = db.prepare(
+          `INSERT INTO stock_events
               (id, product_id, event_type, quantity_delta, unit_cost_centavos,
                inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
              VALUES (?, ?, 'REVERSAL', ?, NULL, ?, ?, ?, ?, ?)`,
+        );
+        let restoredCogs = 0;
+        let writeoffCogs = 0;
+        const reversalLotActions: Array<{
+          saleLineId: string;
+          lotId: string;
+          quantity: number;
+          treatment: "RESTOCK" | "WRITE_OFF";
+        }> = [];
+        for (const line of saleLines) {
+          const decision = decisionByLine.get(line.id)!;
+          const restock = decision.restock;
+          const cogsRestored = restock ? line.allocated_cogs_centavos : 0;
+          const lineWriteoff = restock ? 0 : line.allocated_cogs_centavos;
+          const reversalLineId = randomUUID();
+          insertLine.run(
+            reversalLineId,
+            reversalId,
+            line.id,
+            line.product_id,
+            line.quantity,
+            line.amount_due_centavos,
+            restock ? "RESTOCK" : "WRITE_OFF",
+            line.allocated_cogs_centavos,
+            cogsRestored,
+            lineWriteoff,
+            createdAt,
           );
-          let restoredCogs = 0;
-          let writeoffCogs = 0;
-          const reversalLotActions: Array<{
-            saleLineId: string;
-            lotId: string;
-            quantity: number;
-            treatment: "RESTOCK" | "WRITE_OFF";
-          }> = [];
-          for (const line of saleLines) {
-            const decision = decisionByLine.get(line.id)!;
-            const restock = decision.restock;
-            const cogsRestored = restock ? line.allocated_cogs_centavos : 0;
-            const lineWriteoff = restock ? 0 : line.allocated_cogs_centavos;
-            const reversalLineId = randomUUID();
-            insertLine.run(
-              reversalLineId,
-              reversalId,
-              line.id,
-              line.product_id,
-              line.quantity,
-              line.amount_due_centavos,
-              restock ? "RESTOCK" : "WRITE_OFF",
-              line.allocated_cogs_centavos,
-              cogsRestored,
-              lineWriteoff,
-              createdAt,
-            );
-            const update = db
-              .prepare(
-                `UPDATE products SET quantity_on_hand = quantity_on_hand + ?,
+          const update = db
+            .prepare(
+              `UPDATE products SET quantity_on_hand = quantity_on_hand + ?,
                    inventory_value_centavos = inventory_value_centavos + ?, updated_at = ?
                  WHERE id = ? AND quantity_on_hand <= ? AND inventory_value_centavos <= ?`,
+            )
+            .run(
+              line.quantity,
+              line.allocated_cogs_centavos,
+              createdAt,
+              line.product_id,
+              Number.MAX_SAFE_INTEGER - line.quantity,
+              Number.MAX_SAFE_INTEGER - line.allocated_cogs_centavos,
+            );
+          if (update.changes !== 1)
+            throw new ReversalError(409, "inventory_value_overflow");
+          const reversalStockEventId = randomUUID();
+          insertStockEvent.run(
+            reversalStockEventId,
+            line.product_id,
+            line.quantity,
+            line.allocated_cogs_centavos,
+            reversalTransactionId,
+            parsed.data.reason,
+            req.user!.id,
+            createdAt,
+          );
+          const originalLots = returnedLots.get(line.id) ?? [];
+          if (line.lot_tracked === 1 && originalLots.length === 0)
+            throw new ReversalError(409, "sale_lot_allocation_missing");
+          reversalLotActions.push(
+            ...originalLots.map((lot) => ({
+              saleLineId: line.id,
+              lotId: lot.lot_id,
+              quantity: lot.quantity,
+              treatment: restock
+                ? ("RESTOCK" as const)
+                : ("WRITE_OFF" as const),
+            })),
+          );
+          if (originalLots.length) {
+            for (const lot of originalLots) {
+              writeLotMovement(db, {
+                productId: line.product_id,
+                lotId: lot.lot_id,
+                type: "REVERSAL",
+                stockEventId: reversalStockEventId,
+                reversalLineId,
+                quantityDelta: lot.quantity,
+                inventoryValueDeltaCentavos: lot.allocated_cogs_centavos,
+                actorUserId: req.user!.id,
+                createdAt,
+              });
+            }
+          } else {
+            writeLotMovement(db, {
+              productId: line.product_id,
+              lotId: null,
+              type: "REVERSAL",
+              stockEventId: reversalStockEventId,
+              reversalLineId,
+              quantityDelta: line.quantity,
+              inventoryValueDeltaCentavos: line.allocated_cogs_centavos,
+              actorUserId: req.user!.id,
+              createdAt,
+            });
+          }
+          if (restock) {
+            restoredCogs += cogsRestored;
+          } else {
+            const writeoff = db
+              .prepare(
+                `UPDATE products SET quantity_on_hand = quantity_on_hand - ?,
+                     inventory_value_centavos = inventory_value_centavos - ?, updated_at = ?
+                   WHERE id = ? AND quantity_on_hand >= ?
+                     AND inventory_value_centavos >= ?`,
               )
               .run(
                 line.quantity,
-                line.allocated_cogs_centavos,
+                lineWriteoff,
                 createdAt,
                 line.product_id,
-                Number.MAX_SAFE_INTEGER - line.quantity,
-                Number.MAX_SAFE_INTEGER - line.allocated_cogs_centavos,
+                line.quantity,
+                lineWriteoff,
               );
-            if (update.changes !== 1)
-              throw new ReversalError(409, "inventory_value_overflow");
-            const reversalStockEventId = randomUUID();
-            insertStockEvent.run(
-              reversalStockEventId,
+            if (writeoff.changes !== 1)
+              throw new ReversalError(409, "reversal_writeoff_failed");
+            const writeOffStockEventId = randomUUID();
+            db.prepare(
+              `INSERT INTO stock_events
+                  (id, product_id, event_type, quantity_delta, unit_cost_centavos,
+                   inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
+                 VALUES (?, ?, 'WRITE_OFF', ?, NULL, ?, ?, ?, ?, ?)`,
+            ).run(
+              writeOffStockEventId,
               line.product_id,
-              line.quantity,
-              line.allocated_cogs_centavos,
+              -line.quantity,
+              -lineWriteoff,
               reversalTransactionId,
               parsed.data.reason,
               req.user!.id,
               createdAt,
-            );
-            const originalLots = returnedLots.get(line.id) ?? [];
-            if (line.lot_tracked === 1 && originalLots.length === 0)
-              throw new ReversalError(409, "sale_lot_allocation_missing");
-            reversalLotActions.push(
-              ...originalLots.map((lot) => ({
-                saleLineId: line.id,
-                lotId: lot.lot_id,
-                quantity: lot.quantity,
-                treatment: restock
-                  ? ("RESTOCK" as const)
-                  : ("WRITE_OFF" as const),
-              })),
             );
             if (originalLots.length) {
               for (const lot of originalLots) {
                 writeLotMovement(db, {
                   productId: line.product_id,
                   lotId: lot.lot_id,
-                  type: "REVERSAL",
-                  stockEventId: reversalStockEventId,
+                  type: "WRITE_OFF",
+                  stockEventId: writeOffStockEventId,
                   reversalLineId,
-                  quantityDelta: lot.quantity,
-                  inventoryValueDeltaCentavos: lot.allocated_cogs_centavos,
+                  quantityDelta: -lot.quantity,
+                  inventoryValueDeltaCentavos: -lot.allocated_cogs_centavos,
                   actorUserId: req.user!.id,
                   createdAt,
+                  reason: parsed.data.reason,
                 });
               }
             } else {
               writeLotMovement(db, {
                 productId: line.product_id,
                 lotId: null,
-                type: "REVERSAL",
-                stockEventId: reversalStockEventId,
+                type: "WRITE_OFF",
+                stockEventId: writeOffStockEventId,
                 reversalLineId,
-                quantityDelta: line.quantity,
-                inventoryValueDeltaCentavos: line.allocated_cogs_centavos,
+                quantityDelta: -line.quantity,
+                inventoryValueDeltaCentavos: -lineWriteoff,
                 actorUserId: req.user!.id,
                 createdAt,
+                reason: parsed.data.reason,
               });
             }
-            if (restock) {
-              restoredCogs += cogsRestored;
-            } else {
-              const writeoff = db
-                .prepare(
-                  `UPDATE products SET quantity_on_hand = quantity_on_hand - ?,
-                     inventory_value_centavos = inventory_value_centavos - ?, updated_at = ?
-                   WHERE id = ? AND quantity_on_hand >= ?
-                     AND inventory_value_centavos >= ?`,
-                )
-                .run(
-                  line.quantity,
-                  lineWriteoff,
-                  createdAt,
-                  line.product_id,
-                  line.quantity,
-                  lineWriteoff,
-                );
-              if (writeoff.changes !== 1)
-                throw new ReversalError(409, "reversal_writeoff_failed");
-              const writeOffStockEventId = randomUUID();
-              db.prepare(
-                `INSERT INTO stock_events
-                  (id, product_id, event_type, quantity_delta, unit_cost_centavos,
-                   inventory_value_delta_centavos, reference, reason, actor_user_id, created_at)
-                 VALUES (?, ?, 'WRITE_OFF', ?, NULL, ?, ?, ?, ?, ?)`,
-              ).run(
-                writeOffStockEventId,
-                line.product_id,
-                -line.quantity,
-                -lineWriteoff,
-                reversalTransactionId,
-                parsed.data.reason,
-                req.user!.id,
-                createdAt,
-              );
-              if (originalLots.length) {
-                for (const lot of originalLots) {
-                  writeLotMovement(db, {
-                    productId: line.product_id,
-                    lotId: lot.lot_id,
-                    type: "WRITE_OFF",
-                    stockEventId: writeOffStockEventId,
-                    reversalLineId,
-                    quantityDelta: -lot.quantity,
-                    inventoryValueDeltaCentavos: -lot.allocated_cogs_centavos,
-                    actorUserId: req.user!.id,
-                    createdAt,
-                    reason: parsed.data.reason,
-                  });
-                }
-              } else {
-                writeLotMovement(db, {
-                  productId: line.product_id,
-                  lotId: null,
-                  type: "WRITE_OFF",
-                  stockEventId: writeOffStockEventId,
-                  reversalLineId,
-                  quantityDelta: -line.quantity,
-                  inventoryValueDeltaCentavos: -lineWriteoff,
-                  actorUserId: req.user!.id,
-                  createdAt,
-                  reason: parsed.data.reason,
-                });
-              }
-              writeoffCogs += lineWriteoff;
-            }
+            writeoffCogs += lineWriteoff;
           }
+        }
 
-          const bnpcUsage = db
-            .prepare(
-              `SELECT holder_key_hmac, week_start_date,
+        const bnpcUsage = db
+          .prepare(
+            `SELECT holder_key_hmac, week_start_date,
                       local_purchase_applied_centavos, bnpc_discount_centavos
                FROM sale_bnpc_snapshots WHERE sale_id = ?`,
-            )
-            .get(sale.id) as
-            | {
-                holder_key_hmac: string;
-                week_start_date: string;
-                local_purchase_applied_centavos: number;
-                bnpc_discount_centavos: number;
-              }
-            | undefined;
-          if (bnpcUsage) {
-            db.prepare(
-              `INSERT INTO bnpc_usage_events
+          )
+          .get(sale.id) as
+          | {
+              holder_key_hmac: string;
+              week_start_date: string;
+              local_purchase_applied_centavos: number;
+              bnpc_discount_centavos: number;
+            }
+          | undefined;
+        if (bnpcUsage) {
+          db.prepare(
+            `INSERT INTO bnpc_usage_events
                (id, holder_key_hmac, week_start_date, event_type, sale_id,
                 reversal_id, qualifying_purchase_delta_centavos,
                 bnpc_discount_delta_centavos, created_at)
                VALUES (?, ?, ?, 'REVERSAL', ?, ?, ?, ?, ?)`,
-            ).run(
-              randomUUID(),
-              bnpcUsage.holder_key_hmac,
-              bnpcUsage.week_start_date,
-              sale.id,
-              reversalId,
-              -Math.min(
-                bnpcUsage.local_purchase_applied_centavos,
-                saleLines
-                  .filter((line) => line.bnpc_policy_version !== null)
-                  .reduce(
-                    (sum, line) =>
-                      sum + line.quantity * line.unit_price_centavos,
-                    0,
-                  ),
-              ),
-              -saleLines.reduce(
-                (sum, line) => sum + line.bnpc_discount_centavos,
-                0,
-              ),
-              createdAt,
-            );
-          }
+          ).run(
+            randomUUID(),
+            bnpcUsage.holder_key_hmac,
+            bnpcUsage.week_start_date,
+            sale.id,
+            reversalId,
+            -Math.min(
+              bnpcUsage.local_purchase_applied_centavos,
+              saleLines
+                .filter((line) => line.bnpc_policy_version !== null)
+                .reduce(
+                  (sum, line) => sum + line.quantity * line.unit_price_centavos,
+                  0,
+                ),
+            ),
+            -saleLines.reduce(
+              (sum, line) => sum + line.bnpc_discount_centavos,
+              0,
+            ),
+            createdAt,
+          );
+        }
 
-          if (cashShift && refundTotal > 0) {
-            const expected = cashShift.expected_cash_centavos - refundTotal;
-            if (cashShift.closed_at === null) {
-              db.prepare(
-                "UPDATE shifts SET expected_cash_centavos = ? WHERE id = ? AND closed_at IS NULL",
-              ).run(expected, cashShift.id);
-            } else {
-              const variance = cashShift.actual_cash_count_centavos! - expected;
-              db.prepare(
-                `UPDATE shifts SET expected_cash_centavos = ?, variance_centavos = ?,
+        if (cashShift && refundTotal > 0) {
+          const expected = cashShift.expected_cash_centavos - refundTotal;
+          if (cashShift.closed_at === null) {
+            db.prepare(
+              "UPDATE shifts SET expected_cash_centavos = ? WHERE id = ? AND closed_at IS NULL",
+            ).run(expected, cashShift.id);
+          } else {
+            const variance = cashShift.actual_cash_count_centavos! - expected;
+            db.prepare(
+              `UPDATE shifts SET expected_cash_centavos = ?, variance_centavos = ?,
                 variance_reason = ?, variance_approval_status = ?, variance_approved_by_user_id = NULL,
                 variance_approved_at = NULL, variance_approval_note = NULL WHERE id = ? AND closed_at IS NOT NULL`,
-              ).run(
-                expected,
-                variance,
-                variance === 0
+            ).run(
+              expected,
+              variance,
+              variance === 0
+                ? cashShift.variance_reason
+                : (cashShift.variance_reason?.trim().length ?? 0) >= 3
                   ? cashShift.variance_reason
-                  : (cashShift.variance_reason?.trim().length ?? 0) >= 3
-                    ? cashShift.variance_reason
-                    : "Cash refund assigned to the original shift after closing.",
-                variance === 0 ? "NONE" : "PENDING",
-                cashShift.id,
-              );
-            }
-            db.prepare(
-              `INSERT INTO cash_movements
+                  : "Cash refund assigned to the original shift after closing.",
+              variance === 0 ? "NONE" : "PENDING",
+              cashShift.id,
+            );
+          }
+          db.prepare(
+            `INSERT INTO cash_movements
                  (id, shift_id, movement_type, amount_delta_centavos, reversal_id,
                   reason, actor_user_id, created_at)
                VALUES (?, ?, 'CASH_REFUND', ?, ?, ?, ?, ?)`,
-            ).run(
-              randomUUID(),
-              cashShift.id,
-              -refundTotal,
-              reversalId,
-              parsed.data.reason,
-              req.user!.id,
-              createdAt,
-            );
-          }
+          ).run(
+            randomUUID(),
+            cashShift.id,
+            -refundTotal,
+            reversalId,
+            parsed.data.reason,
+            req.user!.id,
+            createdAt,
+          );
+        }
 
-          writeAuditEvent(db, {
-            actorUserId: req.user!.id,
-            action: quickCancel ? "sale.cancelled" : "sale.reversed",
-            entityType: "sale_reversal",
-            entityId: reversalId,
-            details: {
-              reversalTransactionId,
-              originalTransactionId: transactionId.data,
-              reason: parsed.data.reason,
-              refundMethod: parsed.data.refundMethod,
-              refundCentavos: refundTotal,
-              restoredCogsCentavos: restoredCogs,
-              writeoffCentavos: writeoffCogs,
-              lineCount: saleLines.length,
-              products: saleLines.map((line) => ({
-                name: line.product_name_snapshot,
-                sku: line.sku_snapshot,
-                quantity: line.quantity,
-                stockTreatment: decisionByLine.get(line.id)!.restock
-                  ? "RESTOCK"
-                  : "WRITE_OFF",
-              })),
-              cashShiftId: cashShift?.id ?? null,
-              ...(cashShift
-                ? {
-                    refundSource: parsed.data.refundSource,
-                    originalShiftId: original.shift_id,
-                    refundCashierUserId: cashShift.cashier_user_id,
-                    cashShiftWasClosed: cashShift.closed_at !== null,
-                    expectedCashBeforeCentavos:
-                      cashShift.expected_cash_centavos,
-                    expectedCashAfterCentavos:
-                      cashShift.expected_cash_centavos - refundTotal,
-                    varianceAfterCentavos:
-                      cashShift.closed_at === null
-                        ? null
-                        : cashShift.actual_cash_count_centavos! -
-                          (cashShift.expected_cash_centavos - refundTotal),
-                  }
-                : {}),
-              lotActions: reversalLotActions,
-            },
-          });
-          return { reversalId, reversalTransactionId, createdAt, refundTotal };
-        })();
+        writeAuditEvent(db, {
+          actorUserId: req.user!.id,
+          action: quickCancel ? "sale.cancelled" : "sale.reversed",
+          entityType: "sale_reversal",
+          entityId: reversalId,
+          details: {
+            reversalTransactionId,
+            originalTransactionId: transactionId.data,
+            reason: parsed.data.reason,
+            refundMethod: parsed.data.refundMethod,
+            refundCentavos: refundTotal,
+            restoredCogsCentavos: restoredCogs,
+            writeoffCentavos: writeoffCogs,
+            lineCount: saleLines.length,
+            products: saleLines.map((line) => ({
+              name: line.product_name_snapshot,
+              sku: line.sku_snapshot,
+              quantity: line.quantity,
+              stockTreatment: decisionByLine.get(line.id)!.restock
+                ? "RESTOCK"
+                : "WRITE_OFF",
+            })),
+            cashShiftId: cashShift?.id ?? null,
+            ...(cashShift
+              ? {
+                  refundSource: parsed.data.refundSource,
+                  originalShiftId: original.shift_id,
+                  refundCashierUserId: cashShift.cashier_user_id,
+                  cashShiftWasClosed: cashShift.closed_at !== null,
+                  expectedCashBeforeCentavos: cashShift.expected_cash_centavos,
+                  expectedCashAfterCentavos:
+                    cashShift.expected_cash_centavos - refundTotal,
+                  varianceAfterCentavos:
+                    cashShift.closed_at === null
+                      ? null
+                      : cashShift.actual_cash_count_centavos! -
+                        (cashShift.expected_cash_centavos - refundTotal),
+                }
+              : {}),
+            lotActions: reversalLotActions,
+          },
+        });
+        return { reversalId, reversalTransactionId, createdAt, refundTotal };
+      })();
 
-        const reversal = db
-          .prepare(
-            `SELECT r.id, r.reversal_transaction_id, r.sale_id, r.reason,
+      const reversal = db
+        .prepare(
+          `SELECT r.id, r.reversal_transaction_id, r.sale_id, r.reason,
                     r.refund_method, r.amount_centavos, r.cash_shift_id,
                     r.cash_rounding_adjustment_centavos, r.created_at,
                     u.email AS approved_by_email
              FROM sale_reversals r JOIN users u ON u.id = r.approved_by_user_id
              WHERE r.id = ?`,
-          )
-          .get(result.reversalId) as {
-          id: string;
-          reversal_transaction_id: string;
-          sale_id: string;
-          reason: string;
-          refund_method: "CASH" | "QR";
-          amount_centavos: number;
-          cash_shift_id: string | null;
-          cash_rounding_adjustment_centavos: number;
-          created_at: string;
-          approved_by_email: string;
-        };
-        const lines = db
-          .prepare(
-            `SELECT rl.sale_line_id, rl.product_id, rl.quantity,
+        )
+        .get(result.reversalId) as {
+        id: string;
+        reversal_transaction_id: string;
+        sale_id: string;
+        reason: string;
+        refund_method: "CASH" | "QR";
+        amount_centavos: number;
+        cash_shift_id: string | null;
+        cash_rounding_adjustment_centavos: number;
+        created_at: string;
+        approved_by_email: string;
+      };
+      const lines = db
+        .prepare(
+          `SELECT rl.sale_line_id, rl.product_id, rl.quantity,
                     rl.refund_amount_centavos, rl.stock_treatment,
                     rl.original_cogs_centavos, rl.cogs_restored_centavos,
                     rl.writeoff_centavos, sl.product_name_snapshot, sl.sku_snapshot
              FROM sale_reversal_lines rl JOIN sale_lines sl ON sl.id = rl.sale_line_id
              WHERE rl.reversal_id = ? ORDER BY sl.line_number`,
-          )
-          .all(result.reversalId) as {
-          sale_line_id: string;
-          product_id: string;
-          quantity: number;
-          refund_amount_centavos: number;
-          stock_treatment: "RESTOCK" | "WRITE_OFF";
-          original_cogs_centavos: number;
-          cogs_restored_centavos: number;
-          writeoff_centavos: number;
-          product_name_snapshot: string;
-          sku_snapshot: string;
-        }[];
-        res.status(201).json({
-          reversal: {
-            id: reversal.id,
-            transactionId: reversal.reversal_transaction_id,
-            saleTransactionId: transactionId.data,
-            reason: reversal.reason,
-            refundMethod: reversal.refund_method,
-            amount: money(reversal.amount_centavos),
-            cashRoundingAdjustment: money(
-              reversal.cash_rounding_adjustment_centavos,
-            ),
-            cashShiftId: reversal.cash_shift_id,
-            approvedBy: reversal.approved_by_email,
-            createdAt: reversal.created_at,
-            lines: lines.map((line) => ({
-              saleLineId: line.sale_line_id,
-              productId: line.product_id,
-              productName: line.product_name_snapshot,
-              sku: line.sku_snapshot,
-              quantity: line.quantity,
-              refundAmount: money(line.refund_amount_centavos),
-              stockTreatment: line.stock_treatment,
-              originalCogs: money(line.original_cogs_centavos),
-              cogsRestored: money(line.cogs_restored_centavos),
-              writeoff: money(line.writeoff_centavos),
-            })),
-          },
-          sale: getSavedSale(db, reversal.sale_id, req.user!.role === "owner"),
-        });
+        )
+        .all(result.reversalId) as {
+        sale_line_id: string;
+        product_id: string;
+        quantity: number;
+        refund_amount_centavos: number;
+        stock_treatment: "RESTOCK" | "WRITE_OFF";
+        original_cogs_centavos: number;
+        cogs_restored_centavos: number;
+        writeoff_centavos: number;
+        product_name_snapshot: string;
+        sku_snapshot: string;
+      }[];
+      res.status(201).json({
+        reversal: {
+          id: reversal.id,
+          transactionId: reversal.reversal_transaction_id,
+          saleTransactionId: transactionId.data,
+          reason: reversal.reason,
+          refundMethod: reversal.refund_method,
+          amount: money(reversal.amount_centavos),
+          cashRoundingAdjustment: money(
+            reversal.cash_rounding_adjustment_centavos,
+          ),
+          cashShiftId: reversal.cash_shift_id,
+          approvedBy: reversal.approved_by_email,
+          createdAt: reversal.created_at,
+          lines: lines.map((line) => ({
+            saleLineId: line.sale_line_id,
+            productId: line.product_id,
+            productName: line.product_name_snapshot,
+            sku: line.sku_snapshot,
+            quantity: line.quantity,
+            refundAmount: money(line.refund_amount_centavos),
+            stockTreatment: line.stock_treatment,
+            originalCogs: money(line.original_cogs_centavos),
+            cogsRestored: money(line.cogs_restored_centavos),
+            writeoff: money(line.writeoff_centavos),
+          })),
+        },
+        sale: getSavedSale(db, reversal.sale_id, req.user!.role === "owner"),
+      });
+    } catch (error) {
+      if (!handleReversalError(error, res)) throw error;
+    }
+  };
+
+  router.post(
+    "/sales/:transactionId/reversals",
+    requireAuth,
+    csrf,
+    reversalRateLimit,
+    (req, res) => handleSingleReversal(req, res),
+  );
+
+  router.post(
+    "/sales/day-reversals",
+    requireAuth,
+    requireOwner,
+    csrf,
+    reversalRateLimit,
+    async (req, res): Promise<void> => {
+      const parsed = dayReversalSchema.safeParse(req.body);
+      if (!parsed.success || !req.user) return validationFailure(res);
+
+      const owner = db
+        .prepare(
+          "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+        )
+        .get(req.user.id) as { password_hash: string } | undefined;
+      let verified = false;
+      try {
+        verified =
+          !!owner &&
+          (await argon2.verify(owner.password_hash, parsed.data.ownerPassword));
+      } catch {
+        verified = false;
+      }
+      if (!verified || !owner) {
+        res.status(403).json({ error: "reauthentication_failed" });
+        return;
+      }
+
+      try {
+        const result = db.transaction(() => {
+          const currentOwner = db
+            .prepare(
+              "SELECT password_hash FROM users WHERE id = ? AND role = 'owner' AND is_active = 1",
+            )
+            .get(req.user!.id) as { password_hash: string } | undefined;
+          if (
+            !currentOwner ||
+            currentOwner.password_hash !== owner.password_hash
+          ) {
+            throw new ReversalError(403, "reauthentication_failed");
+          }
+
+          const { totalCount } = db
+            .prepare(
+              "SELECT COUNT(*) AS totalCount FROM sales WHERE business_date = ?",
+            )
+            .get(parsed.data.businessDate) as { totalCount: number };
+          const sales = db
+            .prepare(
+              `SELECT s.id, s.transaction_id, s.payment_method
+               FROM sales s
+               WHERE s.business_date = ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
+                 )
+               ORDER BY s.created_at, s.transaction_id`,
+            )
+            .all(parsed.data.businessDate) as Array<{
+            id: string;
+            transaction_id: string;
+            payment_method: "CASH" | "QR";
+          }>;
+          const cashRefundCount = sales.filter(
+            (sale) => sale.payment_method === "CASH",
+          ).length;
+          const cashShift = cashRefundCount
+            ? (db
+                .prepare(
+                  "SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                )
+                .get() as { id: string } | undefined)
+            : undefined;
+          if (cashRefundCount && !cashShift) {
+            throw new ReversalError(409, "cash_refund_requires_open_shift");
+          }
+
+          const originalParams = req.params;
+          const originalBody = req.body;
+          type CapturedResponse = {
+            statusCode: number;
+            body: unknown;
+            status(code: number): CapturedResponse;
+            json(body: unknown): CapturedResponse;
+          };
+          const capture: CapturedResponse = {
+            statusCode: 200,
+            body: undefined,
+            status(code) {
+              this.statusCode = code;
+              return this;
+            },
+            json(body) {
+              this.body = body;
+              return this;
+            },
+          };
+          let qrRefundCount = 0;
+          try {
+            for (const sale of sales) {
+              const lines = db
+                .prepare(
+                  "SELECT id AS saleLineId, quantity FROM sale_lines WHERE sale_id = ? ORDER BY line_number",
+                )
+                .all(sale.id) as Array<{
+                saleLineId: string;
+                quantity: number;
+              }>;
+              req.params = {
+                ...originalParams,
+                transactionId: sale.transaction_id,
+              };
+              req.body = {
+                ownerPassword: parsed.data.ownerPassword,
+                reason: parsed.data.reason,
+                refundMethod: sale.payment_method,
+                ...(sale.payment_method === "CASH"
+                  ? { refundShiftId: cashShift!.id, refundSource: "CURRENT" }
+                  : {}),
+                lines: lines.map((line) => ({
+                  saleLineId: line.saleLineId,
+                  quantity: line.quantity,
+                  restock: parsed.data.restockReturnedGoods,
+                  lotPickVerified: parsed.data.restockReturnedGoods,
+                })),
+              };
+              capture.statusCode = 200;
+              capture.body = undefined;
+              // The preverified hash keeps the shared handler synchronous, so
+              // its savepoint stays inside this all-or-nothing day transaction.
+              handleSingleReversal(
+                req,
+                capture as unknown as Response,
+                owner.password_hash,
+              );
+              if (capture.statusCode !== 201) {
+                const errorCode =
+                  typeof capture.body === "object" &&
+                  capture.body !== null &&
+                  "error" in capture.body &&
+                  typeof capture.body.error === "string"
+                    ? capture.body.error
+                    : "day_reversal_failed";
+                throw new ReversalError(capture.statusCode, errorCode);
+              }
+              if (sale.payment_method === "QR") qrRefundCount += 1;
+            }
+          } finally {
+            req.params = originalParams;
+            req.body = originalBody;
+          }
+
+          return {
+            businessDate: parsed.data.businessDate,
+            canceledCount: sales.length,
+            skippedCount: totalCount - sales.length,
+            cashRefundCount,
+            qrRefundCount,
+            cashShiftId: cashShift?.id ?? null,
+          };
+        })();
+        res.status(201).json({ result });
       } catch (error) {
         if (!handleReversalError(error, res)) throw error;
       }

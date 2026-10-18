@@ -269,6 +269,90 @@ afterAll(() => {
 });
 
 describe("owner-approved full-sale reversals and cash movements", () => {
+  it("cancels a Manila business day with each sale's saved refund method", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner, "NEAREST_25_CENTAVOS");
+    const product = await createProduct(owner, { sellingPrice: "112.13" });
+    const cashier = await signIn(
+      "cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const shift = await openShift(cashier, "400.00");
+    const cashSale = await sell(cashier, product.id, "CASH");
+    const qrSale = await sell(cashier, product.id, "QR");
+    const businessDate = (
+      db
+        .prepare("SELECT business_date FROM sales WHERE transaction_id = ?")
+        .get(cashSale.transactionId) as { business_date: string }
+    ).business_date;
+
+    const canceled = await postWithCsrf(owner, "/api/sales/day-reversals", {
+      businessDate,
+      ownerPassword,
+      reason: "Cancel all transactions recorded on the selected Manila day",
+      restockReturnedGoods: true,
+    });
+    expect(canceled.status, JSON.stringify(canceled.body)).toBe(201);
+    expect(canceled.body.result).toMatchObject({
+      businessDate,
+      canceledCount: 2,
+      skippedCount: 0,
+      cashRefundCount: 1,
+      qrRefundCount: 1,
+      cashShiftId: shift.body.shift.id,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT s.transaction_id, s.payment_method, r.refund_method,
+                  r.cash_shift_id
+           FROM sales s JOIN sale_reversals r ON r.sale_id = s.id
+           WHERE s.business_date = ? ORDER BY s.transaction_id`,
+        )
+        .all(businessDate),
+    ).toEqual([
+      {
+        transaction_id: cashSale.transactionId,
+        payment_method: "CASH",
+        refund_method: "CASH",
+        cash_shift_id: shift.body.shift.id,
+      },
+      {
+        transaction_id: qrSale.transactionId,
+        payment_method: "QR",
+        refund_method: "QR",
+        cash_shift_id: null,
+      },
+    ]);
+    expect((await cashier.get("/api/shifts/current")).body.shift).toMatchObject(
+      { expectedCash: "400.00", expectedQrSales: "0.00" },
+    );
+    expect(
+      db
+        .prepare(
+          "SELECT shift_id, movement_type, amount_delta_centavos FROM cash_movements WHERE movement_type = 'CASH_REFUND'",
+        )
+        .all(),
+    ).toEqual([
+      {
+        shift_id: shift.body.shift.id,
+        movement_type: "CASH_REFUND",
+        amount_delta_centavos: -11225,
+      },
+    ]);
+    expect(
+      db
+        .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
+        .get(product.id),
+    ).toEqual({ quantity_on_hand: 5 });
+    const report = (await owner.get(`/api/reports/daily?date=${businessDate}`))
+      .body.report;
+    expect(report.metrics).toMatchObject({
+      cashRefunds: "112.25",
+      qrRefunds: "112.13",
+    });
+  });
+
   it.each(["CASH", "QR"] as const)(
     "refunds one of three items paid by %s while keeping consumed units sold",
     async (paymentMethod) => {
@@ -1684,13 +1768,13 @@ describe("owner-approved full-sale reversals and cash movements", () => {
 
     const ownerShift = await openShift(owner, "50.00");
     const shiftId = ownerShift.body.shift.id as string;
-    const insufficient = await postWithCsrf(
+    const initialRefund = await postWithCsrf(
       owner,
       `/api/sales/${sale.transactionId}/reversals`,
       { ...basePayload, refundShiftId: shiftId },
     );
-    expect(insufficient.status).toBe(409);
-    expect(insufficient.body.error).toBe("insufficient_shift_cash");
+    expect(initialRefund.status, JSON.stringify(initialRefund.body)).toBe(201);
+    expect(initialRefund.body.reversal.cashShiftId).toBe(shiftId);
 
     const cashIn = await postWithCsrf(
       owner,
@@ -1702,7 +1786,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       },
     );
     expect(cashIn.status).toBe(201);
-    expect(cashIn.body.expectedCash).toBe("150.00");
+    expect(cashIn.body.expectedCash).toBe("38.00");
     const cashOut = await postWithCsrf(
       owner,
       `/api/shifts/${shiftId}/cash-movements`,
@@ -1713,21 +1797,14 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       },
     );
     expect(cashOut.status).toBe(201);
-    expect(cashOut.body.expectedCash).toBe("140.00");
-
-    const reversal = await postWithCsrf(
-      owner,
-      `/api/sales/${sale.transactionId}/reversals`,
-      { ...basePayload, refundShiftId: shiftId },
-    );
-    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    expect(cashOut.body.expectedCash).toBe("28.00");
     const movementList = await owner.get(
       `/api/shifts/${shiftId}/cash-movements`,
     );
     expect(movementList.body.movements).toHaveLength(3);
     expect(
       movementList.body.movements.map((item: { type: string }) => item.type),
-    ).toEqual(["CASH_REFUND", "CASH_OUT", "CASH_IN"]);
+    ).toEqual(["CASH_OUT", "CASH_IN", "CASH_REFUND"]);
     const openShifts = await owner.get("/api/shifts/open");
     expect(
       openShifts.body.shifts.find(

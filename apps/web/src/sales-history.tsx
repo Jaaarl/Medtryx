@@ -88,6 +88,15 @@ type SalesListResult = {
   totalCount: number;
 };
 
+type DayReversalResult = {
+  businessDate: string;
+  canceledCount: number;
+  skippedCount: number;
+  cashRefundCount: number;
+  qrRefundCount: number;
+  cashShiftId: string | null;
+};
+
 type SaleChange = {
   id: string;
   kind: "PAYMENT_SWITCH" | "CANCELLATION" | "REVERSAL" | "PARTIAL_REFUND";
@@ -283,6 +292,10 @@ export function SalesHistoryPage() {
   );
   const [ownerPassword, setOwnerPassword] = useState("");
   const [reversalReason, setReversalReason] = useState("");
+  const [dayReversalReason, setDayReversalReason] = useState("");
+  const [dayReversalPassword, setDayReversalPassword] = useState("");
+  const [dayReversalConfirmation, setDayReversalConfirmation] = useState("");
+  const [restockDayReturns, setRestockDayReturns] = useState(false);
   const [movementShiftId, setMovementShiftId] = useState("");
   const [movementType, setMovementType] = useState<"CASH_IN" | "CASH_OUT">(
     "CASH_IN",
@@ -465,6 +478,45 @@ export function SalesHistoryPage() {
         `/sales/${sale.transactionId}`,
       );
       setSale(detail.sale);
+    } catch (caught) {
+      setError(requestError(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reverseSelectedDay(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (salesView !== "DAY") return;
+    if (dayReversalConfirmation !== selectedDate) {
+      setError(`Type ${selectedDate} to confirm the Manila sales date.`);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const { result } = await api.post<{ result: DayReversalResult }>(
+        "/sales/day-reversals",
+        {
+          businessDate: selectedDate,
+          ownerPassword: dayReversalPassword,
+          reason: dayReversalReason,
+          restockReturnedGoods: restockDayReturns,
+        },
+      );
+      setNotice(
+        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` ${result.skippedCount} already reversed or partially refunded sale${result.skippedCount === 1 ? " was" : "s were"} skipped.` : ""}`,
+      );
+      setDayReversalPassword("");
+      setDayReversalConfirmation("");
+      await refreshLists();
+      if (selectedId) {
+        const detail = await api.get<{ sale: SaleDetails }>(
+          `/sales/${selectedId}`,
+        );
+        setSale(detail.sale);
+      }
     } catch (caught) {
       setError(requestError(caught));
     } finally {
@@ -719,6 +771,8 @@ export function SalesHistoryPage() {
                   setSelectedId("");
                   setSale(null);
                   setOwnerPassword("");
+                  setDayReversalPassword("");
+                  setDayReversalConfirmation("");
                   setSalesView(event.target.value as "RECENT" | "DAY");
                 }}
               >
@@ -745,12 +799,108 @@ export function SalesHistoryPage() {
                     setSelectedId("");
                     setSale(null);
                     setOwnerPassword("");
+                    setDayReversalPassword("");
+                    setDayReversalConfirmation("");
                     setSelectedDate(event.target.value);
                   }}
                 />
               </Field>
             )}
           </div>
+          {salesView === "DAY" && (
+            <form
+              className="form-stack day-reversal-form"
+              onSubmit={(event) => void reverseSelectedDay(event)}
+            >
+              <div>
+                <h3>Cancel all eligible sales for {selectedDate}</h3>
+                <p>
+                  This uses Philippine time and refunds each sale by its saved
+                  payment method. Cash refunds go to the current open drawer
+                  {openShifts[0]
+                    ? ` for ${openShifts[0].cashierEmail}`
+                    : "; a cash drawer must be open if the day includes cash sales"}
+                  . Already reversed and partially refunded sales are skipped.
+                </p>
+              </div>
+              <Field
+                id="day-reversal-reason"
+                label="Reason for cancelling the day’s sales"
+              >
+                <textarea
+                  id="day-reversal-reason"
+                  className="text-input"
+                  value={dayReversalReason}
+                  onChange={(event) => setDayReversalReason(event.target.value)}
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  disabled={saving}
+                />
+              </Field>
+              <label className="inventory-checkbox day-reversal-restock">
+                <input
+                  type="checkbox"
+                  checked={restockDayReturns}
+                  onChange={(event) =>
+                    setRestockDayReturns(event.target.checked)
+                  }
+                  disabled={saving}
+                />
+                <span>
+                  Restock all returned items
+                  <small>
+                    Enable only if every refunded item was physically returned
+                    and is saleable. Lot-tracked items are checked against their
+                    original lots; one ineligible lot cancels the whole batch.
+                    When unchecked, items are recorded as write-offs.
+                  </small>
+                </span>
+              </label>
+              <div className="day-reversal-confirmation-fields">
+                <Field
+                  id="day-reversal-confirm-date"
+                  label={`Type ${selectedDate} to confirm`}
+                >
+                  <input
+                    id="day-reversal-confirm-date"
+                    className="text-input"
+                    value={dayReversalConfirmation}
+                    onChange={(event) =>
+                      setDayReversalConfirmation(event.target.value)
+                    }
+                    required
+                    autoComplete="off"
+                    disabled={saving}
+                  />
+                </Field>
+                <Field id="day-reversal-owner-password" label="Owner password">
+                  <input
+                    id="day-reversal-owner-password"
+                    className="text-input"
+                    type="password"
+                    autoComplete="current-password"
+                    value={dayReversalPassword}
+                    onChange={(event) =>
+                      setDayReversalPassword(event.target.value)
+                    }
+                    required
+                    maxLength={128}
+                    disabled={saving}
+                  />
+                </Field>
+              </div>
+              <button
+                className="button button-danger"
+                type="submit"
+                disabled={saving || dayReversalConfirmation !== selectedDate}
+              >
+                {saving
+                  ? "Refunding and cancelling day…"
+                  : "Refund and cancel all eligible sales"}
+              </button>
+            </form>
+          )}
           <div className="inventory-table-wrap">
             <table className="inventory-table">
               <thead>
