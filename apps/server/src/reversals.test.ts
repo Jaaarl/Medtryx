@@ -248,7 +248,8 @@ beforeEach(() => {
   db.prepare(
     `INSERT INTO users
        (id, email, password_hash, role, is_active, created_at, updated_at)
-     VALUES (?, ?, ?, 'owner', 1, ?, ?), (?, ?, ?, 'cashier', 1, ?, ?)`,
+     VALUES (?, ?, ?, 'owner', 1, ?, ?), (?, ?, ?, 'cashier', 1, ?, ?),
+            (?, ?, ?, 'cashier', 1, ?, ?)`,
   ).run(
     ownerId,
     "owner.reversals@example.test",
@@ -257,6 +258,11 @@ beforeEach(() => {
     now,
     randomUUID(),
     "cashier.reversals@example.test",
+    cashierHash,
+    now,
+    now,
+    randomUUID(),
+    "second.cashier.reversals@example.test",
     cashierHash,
     now,
     now,
@@ -280,6 +286,17 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     const shift = await openShift(cashier, "400.00");
     const cashSale = await sell(cashier, product.id, "CASH");
     const qrSale = await sell(cashier, product.id, "QR");
+    const shiftClosed = await closeShift(
+      cashier,
+      shift.body.shift.id as string,
+      "512.25",
+    );
+    expect(shiftClosed.status, JSON.stringify(shiftClosed.body)).toBe(200);
+    const secondCashier = await signIn(
+      "second.cashier.reversals@example.test",
+      cashierPassword,
+    );
+    const secondShift = await openShift(secondCashier, "200.00");
     const businessDate = (
       db
         .prepare("SELECT business_date FROM sales WHERE transaction_id = ?")
@@ -300,7 +317,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       skippedTransactions: [],
       cashRefundCount: 1,
       qrRefundCount: 1,
-      cashShiftId: shift.body.shift.id,
+      cashShiftIds: [shift.body.shift.id],
     });
     expect(
       db
@@ -325,9 +342,9 @@ describe("owner-approved full-sale reversals and cash movements", () => {
         cash_shift_id: null,
       },
     ]);
-    expect((await cashier.get("/api/shifts/current")).body.shift).toMatchObject(
-      { expectedCash: "400.00", expectedQrSales: "0.00" },
-    );
+    expect(
+      (await secondCashier.get("/api/shifts/current")).body.shift,
+    ).toMatchObject({ expectedCash: "200.00", expectedQrSales: "0.00" });
     expect(
       db
         .prepare(
@@ -352,12 +369,25 @@ describe("owner-approved full-sale reversals and cash movements", () => {
         (item: { id: string }) => item.id === shift.body.shift.id,
       ),
     ).toMatchObject({
-      status: "OPEN",
+      status: "CLOSED",
       cashSales: "112.25",
       qrSales: "112.13",
       cashRefunds: "112.25",
       qrRefunds: "112.13",
       expectedCash: "400.00",
+      actualCashCount: "512.25",
+      variance: "112.25",
+      varianceReason:
+        "Cash refund assigned to the original shift after closing.",
+    });
+    expect(
+      shiftHistory.find(
+        (item: { id: string }) => item.id === secondShift.body.shift.id,
+      ),
+    ).toMatchObject({
+      status: "OPEN",
+      cashRefunds: "0.00",
+      expectedCash: "200.00",
     });
     const report = (await owner.get(`/api/reports/daily?date=${businessDate}`))
       .body.report;

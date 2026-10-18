@@ -1988,7 +1988,7 @@ export function registerReversalRoutes(
           }>;
           const sales = db
             .prepare(
-              `SELECT s.id, s.transaction_id, s.payment_method
+              `SELECT s.id, s.transaction_id, s.payment_method, s.shift_id
                FROM sales s
                WHERE s.business_date = ?
                  AND NOT EXISTS (
@@ -2000,20 +2000,29 @@ export function registerReversalRoutes(
             id: string;
             transaction_id: string;
             payment_method: "CASH" | "QR";
+            shift_id: string | null;
           }>;
           const cashRefundCount = sales.filter(
             (sale) => sale.payment_method === "CASH",
           ).length;
-          const cashShift = cashRefundCount
-            ? (db
-                .prepare(
-                  "SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
-                )
-                .get() as { id: string } | undefined)
-            : undefined;
-          if (cashRefundCount && !cashShift) {
-            throw new ReversalError(409, "cash_refund_requires_open_shift");
+          const cashSalesWithoutShift = sales.filter(
+            (sale) => sale.payment_method === "CASH" && !sale.shift_id,
+          );
+          if (cashSalesWithoutShift.length) {
+            throw new ReversalError(
+              409,
+              "cash_refund_original_shift_unavailable",
+            );
           }
+          const cashShiftIds = Array.from(
+            new Set(
+              sales.flatMap((sale) =>
+                sale.payment_method === "CASH" && sale.shift_id
+                  ? [sale.shift_id]
+                  : [],
+              ),
+            ),
+          );
 
           const originalParams = req.params;
           const originalBody = req.body;
@@ -2055,7 +2064,11 @@ export function registerReversalRoutes(
                 reason: parsed.data.reason,
                 refundMethod: sale.payment_method,
                 ...(sale.payment_method === "CASH"
-                  ? { refundShiftId: cashShift!.id, refundSource: "CURRENT" }
+                  ? {
+                      refundShiftId: sale.shift_id!,
+                      refundSource: "ORIGINAL",
+                      allowClosedOriginalShift: true,
+                    }
                   : {}),
                 lines: lines.map((line) => ({
                   saleLineId: line.saleLineId,
@@ -2100,7 +2113,7 @@ export function registerReversalRoutes(
             })),
             cashRefundCount,
             qrRefundCount,
-            cashShiftId: cashShift?.id ?? null,
+            cashShiftIds,
           };
         })();
         res.status(201).json({ result });

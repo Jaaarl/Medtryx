@@ -98,7 +98,7 @@ type DayReversalResult = {
   }>;
   cashRefundCount: number;
   qrRefundCount: number;
-  cashShiftId: string | null;
+  cashShiftIds: string[];
 };
 
 type SaleChange = {
@@ -235,6 +235,8 @@ function requestError(error: unknown): string {
       "An owner must approve refunds assigned to a closed original shift.",
     cash_refund_requires_open_shift:
       "Cash refunds must be assigned to an open cash drawer.",
+    cash_refund_original_shift_unavailable:
+      "A cash sale has no cashier shift recorded, so its refund cannot be assigned to the original cashier.",
     insufficient_shift_cash:
       "That drawer does not have enough expected cash for this operation.",
     insufficient_cash: "That drawer does not have enough expected cash.",
@@ -509,8 +511,9 @@ export function SalesHistoryPage() {
           restockReturnedGoods: restockDayReturns,
         },
       );
+      const cashShiftCount = result.cashShiftIds.length;
       setNotice(
-        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` Skipped ${result.skippedCount} already processed sale${result.skippedCount === 1 ? "" : "s"}: ${result.skippedTransactions.map((sale) => `${sale.transactionId} (${sale.reason === "PARTIALLY_REFUNDED" ? "partially refunded" : "already fully reversed"})`).join(", ")}${result.skippedCount > result.skippedTransactions.length ? `; showing ${result.skippedTransactions.length}` : ""}.` : ""}`,
+        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} posted to ${cashShiftCount} original cashier shift${cashShiftCount === 1 ? "" : "s"}, and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` Skipped ${result.skippedCount} already processed sale${result.skippedCount === 1 ? "" : "s"}: ${result.skippedTransactions.map((sale) => `${sale.transactionId} (${sale.reason === "PARTIALLY_REFUNDED" ? "partially refunded" : "already fully reversed"})`).join(", ")}${result.skippedCount > result.skippedTransactions.length ? `; showing ${result.skippedTransactions.length}` : ""}.` : ""}`,
       );
       setDayReversalPassword("");
       setDayReversalConfirmation("");
