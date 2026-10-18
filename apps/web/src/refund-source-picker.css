@@ -9,7 +9,7 @@
   padding: 0 5px;
   color: #516960;
   font-size: var(--type-caption);
-  font-weight: 650;
+  font-weight: var(--weight-medium);
 }
 .refund-source-picker .refund-source-choice {
   display: flex;

@@ -104,7 +104,7 @@
 .activity-action-filter legend {
   padding: 0 6px;
   font-size: var(--type-body);
-  font-weight: 650;
+  font-weight: var(--weight-medium);
 }
 .activity-action-filter > p {
   margin: 0 0 12px;
@@ -126,7 +126,7 @@
 }
 .activity-action-tools > span {
   color: var(--green);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 .activity-action-options {
   display: grid;
@@ -226,12 +226,12 @@
   padding: 4px 8px;
   color: #536c62;
   font-size: var(--type-caption);
-  font-weight: 650;
+  font-weight: var(--weight-medium);
 }
 .activity-log-subject {
   margin: 8px 0 0;
   font-size: var(--type-body);
-  font-weight: 550;
+  font-weight: var(--weight-medium);
   line-height: 1.6;
 }
 .activity-log-summary {
@@ -252,7 +252,7 @@
 }
 .activity-log-actor {
   color: #405f53;
-  font-weight: 650;
+  font-weight: var(--weight-medium);
 }
 .activity-event-details {
   margin-top: 12px;
@@ -264,7 +264,7 @@
   padding: 5px 0;
   color: var(--green);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 .activity-event-detail-body {
   padding: 16px;
@@ -293,7 +293,7 @@
 .activity-event-fields dt,
 .activity-nested-details dt {
   color: #536c62;
-  font-weight: 600;
+  font-weight: var(--weight-medium);
 }
 .activity-event-fields dd,
 .activity-nested-details dd {

@@ -329,9 +329,8 @@ function LoginPage() {
             <span /> STORE OPERATIONS PLATFORM
           </div>
           <h1>
-            Good care starts
-            <br />
-            with a <em>clear view.</em>
+            Good care starts with a{" "}
+            <span className="story-accent">clear view.</span>
           </h1>
           <p>
             Sales, stock, and daily operations in one calm workspace built for
