@@ -297,6 +297,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       businessDate,
       canceledCount: 2,
       skippedCount: 0,
+      skippedTransactions: [],
       cashRefundCount: 1,
       qrRefundCount: 1,
       cashShiftId: shift.body.shift.id,
@@ -345,11 +346,78 @@ describe("owner-approved full-sale reversals and cash movements", () => {
         .prepare("SELECT quantity_on_hand FROM products WHERE id = ?")
         .get(product.id),
     ).toEqual({ quantity_on_hand: 5 });
+    const shiftHistory = (await owner.get("/api/shifts/history")).body.shifts;
+    expect(
+      shiftHistory.find(
+        (item: { id: string }) => item.id === shift.body.shift.id,
+      ),
+    ).toMatchObject({
+      status: "OPEN",
+      cashSales: "112.25",
+      qrSales: "112.13",
+      cashRefunds: "112.25",
+      qrRefunds: "112.13",
+      expectedCash: "400.00",
+    });
     const report = (await owner.get(`/api/reports/daily?date=${businessDate}`))
       .body.report;
     expect(report.metrics).toMatchObject({
       cashRefunds: "112.25",
       qrRefunds: "112.13",
+    });
+  });
+
+  it("reports the transaction and reason when day cancellation skips a partial refund", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    await openShift(owner);
+    const csrf = await csrfFor(owner);
+    const sold = await owner
+      .post("/api/sales")
+      .set("x-csrf-token", csrf)
+      .send({
+        benefitType: "REGULAR",
+        items: [{ productId: product.id, quantity: 3 }],
+        paymentMethod: "QR",
+        requestKey: randomUUID(),
+      });
+    expect(sold.status, JSON.stringify(sold.body)).toBe(201);
+    const partial = await postWithCsrf(
+      owner,
+      `/api/sales/${sold.body.sale.transactionId}/reversals`,
+      {
+        ownerPassword,
+        reason: "One item returned before day cancellation",
+        refundMethod: "QR",
+        lines: [
+          {
+            saleLineId: sold.body.sale.lines[0].saleLineId,
+            quantity: 1,
+            restock: true,
+          },
+        ],
+      },
+    );
+    expect(partial.status, JSON.stringify(partial.body)).toBe(201);
+
+    const canceled = await postWithCsrf(owner, "/api/sales/day-reversals", {
+      businessDate: sold.body.sale.businessDate,
+      ownerPassword,
+      reason: "Cancel remaining transactions from this Manila day",
+      restockReturnedGoods: true,
+    });
+
+    expect(canceled.status, JSON.stringify(canceled.body)).toBe(201);
+    expect(canceled.body.result).toMatchObject({
+      canceledCount: 0,
+      skippedCount: 1,
+      skippedTransactions: [
+        {
+          transactionId: sold.body.sale.transactionId,
+          reason: "PARTIALLY_REFUNDED",
+        },
+      ],
     });
   });
 

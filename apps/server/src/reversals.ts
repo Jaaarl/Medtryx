@@ -1961,6 +1961,31 @@ export function registerReversalRoutes(
               "SELECT COUNT(*) AS totalCount FROM sales WHERE business_date = ?",
             )
             .get(parsed.data.businessDate) as { totalCount: number };
+          const skippedSales = db
+            .prepare(
+              `SELECT s.transaction_id,
+                      CASE WHEN (
+                        SELECT COALESCE(SUM(rl.quantity), 0)
+                        FROM sale_reversal_lines rl
+                        JOIN sale_reversals r ON r.id = rl.reversal_id
+                        WHERE r.sale_id = s.id
+                      ) < (
+                        SELECT COALESCE(SUM(sl.quantity), 0)
+                        FROM sale_lines sl WHERE sl.sale_id = s.id
+                      ) THEN 'PARTIALLY_REFUNDED' ELSE 'ALREADY_REVERSED' END
+                        AS skip_reason
+               FROM sales s
+               WHERE s.business_date = ?
+                 AND EXISTS (
+                   SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
+                 )
+               ORDER BY s.created_at, s.transaction_id
+               LIMIT 20`,
+            )
+            .all(parsed.data.businessDate) as Array<{
+            transaction_id: string;
+            skip_reason: "PARTIALLY_REFUNDED" | "ALREADY_REVERSED";
+          }>;
           const sales = db
             .prepare(
               `SELECT s.id, s.transaction_id, s.payment_method
@@ -2069,6 +2094,10 @@ export function registerReversalRoutes(
             businessDate: parsed.data.businessDate,
             canceledCount: sales.length,
             skippedCount: totalCount - sales.length,
+            skippedTransactions: skippedSales.map((sale) => ({
+              transactionId: sale.transaction_id,
+              reason: sale.skip_reason,
+            })),
             cashRefundCount,
             qrRefundCount,
             cashShiftId: cashShift?.id ?? null,

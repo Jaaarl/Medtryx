@@ -104,6 +104,18 @@ export function ShiftHistoryPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadHistory();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadHistory]);
+
   return (
     <section className="page-section reports-page shift-history-page">
       <div className="page-heading">

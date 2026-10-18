@@ -92,6 +92,10 @@ type DayReversalResult = {
   businessDate: string;
   canceledCount: number;
   skippedCount: number;
+  skippedTransactions: Array<{
+    transactionId: string;
+    reason: "PARTIALLY_REFUNDED" | "ALREADY_REVERSED";
+  }>;
   cashRefundCount: number;
   qrRefundCount: number;
   cashShiftId: string | null;
@@ -506,7 +510,7 @@ export function SalesHistoryPage() {
         },
       );
       setNotice(
-        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` ${result.skippedCount} already reversed or partially refunded sale${result.skippedCount === 1 ? " was" : "s were"} skipped.` : ""}`,
+        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` Skipped ${result.skippedCount} already processed sale${result.skippedCount === 1 ? "" : "s"}: ${result.skippedTransactions.map((sale) => `${sale.transactionId} (${sale.reason === "PARTIALLY_REFUNDED" ? "partially refunded" : "already fully reversed"})`).join(", ")}${result.skippedCount > result.skippedTransactions.length ? `; showing ${result.skippedTransactions.length}` : ""}.` : ""}`,
       );
       setDayReversalPassword("");
       setDayReversalConfirmation("");
