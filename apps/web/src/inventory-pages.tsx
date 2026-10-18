@@ -746,6 +746,58 @@ function ProductCsvImportErrors({ issues }: { issues: ProductCsvIssue[] }) {
   );
 }
 
+function CsvFileField({
+  id,
+  label,
+  file,
+  inputRef,
+  disabled,
+  onFileChange,
+}: {
+  id: string;
+  label: string;
+  file: File | null;
+  inputRef: { current: HTMLInputElement | null };
+  disabled: boolean;
+  onFileChange: (file: File | null) => void;
+}) {
+  return (
+    <div className="inventory-field csv-file-field">
+      <label className="csv-file-title" htmlFor={id}>
+        {label}
+      </label>
+      <label
+        className={`csv-file-picker${disabled ? " is-disabled" : ""}`}
+        htmlFor={id}
+      >
+        <input
+          ref={inputRef}
+          id={id}
+          className="csv-file-input"
+          type="file"
+          accept=".csv,text/csv"
+          required
+          disabled={disabled}
+          aria-label={label}
+          aria-describedby={`${id}-help`}
+          onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+        />
+        <span className="csv-file-trigger" aria-hidden="true">
+          {file ? "Change file" : "Choose CSV"}
+        </span>
+        <span className="csv-file-details">
+          <span className="csv-file-name" role="status" aria-live="polite">
+            {file?.name ?? "No file selected"}
+          </span>
+          <span className="csv-file-help" id={`${id}-help`}>
+            CSV file, up to 200 KB
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
 function productCsvErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError))
     return "The CSV import could not be completed. No products were imported.";
@@ -829,22 +881,24 @@ function ProductCsvImportPanel({
             added; up to 500 rows and 200 KB per file. Replace or remove the
             downloaded sample row before importing.
           </p>
-          <a
-            className="text-action csv-template-download"
-            href="/api/products/import-csv/template"
-            download
-          >
-            <ArrowDownToLine size={14} />
-            Download new products CSV sample
-          </a>
-          <a
-            className="text-action csv-template-download"
-            href="/api/products/export-csv"
-            download="products.csv"
-          >
-            <ArrowDownToLine size={14} />
-            Export product data CSV
-          </a>
+          <div className="csv-template-actions">
+            <a
+              className="text-action csv-template-download"
+              href="/api/products/import-csv/template"
+              download
+            >
+              <ArrowDownToLine size={14} />
+              Download new products CSV sample
+            </a>
+            <a
+              className="text-action csv-template-download"
+              href="/api/products/export-csv"
+              download="products.csv"
+            >
+              <ArrowDownToLine size={14} />
+              Export product data CSV
+            </a>
+          </div>
         </div>
       </div>
       {rowErrors.length ? (
@@ -863,22 +917,18 @@ function ProductCsvImportPanel({
         className="csv-import-form"
         onSubmit={(event) => void importCsv(event)}
       >
-        <Field id="product-csv-file" label="New products CSV file">
-          <input
-            ref={inputRef}
-            id="product-csv-file"
-            className="text-input"
-            type="file"
-            accept=".csv,text/csv"
-            required
-            disabled={saving}
-            onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null);
-              setError("");
-              setRowErrors([]);
-            }}
-          />
-        </Field>
+        <CsvFileField
+          id="product-csv-file"
+          label="New products CSV file"
+          file={file}
+          inputRef={inputRef}
+          disabled={saving}
+          onFileChange={(nextFile) => {
+            setFile(nextFile);
+            setError("");
+            setRowErrors([]);
+          }}
+        />
         <button
           className="button button-secondary"
           type="submit"
@@ -988,18 +1038,14 @@ function ProductCsvUpdatePanel({
         className="csv-import-form"
         onSubmit={(event) => void updateCsv(event)}
       >
-        <Field id="product-update-csv-file" label="Product update CSV file">
-          <input
-            ref={inputRef}
-            id="product-update-csv-file"
-            className="text-input"
-            type="file"
-            accept=".csv,text/csv"
-            required
-            disabled={saving}
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-        </Field>
+        <CsvFileField
+          id="product-update-csv-file"
+          label="Product update CSV file"
+          file={file}
+          inputRef={inputRef}
+          disabled={saving}
+          onFileChange={setFile}
+        />
         <button
           className="button button-secondary"
           type="submit"
@@ -1090,14 +1136,16 @@ function StockCsvImportPanel({
             to 500 rows and 200 KB per file. Replace or remove the downloaded
             sample row before importing.
           </p>
-          <a
-            className="text-action csv-template-download"
-            href="/api/stock/receipts/import-csv/template"
-            download
-          >
-            <ArrowDownToLine size={14} />
-            Download existing stock CSV sample
-          </a>
+          <div className="csv-template-actions">
+            <a
+              className="text-action csv-template-download"
+              href="/api/stock/receipts/import-csv/template"
+              download
+            >
+              <ArrowDownToLine size={14} />
+              Download existing stock CSV sample
+            </a>
+          </div>
         </div>
       </div>
       {error && (
@@ -1114,18 +1162,14 @@ function StockCsvImportPanel({
         className="csv-import-form"
         onSubmit={(event) => void importCsv(event)}
       >
-        <Field id="stock-csv-file" label="Existing products stock CSV file">
-          <input
-            ref={inputRef}
-            id="stock-csv-file"
-            className="text-input"
-            type="file"
-            accept=".csv,text/csv"
-            required
-            disabled={saving}
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-        </Field>
+        <CsvFileField
+          id="stock-csv-file"
+          label="Existing products stock CSV file"
+          file={file}
+          inputRef={inputRef}
+          disabled={saving}
+          onFileChange={setFile}
+        />
         <button
           className="button button-secondary"
           type="submit"
