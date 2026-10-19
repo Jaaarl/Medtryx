@@ -117,6 +117,59 @@ afterAll(() => {
 });
 
 describe("owner catalog and stock operations", () => {
+  it("filters stock history actions before applying the selected record limit", async () => {
+    const owner = await signIn("owner.inventory@example.test", ownerPassword);
+    const created = await createOpeningProduct(owner);
+    const insertEvent = db.prepare(
+      `INSERT INTO stock_events
+         (id, product_id, event_type, quantity_delta, unit_cost_centavos,
+          inventory_value_delta_centavos, actor_user_id, created_at)
+       VALUES (?, ?, ?, ?, 4000, ?, ?, ?)`,
+    );
+    const insertEvents = db.transaction(() => {
+      for (let index = 1; index <= 501; index += 1) {
+        const isSale = index <= 251;
+        insertEvent.run(
+          randomUUID(),
+          created.body.product.id as string,
+          isSale ? "SALE" : "RECEIPT",
+          isSale ? -1 : 1,
+          isSale ? -4000 : 4000,
+          ownerId,
+          new Date(Date.now() + index).toISOString(),
+        );
+      }
+    });
+    insertEvents();
+
+    const defaultLimit = await owner.get(
+      `/api/stock/events?productId=${created.body.product.id}`,
+    );
+    const limited = await owner.get(
+      `/api/stock/events?productId=${created.body.product.id}&limit=500`,
+    );
+    const unlimited = await owner.get(
+      `/api/stock/events?productId=${created.body.product.id}&limit=all`,
+    );
+    const sales = await owner.get(
+      `/api/stock/events?productId=${created.body.product.id}&eventType=SALE&limit=300`,
+    );
+
+    expect(defaultLimit.status).toBe(200);
+    expect(defaultLimit.body.events).toHaveLength(100);
+    expect(limited.status).toBe(200);
+    expect(limited.body.events).toHaveLength(500);
+    expect(unlimited.status).toBe(200);
+    expect(unlimited.body.events).toHaveLength(502);
+    expect(sales.status).toBe(200);
+    expect(sales.body.events).toHaveLength(251);
+    expect(
+      sales.body.events.every(
+        (event: { type: string }) => event.type === "SALE",
+      ),
+    ).toBe(true);
+  });
+
   it("returns products beyond the first 500 for duplicate matching", async () => {
     const owner = await signIn("owner.inventory@example.test", ownerPassword);
     const now = new Date().toISOString();

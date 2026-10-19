@@ -546,6 +546,16 @@ type StockEventRow = {
   actor_email: string | null;
 };
 
+const STOCK_EVENT_TYPES = [
+  "OPENING",
+  "RECEIPT",
+  "SALE",
+  "ADJUSTMENT",
+  "WRITE_OFF",
+  "REVERSAL",
+  "COST_CORRECTION",
+] as const;
+
 class InventoryError extends Error {
   constructor(
     readonly status: number,
@@ -992,11 +1002,16 @@ function writeStockEvent(
 function getStockEvents(
   db: Database.Database,
   productId?: string,
-  limit = 100,
+  limit: number | null = 100,
+  eventType?: (typeof STOCK_EVENT_TYPES)[number],
 ): StockEventRow[] {
   const stockEventFilter = productId ? "WHERE e.product_id = ?" : "";
   const costCorrectionFilter = productId ? "WHERE c.product_id = ?" : "";
-  const args = productId ? [productId, productId, limit] : [limit];
+  const args: (number | string)[] = productId ? [productId, productId] : [];
+  const eventTypeFilter = eventType ? " WHERE event_type = ?" : "";
+  if (eventType) args.push(eventType);
+  const limitClause = limit === null ? "" : " LIMIT ?";
+  if (limit !== null) args.push(limit);
   return db
     .prepare(
       `SELECT * FROM (
@@ -1022,7 +1037,7 @@ function getStockEvents(
          FROM stock_cost_corrections c JOIN products p ON p.id = c.product_id
          LEFT JOIN users u ON u.id = c.actor_user_id
          ${costCorrectionFilter}
-       ) ORDER BY created_at DESC, id DESC LIMIT ?`,
+       )${eventTypeFilter} ORDER BY created_at DESC, id DESC${limitClause}`,
     )
     .all(...args) as StockEventRow[];
 }
@@ -2898,19 +2913,22 @@ export function registerInventoryRoutes(
 
   router.get("/stock/events", requireAuth, requireOwner, (req, res) => {
     const productId = req.query.productId;
-    const limitParsed = z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(200)
+    const limitParsed = z
+      .union([z.literal("all"), z.coerce.number().int().min(1).max(500)])
       .safeParse(req.query.limit ?? "100");
+    const eventTypeParsed = z
+      .enum(STOCK_EVENT_TYPES)
+      .optional()
+      .safeParse(req.query.eventType);
     if (!limitParsed.success) return bodyValidation(res);
+    if (!eventTypeParsed.success) return bodyValidation(res);
     if (productId !== undefined && !z.uuid().safeParse(productId).success)
       return bodyValidation(res);
     const events = getStockEvents(
       db,
       productId as string | undefined,
-      limitParsed.data,
+      limitParsed.data === "all" ? null : limitParsed.data,
+      eventTypeParsed.data,
     );
     res.json({ events: events.map(presentStockEvent) });
   });

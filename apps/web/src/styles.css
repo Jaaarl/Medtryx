@@ -2744,6 +2744,22 @@ a {
   margin-top: 4px;
   max-width: 760px;
 }
+.stock-history-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.stock-history-controls .inventory-field:first-child {
+  width: 190px;
+}
+.stock-history-controls .inventory-field:nth-child(2) {
+  width: 130px;
+}
+.stock-history-controls .text-input {
+  height: 36px;
+}
 .stock-history-card .count-chip {
   font-size: 11px;
   padding: 8px 12px;
@@ -5708,6 +5724,7 @@ a {
   }
   .stock-history-card .card-heading {
     align-items: flex-start;
+    flex-direction: column;
     gap: 12px;
     padding: 16px 14px;
   }
@@ -5716,6 +5733,18 @@ a {
   }
   .stock-history-card .card-heading p {
     font-size: 11px;
+  }
+  .stock-history-controls {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .stock-history-controls .inventory-field:first-child,
+  .stock-history-controls .inventory-field:nth-child(2) {
+    flex: 1 1 135px;
+    width: auto;
+  }
+  .stock-history-controls .count-chip {
+    align-self: center;
   }
   .stock-horizon-form {
     gap: 12px;

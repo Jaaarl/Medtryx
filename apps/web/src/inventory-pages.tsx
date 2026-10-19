@@ -223,6 +223,37 @@ type StockEvent = {
   createdAt: string;
 };
 
+const STOCK_HISTORY_ACTION_FILTERS = [
+  { value: "", label: "All actions" },
+  { value: "OPENING", label: "Opening" },
+  { value: "RECEIPT", label: "Receipt" },
+  { value: "SALE", label: "Sale" },
+  { value: "ADJUSTMENT", label: "Adjustment" },
+  { value: "WRITE_OFF", label: "Write-off" },
+  { value: "REVERSAL", label: "Reversal" },
+  { value: "COST_CORRECTION", label: "Acquisition cost correction" },
+] as const;
+
+const STOCK_HISTORY_LIMIT_OPTIONS = [
+  { value: "100", label: "100 records" },
+  { value: "200", label: "200 records" },
+  { value: "300", label: "300 records" },
+  { value: "400", label: "400 records" },
+  { value: "500", label: "500 records" },
+  { value: "all", label: "No limit" },
+] as const;
+
+function stockEventsPath(
+  productId: string,
+  limit: string,
+  eventType: string,
+): string {
+  const params = new URLSearchParams({ limit });
+  if (productId) params.set("productId", productId);
+  if (eventType) params.set("eventType", eventType);
+  return `/stock/events?${params.toString()}`;
+}
+
 type SortDirection = "asc" | "desc";
 const PRODUCTS_PER_PAGE = 10;
 const STOCK_PRODUCTS_PER_PAGE = 6;
@@ -2532,6 +2563,8 @@ export function StockPage() {
   const [warningDays, setWarningDays] = useState(30);
   const [warningDaysInput, setWarningDaysInput] = useState("30");
   const [selectedId, setSelectedId] = useState("");
+  const [stockHistoryLimit, setStockHistoryLimit] = useState("100");
+  const [stockHistoryEventType, setStockHistoryEventType] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [stockPage, setStockPage] = useState(1);
   const [stockSort, setStockSort] = useState<{
@@ -2702,9 +2735,7 @@ export function StockPage() {
     if (!selectedId && result.products[0]) setSelectedId(result.products[0].id);
   }
   async function refreshEvents(id = selectedId) {
-    const path = id
-      ? `/stock/events?productId=${encodeURIComponent(id)}`
-      : "/stock/events";
+    const path = stockEventsPath(id, stockHistoryLimit, stockHistoryEventType);
     const result = await api.get<{ events: StockEvent[] }>(path);
     setEvents(result.events);
   }
@@ -2728,7 +2759,9 @@ export function StockPage() {
     let active = true;
     void Promise.all([
       api.get<{ products: Product[] }>("/products"),
-      api.get<{ events: StockEvent[] }>("/stock/events"),
+      api.get<{ events: StockEvent[] }>(
+        stockEventsPath("", stockHistoryLimit, stockHistoryEventType),
+      ),
       api.get<{ warningDays: number; lots: InventoryLot[] }>("/stock/lots"),
     ])
       .then(([productData, eventData, lotData]) => {
@@ -2754,13 +2787,15 @@ export function StockPage() {
     return () => {
       active = false;
     };
-  }, [requestedProductId]);
+  }, [requestedProductId, stockHistoryLimit, stockHistoryEventType]);
   useEffect(() => {
     if (loading) return;
     let active = true;
-    const path = selectedId
-      ? `/stock/events?productId=${encodeURIComponent(selectedId)}`
-      : "/stock/events";
+    const path = stockEventsPath(
+      selectedId,
+      stockHistoryLimit,
+      stockHistoryEventType,
+    );
     void api
       .get<{ events: StockEvent[] }>(path)
       .then((result) => {
@@ -2772,8 +2807,8 @@ export function StockPage() {
     return () => {
       active = false;
     };
-    // The selected product controls the history query.
-  }, [selectedId, loading]);
+    // The product, action filter, and record limit control this query.
+  }, [selectedId, loading, stockHistoryLimit, stockHistoryEventType]);
 
   async function receive(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4009,7 +4044,41 @@ export function StockPage() {
                 : "Recent events across inventory."}
             </p>
           </div>
-          <span className="count-chip">{events.length} events</span>
+          <div className="stock-history-controls">
+            <Field id="stock-history-action" label="Action">
+              <select
+                id="stock-history-action"
+                className="text-input select-input"
+                value={stockHistoryEventType}
+                onChange={(event) =>
+                  setStockHistoryEventType(event.target.value)
+                }
+              >
+                {STOCK_HISTORY_ACTION_FILTERS.map((action) => (
+                  <option key={action.value} value={action.value}>
+                    {action.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id="stock-history-limit" label="Records">
+              <select
+                id="stock-history-limit"
+                className="text-input select-input"
+                value={stockHistoryLimit}
+                onChange={(event) => setStockHistoryLimit(event.target.value)}
+              >
+                {STOCK_HISTORY_LIMIT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <span className="count-chip" aria-live="polite">
+              {events.length} events
+            </span>
+          </div>
         </div>
         <div className="inventory-table-wrap">
           <table className="inventory-table">
