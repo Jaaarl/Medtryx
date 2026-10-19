@@ -46,7 +46,7 @@ function assistantErrorMessage(error: unknown): string {
     error.code === "mixroute_request_failed"
   )
     return "MixRoute could not complete the request. Check the internet connection and MixRoute account, then try again.";
-  return "The assistant could not answer that. Please try again or ask a developer to verify the guide.";
+  return "The assistant could not answer that. Please try again or ask a developer to verify the current workflow.";
 }
 
 export function OwnerAssistantPage() {
@@ -146,9 +146,10 @@ export function OwnerAssistantPage() {
       <div className="assistant-privacy-note" role="note">
         <ShieldCheck size={17} />
         <span>
-          Your question and relevant owner guide sections are sent to MixRoute.
-          Do not enter customer identifiers, passwords, API keys, or other
-          secrets.
+          Your question, recent chat turns, and relevant owner guide sections
+          are sent to MixRoute. If the guide cannot answer, selected source-code
+          excerpts may also be sent. Do not enter customer identifiers,
+          passwords, API keys, or other secrets.
         </span>
       </div>
 
@@ -159,7 +160,7 @@ export function OwnerAssistantPage() {
           </div>
           <div>
             <strong>Medtryx owner assistant</strong>
-            <span>Answers from the owner guide</span>
+            <span>Guide first; source code checked if needed</span>
           </div>
           <button
             className="assistant-clear-button"
@@ -183,8 +184,8 @@ export function OwnerAssistantPage() {
               </div>
               <h2>What would you like to know?</h2>
               <p>
-                I can explain owner workflows and current system limits using
-                the Medtryx owner guide.
+                I can explain owner workflows from the guide and check selected
+                source files if the guide does not cover your question.
               </p>
               <div className="assistant-suggestions">
                 {suggestions.map((suggestion) => (
@@ -219,7 +220,7 @@ export function OwnerAssistantPage() {
                   <p>{message.content}</p>
                   {message.sources && message.sources.length > 0 && (
                     <div className="assistant-sources">
-                      <span>GUIDE SECTIONS</span>
+                      <span>SOURCES</span>
                       {message.sources.map((source) => (
                         <span
                           className="assistant-source-chip"
@@ -241,7 +242,7 @@ export function OwnerAssistantPage() {
                 <i />
                 <i />
               </span>
-              Checking the owner guide…
+              Checking the owner guide and source files if needed…
             </div>
           )}
           {error && (

@@ -20,6 +20,7 @@ This guide explains the owner and cashier workflows currently available in Medtr
 - [Backups and restore](#backups-and-restore)
 - [Local installation and upgrades](#local-installation-and-upgrades)
 - [Owner help chatbot: answers, limits, and privacy](#owner-help-chatbot-answers-limits-and-privacy)
+- [Page-by-page manual](#page-by-page-manual)
 - [Common problems](#common-problems)
 
 ## What Medtryx does
@@ -104,13 +105,13 @@ The BNPC policy is versioned in Settings so a sale can keep a record of the poli
 
 When an approved policy is enabled, the cashier must choose the appropriate benefit type and apply it only to eligible lines. Follow the store's checklist to inspect the relevant ID, booklet, authorization, and other required documents. Record only the data requested by the application. Medtryx cannot query purchases or discounts from other stores or online channels; a locally displayed remaining allowance cannot guarantee a customer's total use across channels. If required evidence is unavailable or uncertain, do not apply the benefit and follow the owner's escalation procedure.
 
-Review the normal price, promotion, benefit calculation, tax, and final total in the server preview. The app records the policy and calculation used. An owner reversal offsets the local weekly use against the original week without altering the original sale. Reports do not expose plaintext customer ID values; ordinary CSV exports contain aggregate benefit totals. Protect customer identity and never paste it into Owner help.
+Review the normal price, promotion, benefit calculation, tax, and final total in the server preview. The app records the policy and calculation used. An owner reversal offsets the local weekly use against the original week without altering the original sale. The owner Reports page displays customer names and ID numbers in its benefit transaction list, and access to that list is audited. The report CSV contains aggregate benefit totals rather than customer identifiers. Protect customer identity and never paste it into Owner help.
 
 ## Sale history, refunds, and reversals
 
-Owners can search and inspect saved sales in sales history. Completed sale records are immutable. To correct an eligible completed sale, an owner uses the linked full-reversal workflow instead of editing or deleting the original sale. The owner must re-enter their current password, provide a reason, and choose for each line whether returned stock is sellable and should be restored or should be written off. Inspect returned packages before deciding to restock them.
+Owners can search and inspect saved sales in sales history. Completed sale records are immutable. To correct an eligible completed sale, an owner uses the linked full-reversal or partial-refund workflow instead of editing or deleting the original sale. The owner must re-enter their current password, provide a reason, choose the refund method, and decide for each refunded line whether returned stock is sellable and should be restored or should be written off. Inspect returned packages before deciding to restock them. A sale can have one refund record, so review the quantities and method before approval.
 
-A cash refund requires an open shift and enough expected cash in the drawer. QR refunds do not remove physical cash, but the owner should still follow the relevant payment provider's refund procedure separately. A reversal creates linked records and keeps the original sale and its calculation for audit history. If the sale is not eligible for reversal or the reason/stock condition is unclear, contact the owner or developer before taking action.
+A cash refund must be assigned to an available cash shift. A refund assigned to a closed original shift requires owner approval; expected cash can become negative after a refund, so count the actual drawer and reconcile it separately. QR refunds do not remove physical cash, but the owner should still follow the relevant payment provider's refund procedure separately. A reversal creates linked records and keeps the original sale and its calculation for audit history. If the sale is not eligible for reversal or the reason/stock condition is unclear, contact the owner or developer before taking action.
 
 ## Reports, daily sales, and CSV exports
 
@@ -150,13 +151,129 @@ For current host requirements, environment variables, migrations, Caddy/HTTPS se
 
 ## Owner help chatbot: answers, limits, and privacy
 
-The owner-only **Owner help** chatbot answers questions about Medtryx using relevant sections of this guide. It supports DeepSeek V4 Flash 0731 as the default model, Qwen 3.6 Flash, and Gemini 3.5 Flash-Lite through MixRoute. The selected guide sections are included in the answer request so the chatbot can cite the relevant topic. If it cannot find a reliable answer here, it should say so and direct the owner to the appropriate page or a developer.
+The owner-only **Owner help** chatbot answers questions about Medtryx using relevant sections of this guide. It supports DeepSeek V4 Flash 0731 as the default model, Qwen 3.6 Flash, and Gemini 3.5 Flash-Lite through MixRoute. The selected guide sections are included in the answer request so the chatbot can cite the relevant topic. If MixRoute determines that the guide does not contain enough detail, the Medtryx server performs a read-only search of selected application source files and sends a small set of matching excerpts to MixRoute. Code excerpts are cited with their file paths and line numbers. If neither source supports an answer, the chatbot should say it cannot confirm and direct the owner to a developer.
 
-The current chatbot does not search the source code, read live store records, query the database, run shell commands, execute code, or take actions in Medtryx. It cannot change products, stock, sales, settings, files, or code. It has no app tools for those operations. Chat messages remain in the current browser page state and are not saved by the Medtryx application.
+The code search is restricted to application source under `apps/web/src`, `apps/server/src`, `packages/shared/src`, and SQL migrations under `database/migrations`. Automated test files are excluded. It does not search `.env` files, databases, backups, dependencies, generated files, or build output. The chatbot does not query the live database, inspect store records, run shell commands, execute the source code, or take actions in Medtryx. It cannot change products, stock, sales, settings, files, or code. Chat messages remain in the current browser page state and are not saved by the Medtryx application.
 
-To answer, the Medtryx server sends the owner's question, recent chat turns, and selected sections of this guide to MixRoute using the configured `MIXROUTE_API_KEY`. Do not enter customer names or IDs, passwords, API keys, encryption keys, receipt images, private supplier information, or other secrets. Choose a model according to the store's approved provider/privacy requirements. The chatbot gives workflow guidance, not medical, legal, tax, accounting, or policy approval.
+The fallback needs those source directories to be present on the local server. If a deployment contains only compiled build output, the guide still works, but source lookup may return no matching excerpts.
+
+To answer, the Medtryx server sends the owner's question, recent chat turns, and selected sections of this guide to MixRoute using the configured `MIXROUTE_API_KEY`. If the guide is insufficient, the server also sends the selected source-code excerpts. Do not enter customer names or IDs, passwords, API keys, encryption keys, receipt images, private supplier information, or other secrets. Choose a model according to the store's approved provider/privacy requirements. The chatbot gives workflow guidance, not medical, legal, tax, accounting, or policy approval.
 
 If a workflow changes, update this guide with the implemented behavior so chatbot answers stay current. If the guide does not cover a question, verify it with the relevant page or developer rather than treating a guess as fact.
+
+## Page-by-page manual
+
+Use the Medtryx left navigation to open a page. The sidebar can be collapsed on desktop or opened from the menu button on a small screen. The selected page appears in the top breadcrumb. Navigation items are filtered by role; owner pages are hidden from cashiers and are also protected by the server. Use **Log out** when finished. The root URL opens **Checkout**. `/ledger` redirects to **Journal**, and `/stock/checkout-overrides` opens the corresponding section on **Stock**.
+
+### Sign in (`/login`)
+
+Sign in with the email address or username and password assigned to your individual staff account. There is no public registration form. Too many failed sign-in attempts may temporarily be rate-limited. The page shows a generic error for an incorrect identifier/password or inactive account. If a password was just changed, sign in again with the new password. Ask an administrator or developer about account recovery; the chatbot cannot reset credentials.
+
+### Checkout (`/checkout`)
+
+Use **Checkout** for a sale being made now. The cashier needs an open shift associated with the same signed-in cashier account. The app has one store-wide open shift, so a different cashier must wait until that drawer is counted and closed before opening a shift under their own account.
+
+Search by product name, SKU, or barcode. Add an active product and choose its quantity, or select an active bundle offer. Change quantities or remove cart lines before saving. The cart is held in the current browser until the sale is confirmed. The server preview is authoritative: review each price, tax, discount, bundle allocation, stock warning, lot allocation, and payable amount before finalizing.
+
+When configured for a lot-tracked product, verify the physical batch labels and confirm the assigned lot quantities. If the owner enabled checkout stock-count overrides, a shortage can be accepted only with the required physical count evidence; the shortage is recorded with the sale. This setting does not override expiry or quarantine restrictions. If override is off, checkout must stay within recorded saleable stock.
+
+Choose the customer benefit type and apply a benefit only to eligible lines under the store's approved procedure. Enter protected customer details only in the designated checkout fields, never in chat. Choose cash or QR-declared payment. For cash, enter the amount received and review change. QR is only a recorded payment declaration; verify the funds separately. Finish the sale once and wait for confirmation. If the page stalls, check **Daily sales** or ask the owner to check **Sales history** before trying again.
+
+### Manual checkout (`/manual-checkout`)
+
+Use **Manual checkout** to enter a sale that was made during a system outage. Enter the original Manila business date; reports use that date, while inventory updates when the saved sale is entered. The page still applies the current approved tax policy and current stock rules. It does not use checkout stock-count overrides. Follow the owner's outage procedure and enter only a sale supported by the store's original records. Manual checkout does not belong to an open cash-register shift, so it does not update a drawer's expected cash.
+
+### Daily sales (`/daily-sales`)
+
+Choose a Manila business date and refresh to review that day's sales and related cash activity. Summary cards show transaction count, total sales, cash and QR amounts, expenses, stock purchase/COD payments, and payer totals. The page includes shifts with sales, product totals, and transaction details. Use **Group products by item** to switch between aggregated product quantities and transaction-by-transaction detail. Owners see store totals; cashiers see their own allowed shift and product information. Fully reversed sales are excluded from daily totals and product quantities. This page is for review; it does not edit or export the sales records.
+
+### Journal (`/journal`, legacy `/ledger`)
+
+The owner-only **Journal** copies daily sales summaries into monthly or yearly views. Select a month or year and refresh. A row is red until it has been reviewed and saved. After a Manila business day ends, select **Edit** to correct that journal row's month/date, invoice number range, senior discount, non-VAT sales, VATable sales, total VAT, gross sales, or net sales. Press **Save** to record the journal copy or **Cancel** to discard the draft. A journal edit changes only the journal entry; it does not change a sale, inventory, or receipt.
+
+### Payments & Expenses (`/expenses`)
+
+Choose a history date to review existing entries. New entries are recorded for today's Manila business date. Categories are **Lunch**, **Stock purchase / COD**, **Delivery fee only**, and **Other**. Other requires a description. Stock purchase entries can include product amount, optional separate delivery fee, supplier, and invoice/receipt reference; the page displays the combined payment total. Delivery-only entries can be marked as already included in product unit cost.
+
+For stock purchase and delivery categories, select whether the cashier or owner paid. A cashier-paid payment requires an open drawer and changes its expected cash; an owner-paid entry does not change the drawer. Stock purchase/COD payments are excluded from operating expenses because stock cost is recognized through inventory/COGS. Recording the payment does not receive stock or change unit cost. Use **Stock** or **Receipt receiving** separately. Review the history table's payment amount, operating-expense amount, payer, recorded time, and recorder.
+
+### My account (`/account`)
+
+This page shows the signed-in email and role and lets each user change their own password. Enter the current password, a new password of at least 8 characters, and the same value again to confirm. A successful change signs out all active sessions for that account; sign in again with the new password. Owners cannot see another user's password here.
+
+### Products (`/products`)
+
+The owner-only catalog searches product name, SKU, or barcode. Sort a column by selecting its header, use **Show or hide columns** to adjust the table, and use pagination to view additional rows. Cost, stock value, price spread, and gross-profit estimates are owner-only catalog information; verify their calculation notes before using them for accounting.
+
+Use **Add a product** to create a SKU and set its name, unit, selling price, reorder level, tax class, Generic/Branded/N/A type, SC/PWD eligibility, BNPC eligibility/category, and lot tracking. A zero-rated tax class is unavailable unless the approved tax policy allows it. Starting stock can be entered with its actual unit cost and, for tracked products, the opening lot, expiry, and supplier/reference information. If Medtryx suggests a possible duplicate, confirm whether this is an existing item; selecting an existing product receives stock against that SKU instead of creating a duplicate. Use **Edit** to update catalog details. Deactivate a product to remove it from normal checkout while preserving history; use delete only when the app says the product is eligible, because its history is retained and some records prevent deletion.
+
+The page has three CSV tools. **Import new products from CSV** creates products with opening stock; **Update products from CSV** updates only columns supplied for matching SKUs; **Export product data CSV** downloads catalog details. Use each downloadable sample as a template. Imports are validated as a whole before saving, accept at most 500 rows and 200 KB, and report row errors. Product update CSV cannot change stock, cost, or gross-profit estimates; use **Stock** for inventory movements.
+
+### Stock (`/stock`)
+
+The owner-only **Current stock** table searches by name, SKU, or barcode and shows quantity, saleable/unallocated quantities when lots apply, reorder status, costs, and value. Select a product to use the action panels. **Receive stock** adds an actual receipt quantity and unit cost, supplier/reference, and required batch/expiry details for tracked products. Existing-SKU stock CSV import accepts up to 500 rows and 200 KB and validates the complete file before it changes stock.
+
+Use **Correct acquisition cost** only to correct the weighted-average unit cost for stock still on hand. Enter the correct cost and a reason; past receipts and completed-sale COGS stay unchanged. **Adjustment or write-off** records a signed quantity change with a reason. Increases require a unit cost. Removing tracked stock requires selecting the actual lot; adding tracked stock requires actual batch and expiry details. Review **Stock history** to find receipts, adjustments, write-offs, sales, reversals, and actors.
+
+The **Lots and expiry** table searches product/SKU/batch, shows physical and saleable counts, expiry alerts, unit cost, selling price, and status. Set the near-expiry warning horizon in days. Use **Quarantine** or **Release** only with a reason. Use **Edit lot** to correct physical quantity, cost, selling price, or expiry with a reason; these edits affect the applicable current lot/product balances. A lot's expiry is its last saleable day; an expired or quarantined quantity is not saleable. The `#checkout-count-overrides` section shows checkout stock-count override history. Verify a mismatch physically and keep unsupported legacy quantity unallocated instead of inventing a batch.
+
+### Receipt receiving (`/receipt-receiving`)
+
+The owner-only page uses an upload, review, and import workflow. Upload supplier receipt pages as supported images or PDF. MixRoute extracts draft line suggestions; extraction may miss, merge, or misread values. Review the supplier, SKU/product match, package name, quantity, unit cost, conversion to the product's selling unit, lot code, and expiry against the original receipt and package labels. Remove irrelevant lines and fix incomplete details. For a new product, enter and review its catalog/POS fields. Approve package conversions only when package contents and unit conversion are verified. Review the prepared CSV and import only when all lines are accurate. The import records stock; uploading or extracting alone does not. The uploaded pages are sent to MixRoute and are not retained by this workflow.
+
+### Bundles (`/bundles`)
+
+The owner-only **Bundle offers** page creates and maintains promotional offers. Enter a unique code, name, active start/end dates, component products and quantities, optional per-sale limit, and final promotional price. Price suggestions can be prepared using a percentage or fixed reduction, but the owner must review and explicitly approve the final price before saving. Editing makes a new immutable offer version; earlier sales keep their original offer snapshot. Activate/deactivate an offer when its availability changes. The offer is not a product with stock or cost of its own. Checkout consumes the component products and applies the offer subject to the saved promotion and statutory-discount rules.
+
+### Sales history (`/sales`)
+
+The owner-only **Sales history** page lists recent internal transactions or sales for a selected Manila date. Choose the record limit, use the day pagination controls, and select **Review** to see the saved sale, line prices, discounts, cost snapshots, lots, bundle version, and past changes. Original sale records remain intact.
+
+For an eligible sale, choose a full refund or enter partial refund quantities per line; zero means the product stays sold. If a partial return comes from a line allocated across multiple lots, identify quantities returned from each original lot. Review the prorated refund total and rounding. Choose the actual refund method, provide a reason, reauthenticate with the current owner password, and decide whether each returned item is saleable/restocked or written off. A cash refund is assigned to a selected eligible cash drawer; closed-shift refunds need owner approval and can change that shift's expected cash/variance. QR refunds do not change physical cash, but must still be processed through the payment provider separately. Each sale can have one refund record, so confirm the returned quantities and method carefully.
+
+When viewing a day, the page also allows an owner to cancel all eligible sales for that day after typing the date, entering a reason/password, and choosing whether all returned items are saleable. It skips sales already reversed or partially refunded. The page lists pending non-zero cash variances; enter the current owner password and a decision note, then approve or reject each variance. **Open cash drawers** lets the owner select a drawer and record a cash-in/out amount with a reason. Recheck the physical cash and the selected drawer before saving.
+
+### Reports (`/reports`)
+
+The owner-only **Sales reports** page uses an inclusive Manila start/end date range with Today, Month to date, Year to date, Refresh, and Export CSV controls. The report includes sales/tax/discount and reversal metrics, daily summaries, expense and stock-purchase payments, transaction corrections, benefit transactions, bundle promotion snapshots, and current low-stock products. Current inventory count/value and low-stock figures are the current balances, even when the selected sales period is in the past.
+
+The benefit section displays Senior Citizen/PWD customer names and ID numbers to owners; access to that list is recorded in the audit history. Keep the screen private and limit exports/sharing. The report CSV is designed not to include customer identifiers and uses safe spreadsheet values. Reports are operational summaries, not an official invoice, tax filing, or accounting determination. Check the selected dates and the report notes before comparing totals.
+
+### Product movement (`/product-movement`)
+
+The owner-only **Product movement** page summarizes movement over a selected Manila date range. Use the start/end dates and refresh, then search by product name or SKU and filter **All**, **Fast**, or **Slow** products. The results show sold/returned/net units, average units moved per day, transaction count, last sale date, and current on-hand quantity. “Fast” and “Slow” are the app's classifications for the selected period; use the underlying counts and source records when making purchasing decisions. This view does not place supplier orders or change stock.
+
+### Shift history (`/shifts`)
+
+The owner-only **Shift history** page lists newest shifts first and can load older pages. It shows open/closed state, opening and closing users/times, opening cash, cash and QR sales/refunds, cash-in/out, expected cash, actual count, variance, and cashier reason. Use **Refresh** after a drawer action. QR amounts are visible but excluded from physical expected cash. Compare the record with the actual drawer count and approved reconciliation before resolving a variance.
+
+### Activity log (`/activity-log`)
+
+The owner-only **Activity log** provides an audit view, not an edit form. Choose Today, 7 days, 30 days, or All time; search a product, SKU, transaction, user, or reason; set a Manila date range; filter by area, user, and one or more actions; then select **Apply filters**. Leaving action boxes unchecked includes all actions. Use **Clear filters**, **Refresh**, and pagination to review results newest first. This log contains recorded events only; it is not a replacement for supplier receipts, sales documents, or physical counts.
+
+### Backups (`/backups`)
+
+The owner-only **Backups and restore** page sets the store name/identity that appears in backup manifests and reports backup readiness: environment, encryption key, primary/secondary paths, device separation, and latest automatic backup. Once both configured locations are ready, select **Create backup now** for a verified copy and refresh the status to inspect the result. Check both primary and secondary copies; do not treat a package as valid if its badge says verification failed.
+
+To restore, select a verified package and copy, confirm the displayed store name, enter the current owner password, and select **Restore and sign out**. The server makes a verified safety backup of current data first, then replaces catalog, sales, shifts, settings, and audit history and revokes all staff sessions. Confirm that the package belongs to this store and rehearse on a separate copy before restoring live data. Backup packages are unencrypted and contain the customer data encryption key, so keep them in restricted locations.
+
+### Settings (`/settings`)
+
+The owner-only **Settings** page has several separate panels. In **Staff accounts**, create an individual owner or cashier account with email, username, temporary password, and role; deactivate/reactivate existing users when access changes. A username may contain letters, numbers, periods, underscores, and hyphens. Passwords are not shown again after account creation. The page also shows recent protected account activity; use the full **Activity log** for broader filtering. The last active owner cannot be deactivated.
+
+In **Tax and acquisition-cost policy**, enter the policy version, VAT and benefit rates, VAT-inclusive price behavior, allowed zero-rated products, tax and cash rounding, approval reference, and approved supplier-cost basis. Confirm this was approved by the pharmacy's tax adviser/accountant, then record the policy. Without an approved policy, checkout previews are provisional and live sale finalization is blocked. Later policy versions are preserved with transactions; do not enter assumed values just to unlock sales.
+
+In **BNPC 5% benefit policy**, review the official source, effective date, review date, weekly purchase and discount limits, minimum kinds, no-carryover rule, store eligibility, and approval reference. The percentage is fixed at 5%. Save creates a new immutable version. Enabling for live checkout requires owner review and accountant confirmation; leave it off until the store's current eligibility and exact procedure are approved.
+
+In **Checkout inventory**, the owner can enable or disable physical stock-count overrides. If enabled, cashiers may attest physically available stock when recorded saleable stock is short; the confirmation is saved with the sale, while expiry and quarantine restrictions remain. Use the link to **Review checkout count overrides** on **Stock** to inspect these events. Enable only with a written count-control procedure.
+
+### Owner help (`/owner-assistant`)
+
+The owner-only help page lets you choose DeepSeek V4 Flash 0731 (default), Qwen 3.6 Flash, or Gemini 3.5 Flash-Lite. Type a question and press Enter or **Ask**; Shift+Enter starts a new line. Suggested questions cover stock receiving, backups, checkout blocks, and cashier access. Answers include **Sources** chips so you can see the guide section or source file/line range used. Use **Clear chat** to erase the visible conversation; leaving the page also clears the browser-only chat. The bot cannot view live data or change the application. Questions, guide excerpts, and (only when needed) selected source code go to MixRoute; never paste sensitive store or customer details.
+
+### Redirects and unavailable pages
+
+`/` opens Checkout. `/ledger` is an older address that redirects to Journal. `/stock/checkout-overrides` redirects to the checkout override history section on Stock. An unrecognized route redirects to Checkout. If a page appears missing for a cashier, the page may require the owner role; if an expected owner page is absent, refresh and ask the developer to check the deployed release.
 
 ## Common problems
 

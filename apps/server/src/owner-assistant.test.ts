@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hashSecret } from "./auth.js";
 import {
+  findOwnerCodeSnippets,
   findOwnerGuideSections,
   registerOwnerAssistantRoutes,
 } from "./owner-assistant.js";
@@ -104,6 +105,42 @@ describe("read-only owner assistant", () => {
     ).toContain("Stock and receipt receiving");
   });
 
+  it("retrieves a page-specific section from the owner guide", () => {
+    expect(
+      findOwnerGuideSections(
+        "How do I enter a sale made during an outage with its original date?",
+      ).map(({ title }) => title),
+    ).toContain("Manual checkout (`/manual-checkout`)");
+  });
+
+  it("finds small, line-cited snippets only in application source", () => {
+    const snippets = findOwnerCodeSnippets(
+      "How does Medtryx remember the collapsed sidebar in local storage?",
+    );
+    expect(
+      snippets.some(({ document }) => document === "apps/web/src/app.tsx"),
+    ).toBe(true);
+    expect(
+      snippets.every(
+        ({ title, content }) =>
+          /:\d+-\d+$/u.test(title) && content.length <= 9_000,
+      ),
+    ).toBe(true);
+    expect(
+      snippets.reduce((total, { content }) => total + content.length, 0),
+    ).toBeLessThanOrEqual(9_000);
+    expect(snippets.some(({ document }) => /\.test\./u.test(document))).toBe(
+      false,
+    );
+    expect(
+      snippets.some(({ document }) =>
+        /(?:^|\/)(?:node_modules|dist|data|backups?)(?:\/|$)|(?:^|\/)\.env/iu.test(
+          document,
+        ),
+      ),
+    ).toBe(false);
+  });
+
   it("answers from owner guide excerpts using the selected MixRoute model", async () => {
     process.env.MIXROUTE_API_KEY = "synthetic-assistant-key";
     let providerUrl = "";
@@ -161,6 +198,65 @@ describe("read-only owner assistant", () => {
       "Stock and receipt receiving",
     );
     expect(payload.messages[0]?.content).toContain("You cannot modify code");
+  });
+
+  it("checks source code only after MixRoute says the guide is insufficient", async () => {
+    process.env.MIXROUTE_API_KEY = "synthetic-assistant-key";
+    const providerRequests: Array<{
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+    }> = [];
+    globalThis.fetch = (async (_input, init) => {
+      const payload = JSON.parse(
+        String(init?.body),
+      ) as (typeof providerRequests)[number];
+      providerRequests.push(payload);
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content:
+                providerRequests.length === 1
+                  ? "[[MEDTRYX_CODEBASE_LOOKUP_REQUIRED]]"
+                  : "The navigation preference is stored in browser local storage. [1]",
+            },
+          },
+        ],
+      });
+    }) as typeof globalThis.fetch;
+
+    const response = await authenticatedPost(
+      "owner",
+      ownerToken,
+      ownerCsrf,
+    ).send({
+      model: "deepseek-v4-flash",
+      messages: [
+        {
+          role: "user",
+          content:
+            "How does Medtryx remember the collapsed sidebar in local storage?",
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(providerRequests).toHaveLength(2);
+    expect(providerRequests[0]?.messages[0]?.content).not.toContain(
+      "apps/web/src/app.tsx",
+    );
+    expect(providerRequests[1]?.messages[0]?.content).toContain(
+      "apps/web/src/app.tsx:",
+    );
+    expect(response.body.answer).toContain("local storage");
+    expect(response.body.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          document: "apps/web/src/app.tsx",
+          title: expect.stringMatching(/apps\/web\/src\/app\.tsx:\d+-\d+/u),
+        }),
+      ]),
+    );
   });
 
   it("rejects cashier access, missing CSRF, unsupported models, and system turns", async () => {
