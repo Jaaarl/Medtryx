@@ -122,6 +122,7 @@ export function getExpenseEntries(
   startDate: string,
   endDate: string,
   cashierId?: string,
+  recordedByUserId?: string,
 ): ExpenseEntry[] {
   const rows = db
     .prepare(
@@ -134,13 +135,19 @@ export function getExpenseEntries(
      LEFT JOIN shifts sh ON sh.id = e.shift_id
      LEFT JOIN users cashier ON cashier.id = sh.cashier_user_id
      WHERE e.business_date >= ? AND e.business_date <= ?
-       ${cashierId ? "AND (sh.cashier_user_id = ? OR (e.shift_id IS NULL AND e.recorded_by_user_id = ?))" : ""}
+       ${cashierId ? `AND (sh.cashier_user_id = ? OR (e.shift_id IS NULL AND e.recorded_by_user_id = ?)${recordedByUserId ? " OR e.recorded_by_user_id = ?" : ""})` : ""}
      ORDER BY e.created_at DESC, e.id DESC`,
     )
     .all(
       startDate,
       endDate,
-      ...(cashierId ? [cashierId, cashierId] : []),
+      ...(cashierId
+        ? [
+            cashierId,
+            cashierId,
+            ...(recordedByUserId ? [recordedByUserId] : []),
+          ]
+        : []),
     ) as Array<{
     id: string;
     business_date: string;
@@ -278,6 +285,7 @@ export function registerExpenseRoutes(
       start.data,
       end.data,
       user.role === "owner" ? undefined : user.id,
+      user.role === "owner" ? undefined : user.id,
     );
     const shift = openRegister(db);
     res.json({
@@ -288,8 +296,6 @@ export function registerExpenseRoutes(
             id: shift.id,
             cashierEmail: shift.cashier_email,
             expectedCash: money(shift.expected_cash_centavos),
-            canCharge:
-              user.role === "owner" || shift.cashier_user_id === user.id,
           }
         : null,
     });
@@ -353,8 +359,6 @@ export function registerExpenseRoutes(
           if (!shift) throw new ExpenseError(409, "open_shift_required");
           if (input.shiftId !== undefined && shift.id !== input.shiftId)
             throw new ExpenseError(409, "expense_shift_changed");
-          if (user.role !== "owner" && shift.cashier_user_id !== user.id)
-            throw new ExpenseError(403, "expense_requires_own_shift");
           if (!Number.isSafeInteger(shift.expected_cash_centavos - amount))
             throw new ExpenseError(409, "cash_amount_overflow");
         }

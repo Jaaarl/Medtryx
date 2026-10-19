@@ -20,7 +20,6 @@ type ExpenseResponse = {
     id: string;
     cashierEmail: string;
     expectedCash: string;
-    canCharge: boolean;
   } | null;
 };
 
@@ -42,8 +41,6 @@ function expenseError(error: unknown): string {
   const messages: Record<string, string> = {
     open_shift_required:
       "Open a cashier shift before paying an expense from the drawer.",
-    expense_requires_own_shift:
-      "The active register belongs to another cashier. Ask the owner to record this payment.",
     cash_amount_overflow:
       "This payment would exceed the supported register balance.",
     expense_shift_changed:
@@ -182,9 +179,7 @@ export function ExpensesPage() {
 
   const cashierPaid = !choosesPayer || paymentSource === "CASHIER";
   const canSubmit =
-    !saving &&
-    !loading &&
-    (!cashierPaid || Boolean(data?.registerShift?.canCharge));
+    !saving && !loading && (!cashierPaid || Boolean(data?.registerShift));
 
   return (
     <section className="page-section inventory-page expenses-page">
@@ -478,12 +473,6 @@ export function ExpensesPage() {
                           Payments can be recorded even if this balance goes
                           below zero.
                         </span>
-                        {!data.registerShift.canCharge && (
-                          <span>
-                            This register belongs to another cashier. The owner
-                            can record its expenses.
-                          </span>
-                        )}
                       </>
                     ) : (
                       <span>
@@ -533,7 +522,7 @@ export function ExpensesPage() {
               <ExpenseHistory
                 expenses={data.expenses}
                 className="expense-page-history"
-                description={`${user?.role === "owner" ? "All store payments" : "Payments charged to your shifts and owner-paid payments you recorded"} for ${date}.`}
+                description={`${user?.role === "owner" ? "All store payments" : "Payments charged to your shifts and payments you recorded"} for ${date}.`}
               />
             )
           )}

@@ -28,10 +28,20 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
   ownerPage.on("pageerror", (error) => pageErrors.push(error.message));
   await signIn(ownerPage, "owner@example.test", "SyntheticOwnerPassword-48!");
   const email = `expense-${randomUUID().slice(0, 8)}@example.test`;
+  const secondEmail = `expense-entry-${randomUUID().slice(0, 8)}@example.test`;
   const password = "SyntheticExpenseCashier-42!";
   expect(
     (
       await post(ownerPage, "/users", { email, password, role: "cashier" })
+    ).status(),
+  ).toBe(201);
+  expect(
+    (
+      await post(ownerPage, "/users", {
+        email: secondEmail,
+        password,
+        role: "cashier",
+      })
     ).status(),
   ).toBe(201);
   const current = await (
@@ -259,11 +269,52 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       ),
     ).toBe(true);
     expect(pageErrors).toEqual([]);
+    const secondCashierContext = await browser.newContext({
+      baseURL: new URL(ownerPage.url()).origin,
+    });
+    try {
+      const secondCashierPage = await secondCashierContext.newPage();
+      secondCashierPage.on("pageerror", (error) =>
+        pageErrors.push(error.message),
+      );
+      await signIn(secondCashierPage, secondEmail, password);
+      await secondCashierPage.goto("/expenses");
+      await expect(
+        secondCashierPage.getByText(`Charged to ${email}`, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        secondCashierPage.getByRole("button", {
+          name: "Record expense",
+          exact: true,
+        }),
+      ).toBeEnabled();
+      await secondCashierPage
+        .locator('input[inputmode="decimal"]')
+        .fill("5.00");
+      await secondCashierPage
+        .getByLabel("Description (optional)")
+        .fill("E2E second cashier lunch");
+      await secondCashierPage
+        .getByRole("button", { name: "Record expense", exact: true })
+        .click();
+      await expect(secondCashierPage.getByRole("status")).toContainText(
+        "Expected cashier cash: ₱-15280.00",
+      );
+      await expect(
+        secondCashierPage.getByText("E2E second cashier lunch", {
+          exact: true,
+        }),
+      ).toBeVisible();
+    } finally {
+      await secondCashierContext.close();
+    }
+
     await page.goto("/checkout");
     await page
       .getByRole("button", { name: "Close shift", exact: true })
       .click();
     const dialog = page.getByRole("dialog", { name: "Close cashier shift" });
+    await dialog.getByLabel("Actual cash count (₱)").fill("0.00");
     await expect(dialog.getByLabel("Actual cash count (₱)")).toHaveValue(
       "0.00",
     );
@@ -283,9 +334,9 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       variance: string;
     }>;
     expect(history.find(({ id }) => id === shiftId)).toMatchObject({
-      expectedCash: "-15275.00",
+      expectedCash: "-15280.00",
       actualCashCount: "0.00",
-      variance: "15275.00",
+      variance: "15280.00",
     });
   } finally {
     await cashierContext.close();

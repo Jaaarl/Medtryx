@@ -319,7 +319,7 @@ describe("expense payments and reports", () => {
     });
   });
 
-  it("allows the owner to charge the active cashier and scopes history to the charged cashier", async () => {
+  it("lets any account charge the active cashier and scopes history to the charged cashier and recorder", async () => {
     const cashier = await signIn();
     await openShift(cashier);
     const owner = await signIn("owner@expense.test");
@@ -336,14 +336,21 @@ describe("expense payments and reports", () => {
     expect((await cashier.get("/api/expenses")).body.expenses).toHaveLength(1);
     const second = await signIn("second@expense.test");
     expect((await second.get("/api/expenses")).body.expenses).toHaveLength(0);
+    const secondPayment = await post(second, "/expenses", expense());
+    expect(secondPayment.status).toBe(201);
+    expect(secondPayment.body.expense).toMatchObject({
+      cashierEmail: "cashier@expense.test",
+      recordedByEmail: "second@expense.test",
+    });
+    expect((await cashier.get("/api/expenses")).body.expenses).toHaveLength(2);
+    expect((await second.get("/api/expenses")).body.expenses).toHaveLength(1);
     expect(
       (await second.get("/api/shifts/daily-sales-summary")).body.summary
         .expenses,
     ).toHaveLength(0);
-    const forbidden = await post(second, "/expenses", expense());
-    expect(forbidden.status).toBe(403);
-    expect(forbidden.body.error).toBe("expense_requires_own_shift");
-    expect(count("expenses")).toBe(1);
+    expect(secondPayment.body.expectedCash).toBe("760.00");
+    expect(count("expenses")).toBe(2);
+    expect(count("cash_movements")).toBe(2);
   });
 
   it.each([false, true])(
