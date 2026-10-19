@@ -3655,6 +3655,122 @@ export function StockPage() {
           </div>
         </aside>
       </div>
+      <section className="activity-card stock-history-card stock-events-card">
+        <div className="card-heading">
+          <div>
+            <h2>Stock history</h2>
+            <p>
+              {selected
+                ? `Showing events for ${selected.name}.`
+                : "Recent events across inventory."}
+            </p>
+          </div>
+          <div className="stock-history-controls">
+            <Field id="stock-history-action" label="Action">
+              <select
+                id="stock-history-action"
+                className="text-input select-input"
+                value={stockHistoryEventType}
+                onChange={(event) =>
+                  setStockHistoryEventType(event.target.value)
+                }
+              >
+                {STOCK_HISTORY_ACTION_FILTERS.map((action) => (
+                  <option key={action.value} value={action.value}>
+                    {action.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id="stock-history-limit" label="Records">
+              <select
+                id="stock-history-limit"
+                className="text-input select-input"
+                value={stockHistoryLimit}
+                onChange={(event) => setStockHistoryLimit(event.target.value)}
+              >
+                {STOCK_HISTORY_LIMIT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <span className="count-chip" aria-live="polite">
+              {events.length} events
+            </span>
+          </div>
+        </div>
+        <div className="inventory-table-wrap">
+          <table className="inventory-table">
+            <thead>
+              <tr>
+                <th>DATE / PRODUCT</th>
+                <th>ACTION</th>
+                <th>CHANGE</th>
+                <th>UNIT COST</th>
+                <th>SPREAD VS CURRENT PRICE</th>
+                <th>VALUE CHANGE</th>
+                <th>REFERENCE / REASON</th>
+                <th>ACTOR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.length ? (
+                events.map((event) => (
+                  <tr key={event.id}>
+                    <td>
+                      <strong>
+                        {new Date(event.createdAt).toLocaleString()}
+                      </strong>
+                      <small>
+                        {event.sku} · {event.productName}
+                      </small>
+                    </td>
+                    <td>
+                      {event.type === "COST_CORRECTION"
+                        ? "Acquisition cost correction"
+                        : event.type}
+                    </td>
+                    <td>
+                      {event.quantityDelta > 0 ? "+" : ""}
+                      {event.quantityDelta}
+                    </td>
+                    <td>
+                      {event.unitCost === null ? "—" : `₱${event.unitCost}`}
+                    </td>
+                    <td>
+                      {eventAcquisitionSpread(event, products) === null
+                        ? "—"
+                        : eventAcquisitionSpread(event, products)}
+                    </td>
+                    <td>
+                      {centsFromMoney(event.inventoryValueDelta) > 0n
+                        ? "+"
+                        : ""}
+                      ₱{event.inventoryValueDelta}
+                    </td>
+                    <td>
+                      <span>{event.reference ?? "—"}</span>
+                      {event.supplier && (
+                        <small>Supplier: {event.supplier}</small>
+                      )}
+                      {event.reason && <small>{event.reason}</small>}
+                    </td>
+                    <td>{event.actorEmail ?? "—"}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={8} className="table-loading">
+                    No stock events recorded yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
       <section className="activity-card stock-history-card stock-lots-card">
         <div className="card-heading">
           <div>
@@ -4032,122 +4148,6 @@ export function StockPage() {
               </button>
             </form>
           )}
-        </div>
-      </section>
-      <section className="activity-card stock-history-card stock-events-card">
-        <div className="card-heading">
-          <div>
-            <h2>Stock history</h2>
-            <p>
-              {selected
-                ? `Showing events for ${selected.name}.`
-                : "Recent events across inventory."}
-            </p>
-          </div>
-          <div className="stock-history-controls">
-            <Field id="stock-history-action" label="Action">
-              <select
-                id="stock-history-action"
-                className="text-input select-input"
-                value={stockHistoryEventType}
-                onChange={(event) =>
-                  setStockHistoryEventType(event.target.value)
-                }
-              >
-                {STOCK_HISTORY_ACTION_FILTERS.map((action) => (
-                  <option key={action.value} value={action.value}>
-                    {action.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field id="stock-history-limit" label="Records">
-              <select
-                id="stock-history-limit"
-                className="text-input select-input"
-                value={stockHistoryLimit}
-                onChange={(event) => setStockHistoryLimit(event.target.value)}
-              >
-                {STOCK_HISTORY_LIMIT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <span className="count-chip" aria-live="polite">
-              {events.length} events
-            </span>
-          </div>
-        </div>
-        <div className="inventory-table-wrap">
-          <table className="inventory-table">
-            <thead>
-              <tr>
-                <th>DATE / PRODUCT</th>
-                <th>ACTION</th>
-                <th>CHANGE</th>
-                <th>UNIT COST</th>
-                <th>SPREAD VS CURRENT PRICE</th>
-                <th>VALUE CHANGE</th>
-                <th>REFERENCE / REASON</th>
-                <th>ACTOR</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.length ? (
-                events.map((event) => (
-                  <tr key={event.id}>
-                    <td>
-                      <strong>
-                        {new Date(event.createdAt).toLocaleString()}
-                      </strong>
-                      <small>
-                        {event.sku} · {event.productName}
-                      </small>
-                    </td>
-                    <td>
-                      {event.type === "COST_CORRECTION"
-                        ? "Acquisition cost correction"
-                        : event.type}
-                    </td>
-                    <td>
-                      {event.quantityDelta > 0 ? "+" : ""}
-                      {event.quantityDelta}
-                    </td>
-                    <td>
-                      {event.unitCost === null ? "—" : `₱${event.unitCost}`}
-                    </td>
-                    <td>
-                      {eventAcquisitionSpread(event, products) === null
-                        ? "—"
-                        : eventAcquisitionSpread(event, products)}
-                    </td>
-                    <td>
-                      {centsFromMoney(event.inventoryValueDelta) > 0n
-                        ? "+"
-                        : ""}
-                      ₱{event.inventoryValueDelta}
-                    </td>
-                    <td>
-                      <span>{event.reference ?? "—"}</span>
-                      {event.supplier && (
-                        <small>Supplier: {event.supplier}</small>
-                      )}
-                      {event.reason && <small>{event.reason}</small>}
-                    </td>
-                    <td>{event.actorEmail ?? "—"}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={8} className="table-loading">
-                    No stock events recorded yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
       </section>
       <CheckoutOverridesPanel />
