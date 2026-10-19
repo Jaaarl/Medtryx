@@ -13,6 +13,7 @@ import {
   Activity,
   ArrowDownLeft,
   ArrowRight,
+  Bot,
   Boxes,
   BookOpen,
   CalendarDays,
@@ -53,6 +54,7 @@ import { JournalPage } from "./journal-page";
 import { ReceiptReceivingPage } from "./receipt-receiving-page";
 import { ExpensesPage } from "./expenses-page";
 import { ActivityLogPage } from "./activity-log-page";
+import { OwnerAssistantPage } from "./owner-assistant-page";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -112,6 +114,12 @@ const navigation = [
     ownerOnly: true,
   },
   { to: "/settings", label: "Settings", icon: ShieldCheck, ownerOnly: true },
+  {
+    to: "/owner-assistant",
+    label: "Owner help",
+    icon: Bot,
+    ownerOnly: true,
+  },
 ];
 
 function Guard({ ownerOnly = false }: { ownerOnly?: boolean }) {
@@ -963,6 +971,7 @@ export function App() {
             <Route path="activity-log" element={<ActivityLogPage />} />
             <Route path="backups" element={<BackupsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="owner-assistant" element={<OwnerAssistantPage />} />
           </Route>
         </Route>
       </Route>

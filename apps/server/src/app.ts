@@ -39,6 +39,7 @@ import { apiMaintenance } from "./maintenance.js";
 import { registerAiReceiptRoutes } from "./receipt-workflow.js";
 import { registerExpenseRoutes } from "./expenses.js";
 import { registerActivityLogRoutes } from "./activity-log.js";
+import { registerOwnerAssistantRoutes } from "./owner-assistant.js";
 
 const loginSchema = z.union([
   z
@@ -416,6 +417,7 @@ export function createApp(
   app.use("/api/stock/receipts", receiptAiRouter);
   app.use(express.json({ limit: "20kb", strict: true }));
   registerAuthRoutes(app, db);
+  registerOwnerAssistantRoutes(app, db);
   registerActivityLogRoutes(app, db);
   const inventoryRouter = express.Router();
   registerInventoryRoutes(inventoryRouter, db);
