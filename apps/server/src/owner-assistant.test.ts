@@ -191,13 +191,40 @@ describe("read-only owner assistant", () => {
       model: string;
       messages: Array<{ role: string; content: string }>;
       tools?: unknown;
+      max_tokens: number;
     };
     expect(payload.model).toBe("qwen3.6-flash");
+    expect(payload.max_tokens).toBe(1800);
     expect(payload.tools).toBeUndefined();
     expect(payload.messages[0]?.content).toContain(
       "Stock and receipt receiving",
     );
     expect(payload.messages[0]?.content).toContain("You cannot modify code");
+  });
+
+  it("preserves answers longer than the previous 2,500-character cutoff", async () => {
+    process.env.MIXROUTE_API_KEY = "synthetic-assistant-key";
+    const longAnswer = `Long answer: ${Array.from(
+      { length: 400 },
+      (_, index) => `detail-${index}`,
+    ).join(" ")}`;
+    globalThis.fetch = (async () =>
+      Response.json({
+        choices: [{ message: { content: longAnswer } }],
+      })) as typeof globalThis.fetch;
+
+    const response = await authenticatedPost(
+      "owner",
+      ownerToken,
+      ownerCsrf,
+    ).send({
+      model: "deepseek-v4-flash",
+      messages: [{ role: "user", content: "Explain this workflow in detail." }],
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.answer).toBe(longAnswer);
+    expect(response.body.answer).toHaveLength(longAnswer.length);
   });
 
   it("checks source code only after MixRoute says the guide is insufficient", async () => {
