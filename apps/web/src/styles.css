@@ -4849,10 +4849,20 @@ a {
 .movement-list-heading {
   gap: 16px;
 }
+.movement-list-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
 .movement-filter-field {
   display: grid;
   gap: 5px;
   min-width: 150px;
+}
+.movement-search-field {
+  min-width: 220px;
 }
 .movement-filter-field .text-input {
   height: 34px;
@@ -5917,6 +5927,10 @@ a {
     padding: 16px 14px;
   }
   .movement-filter-field {
+    width: 100%;
+  }
+  .movement-list-controls {
+    justify-content: flex-start;
     width: 100%;
   }
 }

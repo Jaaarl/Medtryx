@@ -30,6 +30,22 @@ type ProductMovementReport = {
 
 type MovementFilter = "ALL" | "FAST" | "SLOW";
 
+export function filterProductMovements(
+  products: ProductMovement[],
+  movementFilter: MovementFilter,
+  searchQuery: string,
+): ProductMovement[] {
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  return products.filter((product) => {
+    const matchesMovement =
+      movementFilter === "ALL" || product.movement === movementFilter;
+    const matchesSearch = `${product.name} ${product.sku}`
+      .toLowerCase()
+      .includes(normalizedQuery);
+    return matchesMovement && matchesSearch;
+  });
+}
+
 function todayInManila(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Manila",
@@ -66,6 +82,7 @@ export function ProductMovementPage() {
   const [startDate, setStartDate] = useState(() => offsetDate(today, -29));
   const [endDate, setEndDate] = useState(today);
   const [filter, setFilter] = useState<MovementFilter>("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
   const [report, setReport] = useState<ProductMovementReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,10 +134,9 @@ export function ProductMovementPage() {
     setEndDate(value);
   }
 
-  const products =
-    report?.products.filter(
-      (product) => filter === "ALL" || product.movement === filter,
-    ) ?? [];
+  const products = report
+    ? filterProductMovements(report.products, filter, searchQuery)
+    : [];
 
   return (
     <section className="page-section product-movement-page">
@@ -217,21 +233,34 @@ export function ProductMovementPage() {
                   days · Manila time
                 </p>
               </div>
-              <label className="movement-filter-field">
-                <span className="field-label">Show</span>
-                <select
-                  aria-label="Filter products by movement"
-                  className="text-input select-input"
-                  value={filter}
-                  onChange={(event) =>
-                    setFilter(event.target.value as MovementFilter)
-                  }
-                >
-                  <option value="ALL">All products</option>
-                  <option value="FAST">Fast moving</option>
-                  <option value="SLOW">Slow moving</option>
-                </select>
-              </label>
+              <div className="movement-list-controls">
+                <label className="movement-filter-field movement-search-field">
+                  <span className="field-label">Search</span>
+                  <input
+                    aria-label="Search products by name or SKU"
+                    className="text-input"
+                    type="search"
+                    placeholder="Product name or SKU"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                </label>
+                <label className="movement-filter-field">
+                  <span className="field-label">Show</span>
+                  <select
+                    aria-label="Filter products by movement"
+                    className="text-input select-input"
+                    value={filter}
+                    onChange={(event) =>
+                      setFilter(event.target.value as MovementFilter)
+                    }
+                  >
+                    <option value="ALL">All products</option>
+                    <option value="FAST">Fast moving</option>
+                    <option value="SLOW">Slow moving</option>
+                  </select>
+                </label>
+              </div>
             </div>
             {products.length ? (
               <div className="inventory-table-wrap">
@@ -287,7 +316,11 @@ export function ProductMovementPage() {
               <p className="report-empty">
                 {report.activeProductCount === 0
                   ? "There are no active products to report."
-                  : "No products match this movement filter."}
+                  : searchQuery.trim()
+                    ? filter === "ALL"
+                      ? "No products match your search."
+                      : "No products match your search and movement filter."
+                    : "No products match this movement filter."}
               </p>
             )}
           </section>
