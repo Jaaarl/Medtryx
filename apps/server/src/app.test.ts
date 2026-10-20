@@ -1,14 +1,15 @@
 import argon2 from "argon2";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { SESSION_IDLE_MS } from "./auth.js";
-import { migrateDatabase, openDatabase, repositoryRoot } from "./db.js";
+import { migrateDatabase, openDatabase } from "./db.js";
+import { applyMigrationsThrough } from "./test-migrations.js";
 
 process.env.APP_ENV = "test";
 process.env.COOKIE_SECURE = "false";
@@ -117,26 +118,10 @@ describe("account foundation", () => {
 
   it("backfills case-insensitive unique usernames when upgrading existing accounts", () => {
     const legacyDb = new Database(":memory:");
-    legacyDb.exec(
-      `CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
-       ${readFileSync(
-         join(repositoryRoot, "database/migrations/0001_accounts.sql"),
-         "utf8",
-       )}`,
-    );
-    const applied = legacyDb.prepare(
-      "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
-    );
-    for (let version = 1; version <= 25; version += 1) {
-      const number = String(version).padStart(4, "0");
-      const name = readdirSync(
-        join(repositoryRoot, "database/migrations"),
-      ).find((migration) => migration.startsWith(`${number}_`));
-      if (name) applied.run(name, new Date().toISOString());
-    }
+    applyMigrationsThrough(legacyDb, 25);
     const now = new Date().toISOString();
     const insertLegacyUser = legacyDb.prepare(
-      "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, 'owner', ?, ?)",
+      "INSERT INTO users (id, email, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, 'owner', 1, ?, ?)",
     );
     const legacyUsers = [
       { id: randomUUID(), email: "owner@example.test" },

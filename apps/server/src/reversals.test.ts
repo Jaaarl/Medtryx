@@ -1642,7 +1642,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     ).toBe(0);
   });
 
-  it("requires an open funded drawer and updates reasoned cash-in/out and refund movements", async () => {
+  it("allows a cash refund to put an open shift below zero and records cash movements", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner);
     const product = await createProduct(owner);
@@ -1677,20 +1677,25 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     const noDrawer = await postWithCsrf(
       owner,
       `/api/sales/${sale.transactionId}/reversals`,
-      { ...basePayload, refundShiftId: randomUUID() },
+      { ...basePayload, refundShiftId: cashierShift.body.shift.id as string },
     );
     expect(noDrawer.status, JSON.stringify(noDrawer.body)).toBe(409);
     expect(noDrawer.body.error).toBe("cash_refund_requires_open_shift");
 
     const ownerShift = await openShift(owner, "50.00");
     const shiftId = ownerShift.body.shift.id as string;
-    const insufficient = await postWithCsrf(
+    const reversal = await postWithCsrf(
       owner,
       `/api/sales/${sale.transactionId}/reversals`,
       { ...basePayload, refundShiftId: shiftId },
     );
-    expect(insufficient.status).toBe(409);
-    expect(insufficient.body.error).toBe("insufficient_shift_cash");
+    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    const afterRefund = await owner.get("/api/shifts/open");
+    expect(
+      afterRefund.body.shifts.find(
+        (shift: { id: string }) => shift.id === shiftId,
+      ).expectedCash,
+    ).toBe("-62.00");
 
     const cashIn = await postWithCsrf(
       owner,
@@ -1702,7 +1707,7 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       },
     );
     expect(cashIn.status).toBe(201);
-    expect(cashIn.body.expectedCash).toBe("150.00");
+    expect(cashIn.body.expectedCash).toBe("38.00");
     const cashOut = await postWithCsrf(
       owner,
       `/api/shifts/${shiftId}/cash-movements`,
@@ -1713,21 +1718,14 @@ describe("owner-approved full-sale reversals and cash movements", () => {
       },
     );
     expect(cashOut.status).toBe(201);
-    expect(cashOut.body.expectedCash).toBe("140.00");
-
-    const reversal = await postWithCsrf(
-      owner,
-      `/api/sales/${sale.transactionId}/reversals`,
-      { ...basePayload, refundShiftId: shiftId },
-    );
-    expect(reversal.status, JSON.stringify(reversal.body)).toBe(201);
+    expect(cashOut.body.expectedCash).toBe("28.00");
     const movementList = await owner.get(
       `/api/shifts/${shiftId}/cash-movements`,
     );
     expect(movementList.body.movements).toHaveLength(3);
     expect(
       movementList.body.movements.map((item: { type: string }) => item.type),
-    ).toEqual(["CASH_REFUND", "CASH_OUT", "CASH_IN"]);
+    ).toEqual(["CASH_OUT", "CASH_IN", "CASH_REFUND"]);
     const openShifts = await owner.get("/api/shifts/open");
     expect(
       openShifts.body.shifts.find(

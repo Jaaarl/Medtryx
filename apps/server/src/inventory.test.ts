@@ -324,7 +324,7 @@ describe("owner catalog and stock operations", () => {
     const exported = await owner.get("/api/products/export-csv");
     const csvLines = exported.text.trim().split(/\r?\n/u);
     const productLine = csvLines.find((line) =>
-      line.startsWith('"SYN-CSV-UPDATE"'),
+      line.includes('"SYN-CSV-UPDATE"'),
     );
     expect(productLine).toBeDefined();
     if (!productLine) throw new Error("Exported product row was not found.");
@@ -428,7 +428,7 @@ describe("owner catalog and stock operations", () => {
     const exported = await owner.get("/api/products/export-csv");
     const csvLines = exported.text.trim().split(/\r?\n/u);
     const productLine = csvLines.find((line) =>
-      line.startsWith('"SYN-CSV-ATOMIC"'),
+      line.includes('"SYN-CSV-ATOMIC"'),
     );
     expect(productLine).toBeDefined();
     if (!productLine) throw new Error("Exported product row was not found.");

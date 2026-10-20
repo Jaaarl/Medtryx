@@ -1034,6 +1034,7 @@ describe("checkout stock count overrides", () => {
     });
     const noCostProduct = await createProduct(owner, {
       sku: "SYN-COUNT-OVERRIDE-ZERO",
+      name: "Synthetic zero-cost sale product",
       openingQuantity: 0,
       openingUnitCost: undefined,
     });
@@ -1273,6 +1274,7 @@ describe("checkout stock count overrides", () => {
     });
     const companion = await createProduct(owner, {
       sku: "SYN-COUNT-BUNDLE-COMPANION",
+      name: "Synthetic count bundle companion",
       openingQuantity: 4,
     });
     const ownerCsrf = await csrfFor(owner);
@@ -2174,6 +2176,7 @@ describe("checkout, sales, and cashier shifts", () => {
 
     const secondProduct = await createProduct(owner, {
       sku: "SYN-SALES-JOURNAL-SECOND",
+      name: "Synthetic sales journal second product",
     });
     const secondSaleCsrf = await csrfFor(cashier);
     const secondSaleResponse = await cashier
@@ -2323,6 +2326,15 @@ describe("checkout, sales, and cashier shifts", () => {
         totalVat: "0.00",
         grossSales: "336.00",
         netSales: "240.00",
+        operatingExpenses: "0.00",
+        cashierPaidExpenses: "0.00",
+        ownerPaidExpenses: "0.00",
+        stockPurchasePayments: "0.00",
+        inventoryCostPayments: "0.00",
+        cashierPaidStockPurchases: "0.00",
+        ownerPaidStockPurchases: "0.00",
+        stockProductPayments: "0.00",
+        stockDeliveryFees: "0.00",
       },
     ]);
     expect(

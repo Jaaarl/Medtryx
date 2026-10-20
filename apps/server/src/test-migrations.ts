@@ -49,6 +49,30 @@ export type MigrationSnapshot = Record<
   string,
   { columns: string[]; rows: unknown[] }
 >;
+
+export function withoutCurrencySetting(
+  snapshot: MigrationSnapshot,
+): MigrationSnapshot {
+  const settings = snapshot.settings;
+  if (!settings) return snapshot;
+
+  return {
+    ...snapshot,
+    settings: {
+      ...settings,
+      rows: settings.rows.filter(
+        (row) =>
+          !(
+            typeof row === "object" &&
+            row !== null &&
+            "key" in row &&
+            row.key === "currency"
+          ),
+      ),
+    },
+  };
+}
+
 export function snapshotMigrationTables(
   db: Database.Database,
   previous?: MigrationSnapshot,

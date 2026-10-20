@@ -25,6 +25,7 @@ import {
   applyMigrationsThrough,
   seedProductionMigrationRecords,
   snapshotMigrationTables,
+  withoutCurrencySetting,
 } from "./test-migrations.js";
 import {
   clearBnpcLedgerForTest,
@@ -211,6 +212,7 @@ describe("owner-only verified backup and restore", () => {
         actorEmail: "owner.backups@example.test",
       });
       const restored = snapshotMigrationTables(db, original);
+      const restoredWithoutCurrency = withoutCurrencySetting(restored);
       const {
         sessions: originalSessions,
         audit_events: originalAudit,
@@ -220,8 +222,11 @@ describe("owner-only verified backup and restore", () => {
         sessions: restoredSessions,
         audit_events: restoredAudit,
         ...restoredRecords
-      } = restored;
+      } = restoredWithoutCurrency;
       expect(restoredRecords).toEqual(originalRecords);
+      expect(restored.settings?.rows).toContainEqual(
+        expect.objectContaining({ key: "currency", value_json: '"PHP"' }),
+      );
       if (
         !originalSessions ||
         !restoredSessions ||
@@ -278,7 +283,9 @@ describe("owner-only verified backup and restore", () => {
         actorUserId: "upgrade-owner",
         actorEmail: "upgrade-owner@example.test",
       });
-      const repeated = snapshotMigrationTables(db, original);
+      const repeated = withoutCurrencySetting(
+        snapshotMigrationTables(db, original),
+      );
       for (const [table, snapshot] of Object.entries(originalRecords)) {
         expect(repeated[table], table).toEqual(snapshot);
       }

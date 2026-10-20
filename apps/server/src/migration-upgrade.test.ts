@@ -9,6 +9,7 @@ import {
   insertMigrationFixture,
   seedProductionMigrationRecords,
   snapshotMigrationTables,
+  withoutCurrencySetting,
 } from "./test-migrations.js";
 
 const migrationName = "0027_payments_and_expenses.sql";
@@ -53,7 +54,11 @@ describe("single payments migration from the committed 0026 schema", () => {
           .all();
         db.close();
         db = openDatabase(environment, directory);
-        expect(snapshotMigrationTables(db, original)).toEqual(original);
+        const migratedSnapshot = snapshotMigrationTables(db, original);
+        expect(withoutCurrencySetting(migratedSnapshot)).toEqual(original);
+        expect(migratedSnapshot.settings?.rows).toContainEqual(
+          expect.objectContaining({ key: "currency", value_json: '"PHP"' }),
+        );
         expect(appliedRows(db).slice(0, 26)).toEqual(originalMigrations);
         expect(
           db
