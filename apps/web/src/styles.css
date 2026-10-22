@@ -5460,18 +5460,38 @@ a {
 .monthly-incentive-dashboard-empty {
   background: #f8faf8;
 }
-.monthly-sales-dashboard-settings-link {
-  font-size: 12px;
-  margin: 14px 0 0;
-  text-align: right;
+.dashboard-shortcuts {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.monthly-sales-dashboard-settings-link a {
-  color: #28705e;
-  font-weight: 650;
+.dashboard-shortcut {
+  background: #fff;
+  border: 1px solid #e3ebe6;
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(28, 70, 58, 0.035);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 96px;
+  padding: 18px;
   text-decoration: none;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
 }
-.monthly-sales-dashboard-settings-link a:hover {
-  text-decoration: underline;
+.dashboard-shortcut:hover {
+  border-color: #a9cdbd;
+  transform: translateY(-2px);
+}
+.dashboard-shortcut strong {
+  color: #254d3c;
+  font-size: 13px;
+}
+.dashboard-shortcut span {
+  color: #78867e;
+  font-size: 11px;
+  line-height: 1.5;
 }
 .monthly-incentive-tier-editor {
   display: flex;
@@ -6736,6 +6756,9 @@ a {
 }
 
 @media (max-width: 700px) {
+  .dashboard-shortcuts {
+    grid-template-columns: 1fr;
+  }
   .monthly-incentive-editor-heading {
     display: none;
   }

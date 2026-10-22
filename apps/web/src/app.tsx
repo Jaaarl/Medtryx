@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Link,
@@ -55,14 +55,20 @@ import { ReceiptReceivingPage } from "./receipt-receiving-page";
 import { ExpensesPage } from "./expenses-page";
 import { ActivityLogPage } from "./activity-log-page";
 import { OwnerAssistantPage } from "./owner-assistant-page";
-import { MonthlyIncentiveSettings } from "./monthly-incentive-settings";
 import { DashboardPage } from "./dashboard-page";
+import { MonthlyGoalsPage } from "./monthly-goals-page";
 
 const navigation = [
   {
     to: "/dashboard",
     label: "Dashboard",
     icon: LayoutDashboard,
+    ownerOnly: false,
+  },
+  {
+    to: "/monthly-goals",
+    label: "Monthly Goals",
+    icon: TrendingUp,
     ownerOnly: false,
   },
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -130,6 +136,63 @@ const navigation = [
   },
 ];
 
+const MonthlyGoalsVisibilityContext = createContext<boolean | null>(null);
+
+function MonthlyGoalsVisibilityProvider() {
+  const { user } = useAuth();
+  const [enabledForUser, setEnabledForUser] = useState<{
+    userId: string;
+    enabled: boolean;
+  } | null>(null);
+  const enabled =
+    user?.role === "owner"
+      ? true
+      : enabledForUser && enabledForUser.userId === user?.id
+        ? enabledForUser.enabled
+        : null;
+
+  useEffect(() => {
+    if (user?.role !== "cashier") return;
+
+    let active = true;
+    const refresh = () => {
+      void api
+        .get<{ progress: unknown | null }>("/dashboard/monthly-incentive")
+        .then(({ progress }) => {
+          if (active)
+            setEnabledForUser({ userId: user.id, enabled: progress !== null });
+        })
+        .catch(() => {
+          if (active) setEnabledForUser({ userId: user.id, enabled: false });
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [user]);
+
+  return (
+    <MonthlyGoalsVisibilityContext.Provider value={enabled}>
+      <Outlet />
+    </MonthlyGoalsVisibilityContext.Provider>
+  );
+}
+
+function MonthlyGoalsGuard() {
+  const { user } = useAuth();
+  const enabled = useContext(MonthlyGoalsVisibilityContext);
+  if (user?.role === "owner") return <Outlet />;
+  if (enabled === null)
+    return <div className="loading-screen">Checking monthly goals access…</div>;
+  if (!enabled) return <Navigate to="/checkout" replace />;
+  return <Outlet />;
+}
+
 function Guard({ ownerOnly = false }: { ownerOnly?: boolean }) {
   const { user, ready } = useAuth();
   const location = useLocation();
@@ -144,6 +207,7 @@ function Guard({ ownerOnly = false }: { ownerOnly?: boolean }) {
 
 function Layout() {
   const { user, signOut } = useAuth();
+  const monthlyGoalsEnabled = useContext(MonthlyGoalsVisibilityContext);
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -216,7 +280,13 @@ function Layout() {
         </div>
         <nav className="main-nav" aria-label="Main navigation">
           {navigation
-            .filter((item) => !item.ownerOnly || user.role === "owner")
+            .filter(
+              (item) =>
+                (!item.ownerOnly || user.role === "owner") &&
+                (item.to !== "/monthly-goals" ||
+                  user.role === "owner" ||
+                  monthlyGoalsEnabled === true),
+            )
             .map(({ to, label, icon: Icon }) => (
               <Link
                 key={to}
@@ -854,7 +924,6 @@ function SettingsPage() {
       <TaxPolicySettings />
       <BnpcPolicySettings />
       <CheckoutInventorySettings />
-      <MonthlyIncentiveSettings />
     </section>
   );
 }
@@ -947,41 +1016,52 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Guard />}>
-        <Route element={<Layout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="checkout" element={<CheckoutPage />} />
-          <Route
-            path="manual-checkout"
-            element={<CheckoutPage manualEntry />}
-          />
-          <Route path="daily-sales" element={<DailySalesSummaryPage />} />
-          <Route path="expenses" element={<ExpensesPage />} />
-          <Route path="account" element={<AccountPage />} />
-          <Route element={<Guard ownerOnly />}>
-            <Route path="products" element={<ProductsPage />} />
-            <Route path="stock" element={<StockPage />} />
+        <Route element={<MonthlyGoalsVisibilityProvider />}>
+          <Route element={<Layout />}>
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route element={<MonthlyGoalsGuard />}>
+              <Route path="monthly-goals" element={<MonthlyGoalsPage />} />
+            </Route>
+            <Route path="checkout" element={<CheckoutPage />} />
             <Route
-              path="receipt-receiving"
-              element={<ReceiptReceivingPage />}
+              path="manual-checkout"
+              element={<CheckoutPage manualEntry />}
             />
-            <Route
-              path="stock/checkout-overrides"
-              element={
-                <Navigate to="/stock#checkout-count-overrides" replace />
-              }
-            />
-            <Route path="bundles" element={<BundlesPage />} />
-            <Route path="sales" element={<SalesHistoryPage />} />
-            <Route path="journal" element={<JournalPage />} />
-            <Route path="ledger" element={<Navigate to="/journal" replace />} />
-            <Route path="reports" element={<ReportsPage />} />
-            <Route path="product-movement" element={<ProductMovementPage />} />
-            <Route path="shifts" element={<ShiftHistoryPage />} />
-            <Route path="activity-log" element={<ActivityLogPage />} />
-            <Route path="backups" element={<BackupsPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="owner-assistant" element={<OwnerAssistantPage />} />
+            <Route path="daily-sales" element={<DailySalesSummaryPage />} />
+            <Route path="expenses" element={<ExpensesPage />} />
+            <Route path="account" element={<AccountPage />} />
+            <Route element={<Guard ownerOnly />}>
+              <Route path="products" element={<ProductsPage />} />
+              <Route path="stock" element={<StockPage />} />
+              <Route
+                path="receipt-receiving"
+                element={<ReceiptReceivingPage />}
+              />
+              <Route
+                path="stock/checkout-overrides"
+                element={
+                  <Navigate to="/stock#checkout-count-overrides" replace />
+                }
+              />
+              <Route path="bundles" element={<BundlesPage />} />
+              <Route path="sales" element={<SalesHistoryPage />} />
+              <Route path="journal" element={<JournalPage />} />
+              <Route
+                path="ledger"
+                element={<Navigate to="/journal" replace />}
+              />
+              <Route path="reports" element={<ReportsPage />} />
+              <Route
+                path="product-movement"
+                element={<ProductMovementPage />}
+              />
+              <Route path="shifts" element={<ShiftHistoryPage />} />
+              <Route path="activity-log" element={<ActivityLogPage />} />
+              <Route path="backups" element={<BackupsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="owner-assistant" element={<OwnerAssistantPage />} />
+            </Route>
           </Route>
         </Route>
       </Route>

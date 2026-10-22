@@ -61,7 +61,11 @@ function tierFromDraft(tier: TierDraft): MonthlyIncentiveTier | null {
 
 const tierColors = ["#25875A", "#2878B8", "#C68120", "#7558B5", "#C45252"];
 
-export function MonthlyIncentiveSettings() {
+export function MonthlyIncentiveSettings({
+  onSaved,
+}: {
+  onSaved?: () => void;
+} = {}) {
   const [draft, setDraft] = useState<SettingDraft>(() =>
     makeDraft(defaultMonthlyIncentiveSetting),
   );
@@ -166,12 +170,13 @@ export function MonthlyIncentiveSettings() {
         parsed.data,
       );
       setDraft(makeDraft(saved));
+      onSaved?.();
       setNotice(
         saved.enabled && saved.showOnCheckout
-          ? "Monthly sales incentives are enabled on the Dashboard and Checkout."
+          ? "Progress is available on Monthly Goals and Checkout."
           : saved.enabled
-            ? "Monthly sales incentives are enabled on the Dashboard."
-            : "Monthly sales incentives are hidden from the dashboard.",
+            ? "Progress is available on Monthly Goals."
+            : "Monthly Goals is hidden from cashier accounts.",
       );
     } catch {
       setError("Unable to save monthly incentive settings.");
@@ -216,11 +221,11 @@ export function MonthlyIncentiveSettings() {
             }}
           />
           <span>
-            <strong>Enable monthly sales progress</strong>
+            <strong>Show Monthly Goals to cashiers</strong>
             <small>
               {draft.enabled
-                ? "Available on the Dashboard for owner and cashier accounts."
-                : "Hidden until you enable it."}
+                ? "Cashiers can open Monthly Goals and view current progress."
+                : "Cashiers cannot see this page. Owner controls remain available here."}
             </small>
           </span>
         </label>

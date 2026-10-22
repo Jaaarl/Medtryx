@@ -42,7 +42,7 @@ export function MonthlyIncentiveProgress({
   showDisabledState = false,
   allowMonthNavigation = false,
 }: {
-  placement: "dashboard" | "checkout";
+  placement: "monthly-goals" | "checkout";
   refreshKey: number;
   showDisabledState?: boolean;
   allowMonthNavigation?: boolean;
@@ -82,7 +82,7 @@ export function MonthlyIncentiveProgress({
   }, [refreshKey, requestedMonth]);
 
   if (
-    placement === "dashboard" &&
+    placement === "monthly-goals" &&
     showDisabledState &&
     loadState === "loading"
   ) {
@@ -93,7 +93,7 @@ export function MonthlyIncentiveProgress({
     );
   }
   if (
-    placement === "dashboard" &&
+    placement === "monthly-goals" &&
     showDisabledState &&
     loadState === "failed"
   ) {
@@ -107,7 +107,7 @@ export function MonthlyIncentiveProgress({
     );
   }
   if (!progress || (progress.showGoalAndIncentive && !progress.tiers?.length)) {
-    return placement === "dashboard" && showDisabledState ? (
+    return placement === "monthly-goals" && showDisabledState ? (
       <div className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty">
         Monthly sales progress has not been enabled by the owner yet.
       </div>
