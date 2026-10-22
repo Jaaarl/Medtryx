@@ -392,6 +392,65 @@ test("imported product matches remain visible across stock units and successive 
   );
 });
 
+test("quarantined lots stay hidden until the owner selects the filter", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const createResponse = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-LOT-QUARANTINE-FILTER",
+      name: "Synthetic Quarantine Filter Product",
+      unit: "piece",
+      sellingPrice: "10.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      tracksLots: true,
+      openingQuantity: 2,
+      openingUnitCost: "5.00",
+      openingLotCode: "SYN-QUARANTINE-FILTER-BATCH",
+      openingExpiryDate: "2031-12-31",
+    },
+  });
+  expect(createResponse.status()).toBe(201);
+
+  await page.goto("/stock");
+  const lotSearch = page.getByLabel(
+    "Search lots by product name, SKU, or batch ID",
+  );
+  await lotSearch.fill("SYN-QUARANTINE-FILTER-BATCH");
+  const lotRow = page
+    .locator(".stock-lots-card .inventory-table tbody tr")
+    .filter({ hasText: "SYN-QUARANTINE-FILTER-BATCH" });
+  const quarantineFilter = page.getByLabel("Show quarantined lots");
+  await expect(quarantineFilter).not.toBeChecked();
+  await expect(lotRow).toBeVisible();
+
+  await page
+    .getByLabel("Reason for quarantine change")
+    .fill("Synthetic quarantine filter check");
+  await lotRow.getByRole("button", { name: "Quarantine" }).click();
+  await expect(lotRow).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "Matching quarantined lots are hidden. Turn on “Show quarantined lots” to view them.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Showing 0 of 1 lots" }),
+  ).toBeVisible();
+
+  await quarantineFilter.check();
+  await expect(lotRow).toBeVisible();
+  await expect(lotRow).toContainText("Quarantined");
+  await quarantineFilter.uncheck();
+  await expect(lotRow).toHaveCount(0);
+});
+
 test("owners can search a batch and edit its quantity, unit cost, and product price", async ({
   page,
 }) => {

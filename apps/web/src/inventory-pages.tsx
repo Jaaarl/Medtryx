@@ -2608,6 +2608,7 @@ export function StockPage() {
   const [physicalCountConfirmed, setPhysicalCountConfirmed] = useState(false);
   const [lotStatusReason, setLotStatusReason] = useState("");
   const [lotQuery, setLotQuery] = useState("");
+  const [showQuarantinedLots, setShowQuarantinedLots] = useState(false);
   const [lotPage, setLotPage] = useState(1);
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
   const [lotQuantityInput, setLotQuantityInput] = useState("");
@@ -2685,7 +2686,7 @@ export function StockPage() {
     .trim()
     .split(/\s+/)
     .filter(Boolean);
-  const visibleLots = lots.filter((lot) => {
+  const searchedLots = lots.filter((lot) => {
     const fields = [lot.productName, lot.sku, lot.lotCode, lot.expiryDate].map(
       normalizeLotSearch,
     );
@@ -2693,6 +2694,12 @@ export function StockPage() {
       fields.some((field) => field.includes(term)),
     );
   });
+  const hiddenQuarantinedLots = searchedLots.filter(
+    (lot) => lot.quarantined,
+  ).length;
+  const visibleLots = searchedLots.filter(
+    (lot) => showQuarantinedLots || !lot.quarantined,
+  );
   const totalLotPages = Math.max(
     1,
     Math.ceil(visibleLots.length / LOTS_PER_PAGE),
@@ -3872,6 +3879,20 @@ export function StockPage() {
             }}
           />
         </div>
+        <div className="lot-quarantine-filter-row">
+          <label className="inventory-checkbox">
+            <input
+              type="checkbox"
+              aria-label="Show quarantined lots"
+              checked={showQuarantinedLots}
+              onChange={(event) => {
+                setShowQuarantinedLots(event.target.checked);
+                setLotPage(1);
+              }}
+            />
+            Show quarantined lots
+          </label>
+        </div>
         <p className="lot-search-count" role="status">
           Showing {visibleLots.length} of {lots.length} lots
         </p>
@@ -4079,10 +4100,12 @@ export function StockPage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="table-loading">
-                    {lotQuery
-                      ? "No lots match this search."
-                      : "No lots recorded for tracked products."}
+                  <td colSpan={8} className="table-loading">
+                    {hiddenQuarantinedLots
+                      ? "Matching quarantined lots are hidden. Turn on “Show quarantined lots” to view them."
+                      : lotQuery
+                        ? "No lots match this search."
+                        : "No lots recorded for tracked products."}
                   </td>
                 </tr>
               )}

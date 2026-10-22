@@ -2789,6 +2789,18 @@ a {
   margin: 0;
   padding: 9px 24px;
 }
+.stock-lots-card .lot-quarantine-filter-row {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #edf1ef;
+  display: flex;
+  min-height: 40px;
+  padding: 0 24px;
+}
+.stock-lots-card .lot-quarantine-filter-row .inventory-checkbox {
+  cursor: pointer;
+  font-size: 11px;
+}
 .stock-horizon-form .inventory-field > span {
   font-size: 11px;
 }
@@ -5771,6 +5783,9 @@ a {
     gap: 12px;
     grid-template-columns: minmax(0, 1fr);
     padding: 15px 14px;
+  }
+  .stock-lots-card .lot-quarantine-filter-row {
+    padding: 0 14px;
   }
   .stock-horizon-actions {
     flex-wrap: wrap;
