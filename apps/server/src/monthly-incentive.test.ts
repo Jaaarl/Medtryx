@@ -159,7 +159,7 @@ afterAll(() => {
 });
 
 describe("monthly sales incentive settings and progress", () => {
-  it("lets the owner save ordered tiers and only shows dashboard progress when enabled", async () => {
+  it("shows goal progress to the owner and only shows it to cashiers when enabled", async () => {
     const owner = await signIn("owner@monthly-incentive.test", ownerPassword);
     const cashier = await signIn(
       "cashier@monthly-incentive.test",
@@ -174,6 +174,18 @@ describe("monthly sales incentive settings and progress", () => {
     expect(initialSetting.body.tiers).toHaveLength(2);
     expect((await cashier.get("/api/settings/monthly-incentive")).status).toBe(
       403,
+    );
+    const ownerInitialProgress = await owner.get(
+      "/api/dashboard/monthly-incentive",
+    );
+    expect(ownerInitialProgress.status).toBe(200);
+    expect(ownerInitialProgress.body.progress).toMatchObject({
+      month: todayInManila().slice(0, 7),
+      salesCentavos: 0,
+      showGoalAndIncentive: false,
+    });
+    expect(ownerInitialProgress.body.progress.tiers).toEqual(
+      initialSetting.body.tiers,
     );
     expect(
       (await cashier.get("/api/dashboard/monthly-incentive")).body.progress,

@@ -188,7 +188,7 @@ export function registerMonthlyIncentiveRoutes(
     }
 
     const setting = monthlyIncentiveSetting(db, month);
-    if (!setting.enabled) {
+    if (!setting.enabled && req.user?.role !== "owner") {
       res.json({ progress: null });
       return;
     }
