@@ -2862,7 +2862,7 @@ a {
   min-height: 34px;
 }
 .stock-lots-card .inventory-table td:nth-child(7) {
-  min-width: 350px;
+  min-width: 130px;
   text-align: center;
   vertical-align: middle;
 }
