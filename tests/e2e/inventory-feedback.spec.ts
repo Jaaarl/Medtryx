@@ -120,8 +120,22 @@ test("stock adjustment pre-fills the current average acquisition cost", async ({
     .locator(".stock-list-card .inventory-table tbody tr")
     .filter({ hasText: "Synthetic Adjustment Cost Prefill" })
     .click();
-  await page.getByLabel("Quantity change (use minus to remove)").fill("1");
+  const quantityChange = page.getByLabel(
+    "Quantity change (use minus to remove)",
+  );
+  const quantityPreview = page.locator(".stock-adjustment-preview");
+  await quantityChange.fill("1");
   await expect(page.locator("#adjust-cost")).toHaveValue("5.00");
+  await expect(quantityPreview).toHaveText(
+    "Total quantity after adjustment: 5 piece",
+  );
+  await expect(quantityPreview).toHaveCSS("color", "rgb(16, 84, 72)");
+
+  await quantityChange.fill("-1");
+  await expect(quantityPreview).toHaveText(
+    "Total quantity after adjustment: 3 piece",
+  );
+  await expect(quantityPreview).toHaveCSS("color", "rgb(180, 35, 24)");
 });
 
 test("adding a matching product from Products receives stock without duplicating it", async ({

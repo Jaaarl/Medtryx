@@ -2708,6 +2708,17 @@ a {
 .stock-adjustment-column .inventory-form-card {
   min-width: 0;
 }
+.stock-adjustment-preview {
+  font-size: 10px;
+  font-weight: 650;
+  margin: -6px 0 0;
+}
+.stock-adjustment-preview-add {
+  color: var(--green-dark);
+}
+.stock-adjustment-preview-remove {
+  color: #b42318;
+}
 .selected-product-strip {
   background: #f6f9f7;
   border: 1px solid #e9f0ec;

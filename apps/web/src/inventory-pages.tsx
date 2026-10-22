@@ -3522,6 +3522,24 @@ export function StockPage() {
                     required
                   />
                 </Field>
+                {adjustQty !== "" &&
+                  Number.isSafeInteger(Number(adjustQty)) && (
+                    <small
+                      className={`field-hint stock-adjustment-preview${
+                        Number(adjustQty) > 0
+                          ? " stock-adjustment-preview-add"
+                          : Number(adjustQty) < 0
+                            ? " stock-adjustment-preview-remove"
+                            : ""
+                      }`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      Total quantity after adjustment:{" "}
+                      {selected.quantityOnHand + Number(adjustQty)}{" "}
+                      {selected.unit}
+                    </small>
+                  )}
                 {selected.tracksLots && Number(adjustQty) < 0 && (
                   <Field id="adjust-lot" label="Exact lot being removed">
                     <select
