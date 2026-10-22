@@ -5409,67 +5409,171 @@ a {
   font-weight: 700;
 }
 .monthly-incentive-settings {
+  display: grid;
+  gap: 16px;
   margin-top: 18px;
 }
-.monthly-incentive-settings-body {
-  padding: 0 20px 20px;
+.monthly-incentive-month-picker {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e0e9e5;
+  border-radius: 12px;
+  box-shadow: 0 3px 14px rgba(27, 65, 55, 0.035);
+  display: flex;
+  gap: 10px;
+  justify-self: center;
+  max-width: 100%;
+  padding: 8px;
 }
-.monthly-incentive-month-field {
+.monthly-incentive-month-picker > .button {
   align-items: center;
   display: flex;
-  gap: 18px;
-  justify-content: center;
-  margin: 0 auto 18px;
-  max-width: 100%;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 13px;
+  white-space: nowrap;
 }
-.monthly-incentive-month-field > .button {
+.monthly-incentive-month-icon {
   align-items: center;
-  display: inline-flex;
-  gap: 3px;
+  border-left: 1px solid #edf1ef;
+  color: #17745e;
+  display: flex;
+  height: 34px;
+  justify-content: center;
+  padding-left: 12px;
 }
 .monthly-incentive-month-label {
   color: #53645a;
   display: grid;
-  font-size: 10px;
-  gap: 2px;
-  text-align: center;
+  font-size: 11px;
+  gap: 1px;
+  min-width: 126px;
 }
 .monthly-incentive-month-label strong {
-  color: #28483b;
-  font-size: 13px;
+  color: #17251f;
+  font-size: 14px;
+  font-weight: 700;
 }
-.monthly-incentive-toggle {
+.monthly-incentive-feedback {
+  margin: 0;
+}
+.monthly-incentive-display-card,
+.monthly-incentive-sales-card {
+  padding: 0;
+}
+.monthly-incentive-panel-heading {
+  align-items: center;
+  border-bottom: 1px solid #e9efec;
+  display: flex;
+  gap: 13px;
+  min-height: 62px;
+  padding: 11px 20px;
+}
+.monthly-incentive-panel-icon {
+  align-items: center;
+  background: #f1f8f5;
+  border: 1px solid #e5f0eb;
+  border-radius: 12px;
+  color: #11735d;
+  display: inline-flex;
+  flex: 0 0 38px;
+  height: 38px;
+  justify-content: center;
+}
+.monthly-incentive-panel-heading h2 {
+  color: #1d2924;
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+.monthly-incentive-sales-heading {
   align-items: flex-start;
-  border-bottom: 1px solid #edf1ee;
-  margin-bottom: 15px;
-  padding: 0 0 14px;
+  border-bottom: 0;
+  padding-bottom: 8px;
 }
-.monthly-incentive-toggle > input,
-.monthly-incentive-checkout-toggle > input {
-  flex: 0 0 auto;
-  margin-top: 2px;
+.monthly-incentive-sales-heading .monthly-incentive-panel-icon {
+  margin-top: 1px;
 }
-.monthly-incentive-toggle > span,
-.monthly-incentive-checkout-toggle > span {
-  display: grid;
-  gap: 4px;
-}
-.monthly-incentive-toggle strong,
-.monthly-incentive-checkout-toggle strong {
-  color: #28483b;
+.monthly-incentive-sales-heading p {
+  color: #7a8982;
   font-size: 11px;
-}
-.monthly-incentive-toggle small,
-.monthly-incentive-checkout-toggle small {
-  color: #78867e;
-  font-size: 10px;
   line-height: 1.45;
+  margin: 4px 0 0;
 }
-.monthly-incentive-checkout-toggle {
-  align-items: flex-start;
-  border-bottom: 1px solid #edf1ee;
-  margin: -2px 0 15px;
-  padding: 0 0 14px;
+.monthly-incentive-display-settings-body {
+  padding: 0 20px 2px;
+}
+.monthly-incentive-toggle-row {
+  align-items: center;
+  border-bottom: 1px solid #e9efec;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  min-height: 62px;
+  padding: 10px 0;
+  position: relative;
+}
+.monthly-incentive-toggle-row:last-child {
+  border-bottom: 0;
+}
+.monthly-incentive-toggle-input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+.monthly-incentive-switch {
+  background: #cbd2d7;
+  border-radius: 999px;
+  cursor: pointer;
+  display: block;
+  height: 26px;
+  position: relative;
+  transition: background-color 150ms ease;
+  width: 50px;
+}
+.monthly-incentive-switch::after {
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  content: "";
+  height: 20px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: transform 150ms ease;
+  width: 20px;
+}
+.monthly-incentive-toggle-input:checked + .monthly-incentive-switch {
+  background: #138468;
+}
+.monthly-incentive-toggle-input:checked + .monthly-incentive-switch::after {
+  transform: translateX(24px);
+}
+.monthly-incentive-toggle-input:focus-visible + .monthly-incentive-switch {
+  outline: 3px solid rgba(19, 132, 104, 0.28);
+  outline-offset: 2px;
+}
+.monthly-incentive-toggle-input:disabled + .monthly-incentive-switch {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.monthly-incentive-toggle-copy {
+  display: grid;
+  gap: 3px;
+}
+.monthly-incentive-toggle-copy strong {
+  color: #1e2924;
+  font-size: 12px;
+  font-weight: 700;
+}
+.monthly-incentive-toggle-copy small {
+  color: #78867e;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.monthly-incentive-sales-body {
+  padding: 4px 20px 18px;
 }
 .monthly-incentive-dashboard-state {
   background: #fff;
@@ -5520,27 +5624,30 @@ a {
 .monthly-incentive-tier-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-.monthly-incentive-tier-editor h3 {
-  color: #28483b;
-  font-size: 12px;
-  margin: 0 0 2px;
+  gap: 0;
 }
 .monthly-incentive-editor-heading,
 .monthly-incentive-editor-row {
   align-items: center;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   grid-template-columns:
-    minmax(150px, 1fr) minmax(130px, 0.8fr) minmax(115px, 0.7fr)
-    34px;
+    minmax(0, 1.2fr) minmax(0, 0.95fr) minmax(180px, 1.05fr)
+    36px;
 }
 .monthly-incentive-editor-heading {
-  color: #69776f;
-  font-size: 10px;
+  background: #f1f8f5;
+  border-radius: 8px;
+  color: #34564b;
+  font-size: 11px;
   font-weight: 700;
-  padding: 0 1px 2px;
+  min-height: 36px;
+  padding: 0 14px;
+}
+.monthly-incentive-editor-row {
+  border-bottom: 1px solid #e9efec;
+  min-height: 56px;
+  padding: 7px 12px;
 }
 .monthly-incentive-editor-row > label {
   align-items: center;
@@ -5550,7 +5657,7 @@ a {
 }
 .monthly-incentive-editor-row .text-input {
   font-size: 13px;
-  height: 38px;
+  height: 36px;
   padding-left: 25px;
   width: 100%;
 }
@@ -5563,9 +5670,13 @@ a {
   z-index: 1;
 }
 .monthly-incentive-color-control {
+  align-items: center;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
   gap: 7px;
+  min-width: 0;
 }
-.monthly-incentive-color-control input {
+.monthly-incentive-color-control input[type="color"] {
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -5573,9 +5684,14 @@ a {
   padding: 0;
   width: 38px;
 }
-.monthly-incentive-color-control code {
-  color: #68766f;
-  font-size: 10px;
+.monthly-incentive-color-control .monthly-incentive-color-value {
+  background: #fff;
+  border: 1px solid #dfe8e4;
+  cursor: text;
+  font-size: 12px;
+  height: 36px;
+  padding: 0 10px;
+  width: 100%;
 }
 .monthly-incentive-remove {
   color: #89948d;
@@ -6792,12 +6908,10 @@ a {
     display: none;
   }
   .monthly-incentive-editor-row {
-    background: #f8faf8;
-    border: 1px solid #e8eeea;
-    border-radius: 9px;
+    background: #fff;
     gap: 9px 8px;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
-    padding: 10px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
+    padding: 12px 4px;
   }
   .monthly-incentive-editor-row > label:nth-child(1),
   .monthly-incentive-editor-row > label:nth-child(2) {
@@ -6805,7 +6919,7 @@ a {
     flex-direction: column;
     gap: 5px;
   }
-  .monthly-incentive-editor-row .visually-hidden {
+  .monthly-incentive-editor-row .monthly-incentive-tier-caption {
     clip: auto;
     clip-path: none;
     color: #69776f;
@@ -6818,7 +6932,7 @@ a {
   .monthly-incentive-editor-row .text-input {
     padding-left: 25px;
   }
-  .monthly-incentive-editor-row > label:nth-child(3) {
+  .monthly-incentive-editor-row > .monthly-incentive-color-control {
     grid-column: 1 / 3;
   }
   .monthly-incentive-editor-row > .monthly-incentive-remove {
@@ -6849,8 +6963,45 @@ a {
   .monthly-incentive-summary > div > strong {
     font-size: 16px;
   }
-  .monthly-incentive-settings-body {
-    padding: 0 14px 16px;
+  .monthly-incentive-month-picker {
+    gap: 5px;
+    padding: 6px;
+  }
+  .monthly-incentive-month-picker > .button {
+    gap: 2px;
+    padding: 0 7px;
+  }
+  .monthly-incentive-month-icon {
+    padding-left: 7px;
+  }
+  .monthly-incentive-month-label {
+    min-width: 112px;
+  }
+  .monthly-incentive-month-label strong {
+    font-size: 12px;
+  }
+  .monthly-incentive-panel-heading {
+    gap: 10px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .monthly-incentive-display-settings-body {
+    padding: 0 14px 2px;
+  }
+  .monthly-incentive-toggle-row {
+    gap: 10px;
+    grid-template-columns: 50px minmax(0, 1fr);
+  }
+  .monthly-incentive-sales-body {
+    padding: 4px 14px 14px;
+  }
+  .monthly-incentive-setting-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .monthly-incentive-setting-actions > .button {
+    justify-content: center;
+    width: 100%;
   }
   .monthly-incentive-progress-caption {
     font-size: 10px;
