@@ -35,6 +35,7 @@ import { registerReportRoutes } from "./reports.js";
 import { registerSalesRoutes } from "./sales.js";
 import { registerSalesJournalRoutes } from "./sales-journal.js";
 import { registerCheckoutInventoryRoutes } from "./checkout-inventory.js";
+import { registerMonthlyIncentiveRoutes } from "./monthly-incentive.js";
 import { apiMaintenance } from "./maintenance.js";
 import { registerAiReceiptRoutes } from "./receipt-workflow.js";
 import { registerExpenseRoutes } from "./expenses.js";
@@ -424,6 +425,7 @@ export function createApp(
   registerCheckoutInventoryRoutes(inventoryRouter, db);
   registerBundleRoutes(inventoryRouter, db);
   registerBackupRoutes(inventoryRouter, db);
+  registerMonthlyIncentiveRoutes(inventoryRouter, db);
   app.use("/api", inventoryRouter);
   const salesRouter = express.Router();
   // Register fixed sales paths such as /sales/recent before the parameterized

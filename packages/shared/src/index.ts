@@ -29,6 +29,74 @@ export const createUserSchema = z
   })
   .strict();
 
+export const monthlyIncentiveTierSchema = z
+  .object({
+    salesTargetCentavos: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER),
+    incentiveCentavos: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER),
+    color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  })
+  .strict();
+
+export const monthlyIncentiveSettingSchema = z
+  .object({
+    enabled: z.boolean(),
+    tiers: z.array(monthlyIncentiveTierSchema).min(1).max(12),
+  })
+  .strict()
+  .superRefine((setting, context) => {
+    for (let index = 1; index < setting.tiers.length; index += 1) {
+      if (
+        setting.tiers[index]!.salesTargetCentavos <=
+        setting.tiers[index - 1]!.salesTargetCentavos
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Monthly incentive sales targets must increase.",
+          path: ["tiers", index, "salesTargetCentavos"],
+        });
+      }
+      if (
+        setting.tiers[index]!.incentiveCentavos <
+        setting.tiers[index - 1]!.incentiveCentavos
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Monthly incentive amounts cannot decrease at higher tiers.",
+          path: ["tiers", index, "incentiveCentavos"],
+        });
+      }
+    }
+  });
+
+export type MonthlyIncentiveTier = z.infer<typeof monthlyIncentiveTierSchema>;
+export type MonthlyIncentiveSetting = z.infer<
+  typeof monthlyIncentiveSettingSchema
+>;
+
+export const defaultMonthlyIncentiveSetting: MonthlyIncentiveSetting = {
+  enabled: false,
+  tiers: [
+    {
+      salesTargetCentavos: 25_000_000,
+      incentiveCentavos: 5_000,
+      color: "#25875A",
+    },
+    {
+      salesTargetCentavos: 50_000_000,
+      incentiveCentavos: 10_000,
+      color: "#2878B8",
+    },
+  ],
+};
+
 export type UserRole = z.infer<typeof userRoleSchema>;
 export type User = z.infer<typeof userSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;

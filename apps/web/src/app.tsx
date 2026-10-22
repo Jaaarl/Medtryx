@@ -55,6 +55,7 @@ import { ReceiptReceivingPage } from "./receipt-receiving-page";
 import { ExpensesPage } from "./expenses-page";
 import { ActivityLogPage } from "./activity-log-page";
 import { OwnerAssistantPage } from "./owner-assistant-page";
+import { MonthlyIncentiveSettings } from "./monthly-incentive-settings";
 
 const navigation = [
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
@@ -846,6 +847,7 @@ function SettingsPage() {
       <TaxPolicySettings />
       <BnpcPolicySettings />
       <CheckoutInventorySettings />
+      <MonthlyIncentiveSettings />
     </section>
   );
 }

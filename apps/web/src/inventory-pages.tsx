@@ -24,6 +24,7 @@ import {
   type SampleReceiptData,
 } from "./sample-receipt";
 import { CheckoutOverridesPanel } from "./checkout-overrides-page";
+import { MonthlyIncentiveProgress } from "./monthly-incentive-progress";
 
 const MAX_LINE_QUANTITY = 1_000_000;
 
@@ -5775,6 +5776,9 @@ export function CheckoutPage({
             : "Find an active catalog product, review its price and availability, then add it to the cart."
         }
       />
+      {!manualEntry && (
+        <MonthlyIncentiveProgress refreshKey={recentSalesRefresh} />
+      )}
       {stockOverrideEnabled && (
         <div
           className="banner banner-info checkout-stock-override-status"
