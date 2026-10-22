@@ -124,6 +124,10 @@ export function registerMonthlyIncentiveRoutes(
 
       const month = requestedSettingsMonth(req, res, true);
       if (!month) return;
+      if (month < todayInManila().slice(0, 7)) {
+        res.status(400).json({ error: "past_month_goals_read_only" });
+        return;
+      }
 
       const previous = monthlyIncentiveSetting(db, month);
       const value = parsed.data;

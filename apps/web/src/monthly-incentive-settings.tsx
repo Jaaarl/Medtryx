@@ -257,7 +257,12 @@ export function MonthlyIncentiveSettings({
             className="button button-quiet"
             type="button"
             aria-label={`Previous month from ${monthLabel(goalMonth)}`}
-            disabled={!loaded || loadFailed || saving}
+            disabled={
+              !loaded ||
+              loadFailed ||
+              saving ||
+              goalMonth <= currentMonthInManila()
+            }
             onClick={() => changeGoalMonth(shiftMonth(goalMonth, -1))}
           >
             <ChevronLeft size={16} /> Previous

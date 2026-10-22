@@ -280,23 +280,14 @@ describe("monthly sales incentive settings and progress", () => {
     expect(saved.status).toBe(200);
     expect(saved.body).toEqual(savedSetting);
 
-    const previousMonthSetting = {
-      ...savedSetting,
-      tiers: [
-        {
-          salesTargetCentavos: 750_000,
-          incentiveCentavos: 25_000,
-          color: "#C68120",
-        },
-      ],
-    };
     const savedPreviousMonth = await postWithCsrf(
       owner,
       "put",
       `/api/settings/monthly-incentive?month=${previousMonthKey}`,
-      previousMonthSetting,
+      savedSetting,
     );
-    expect(savedPreviousMonth.status).toBe(200);
+    expect(savedPreviousMonth.status).toBe(400);
+    expect(savedPreviousMonth.body.error).toBe("past_month_goals_read_only");
 
     const futureMonthKey = shiftMonth(currentDate.slice(0, 7), 1);
     expect(
@@ -329,6 +320,24 @@ describe("monthly sales incentive settings and progress", () => {
       futureMonthSetting,
     );
     expect(savedFutureMonth.status).toBe(200);
+
+    const updatedCurrentSetting = {
+      ...savedSetting,
+      tiers: [
+        {
+          salesTargetCentavos: 300_000,
+          incentiveCentavos: 7_500,
+          color: "#25875A",
+        },
+      ],
+    };
+    const updatedCurrent = await postWithCsrf(
+      owner,
+      "put",
+      "/api/settings/monthly-incentive",
+      updatedCurrentSetting,
+    );
+    expect(updatedCurrent.status).toBe(200);
     expect(
       (
         await owner.get(
@@ -342,14 +351,7 @@ describe("monthly sales incentive settings and progress", () => {
           `/api/settings/monthly-incentive?month=${currentDate.slice(0, 7)}`,
         )
       ).body.tiers,
-    ).toEqual(savedSetting.tiers);
-    expect(
-      (
-        await owner.get(
-          `/api/settings/monthly-incentive?month=${previousMonthKey}`,
-        )
-      ).body.tiers,
-    ).toEqual(previousMonthSetting.tiers);
+    ).toEqual(updatedCurrentSetting.tiers);
     expect(
       (await owner.get("/api/settings/monthly-incentive?month=not-a-month"))
         .status,
@@ -375,7 +377,9 @@ describe("monthly sales incentive settings and progress", () => {
     expect(progress.body.progress).not.toHaveProperty("tiers");
     const ownerProgress = await owner.get("/api/dashboard/monthly-incentive");
     expect(ownerProgress.body.progress.showGoalAndIncentive).toBe(false);
-    expect(ownerProgress.body.progress.tiers).toEqual(savedSetting.tiers);
+    expect(ownerProgress.body.progress.tiers).toEqual(
+      updatedCurrentSetting.tiers,
+    );
 
     const ownerPreviousMonth = await owner.get(
       `/api/dashboard/monthly-incentive?month=${previousMonthKey}`,
@@ -386,9 +390,6 @@ describe("monthly sales incentive settings and progress", () => {
       salesCentavos: 800_000,
       showGoalAndIncentive: false,
     });
-    expect(ownerPreviousMonth.body.progress.tiers).toEqual(
-      previousMonthSetting.tiers,
-    );
     expect(
       (
         await cashier.get(
