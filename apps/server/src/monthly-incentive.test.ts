@@ -290,6 +290,9 @@ describe("monthly sales incentive settings and progress", () => {
       showGoalAndIncentive: false,
     });
     expect(progress.body.progress).not.toHaveProperty("tiers");
+    const ownerProgress = await owner.get("/api/dashboard/monthly-incentive");
+    expect(ownerProgress.body.progress.showGoalAndIncentive).toBe(false);
+    expect(ownerProgress.body.progress.tiers).toEqual(savedSetting.tiers);
 
     const ownerPreviousMonth = await owner.get(
       `/api/dashboard/monthly-incentive?month=${previousMonthKey}`,

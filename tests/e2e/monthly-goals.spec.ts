@@ -59,6 +59,7 @@ test("Monthly Goals is separate from Dashboard and cashier access follows the ow
   await expect(
     page.getByText("Progress is available on Monthly Goals."),
   ).toBeVisible();
+  await expect(page.getByText("Potential incentive")).toBeVisible();
   await page.getByRole("button", { name: "Previous month" }).click();
   await expect(page.getByRole("button", { name: "This month" })).toBeVisible();
   await page.getByRole("button", { name: "This month" }).click();

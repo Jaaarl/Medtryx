@@ -41,11 +41,13 @@ export function MonthlyIncentiveProgress({
   refreshKey,
   showDisabledState = false,
   allowMonthNavigation = false,
+  alwaysShowGoalAndIncentive = false,
 }: {
   placement: "monthly-goals" | "checkout";
   refreshKey: number;
   showDisabledState?: boolean;
   allowMonthNavigation?: boolean;
+  alwaysShowGoalAndIncentive?: boolean;
 }) {
   const [progress, setProgress] = useState<MonthlyIncentiveProgressData | null>(
     null,
@@ -106,7 +108,11 @@ export function MonthlyIncentiveProgress({
       </div>
     );
   }
-  if (!progress || (progress.showGoalAndIncentive && !progress.tiers?.length)) {
+  if (
+    !progress ||
+    ((progress.showGoalAndIncentive || alwaysShowGoalAndIncentive) &&
+      !progress.tiers?.length)
+  ) {
     return placement === "monthly-goals" && showDisabledState ? (
       <div className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty">
         Monthly sales progress has not been enabled by the owner yet.
@@ -115,6 +121,8 @@ export function MonthlyIncentiveProgress({
   }
   if (placement === "checkout" && !progress.showOnCheckout) return null;
 
+  const showGoalAndIncentive =
+    alwaysShowGoalAndIncentive || progress.showGoalAndIncentive;
   const tiers = progress.tiers ?? [];
   const nextTierIndex = tiers.findIndex(
     (tier) => tier.salesTargetCentavos > progress.salesCentavos,
@@ -188,7 +196,7 @@ export function MonthlyIncentiveProgress({
         role="progressbar"
         aria-label={
           progress.nextTierAvailable
-            ? progress.showGoalAndIncentive
+            ? showGoalAndIncentive
               ? `Progress to ${pesos(displayTier!.salesTargetCentavos)} sales`
               : "Progress to next monthly milestone"
             : "Top monthly incentive tier reached"
@@ -205,7 +213,7 @@ export function MonthlyIncentiveProgress({
             ? `${progress.progressPercent}% to next milestone`
             : "100% complete"}
         </span>
-        {progress.showGoalAndIncentive && (
+        {showGoalAndIncentive && (
           <span>
             {nextTier
               ? `Target: ${pesos(displayTier!.salesTargetCentavos)}`
@@ -214,7 +222,7 @@ export function MonthlyIncentiveProgress({
         )}
       </div>
 
-      {progress.showGoalAndIncentive && (
+      {showGoalAndIncentive && (
         <>
           <div className="monthly-incentive-summary">
             <div>

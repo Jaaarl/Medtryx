@@ -23,6 +23,7 @@ export function MonthlyGoalsPage() {
         refreshKey={refreshKey}
         showDisabledState={isOwner}
         allowMonthNavigation={isOwner}
+        alwaysShowGoalAndIncentive={isOwner}
       />
       {isOwner && (
         <MonthlyIncentiveSettings

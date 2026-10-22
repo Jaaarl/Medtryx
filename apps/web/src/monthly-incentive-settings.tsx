@@ -268,8 +268,9 @@ export function MonthlyIncentiveSettings({
           <span>
             <strong>Show goal and incentive amounts</strong>
             <small>
-              Off by default. When enabled, the Dashboard and Checkout show
-              sales targets, remaining sales, and incentive amounts.
+              Off by default for cashiers. Owners always see amounts on Monthly
+              Goals; this option controls amounts on the cashier view and
+              Checkout.
             </small>
           </span>
         </label>

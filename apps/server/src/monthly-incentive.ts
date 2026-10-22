@@ -169,7 +169,9 @@ export function registerMonthlyIncentiveRoutes(
         progressPercent,
         displayColor: displayTier.color,
         nextTierAvailable: nextTierIndex >= 0,
-        ...(setting.showGoalAndIncentive && { tiers: setting.tiers }),
+        ...((setting.showGoalAndIncentive || req.user?.role === "owner") && {
+          tiers: setting.tiers,
+        }),
         showOnCheckout: setting.showOnCheckout,
         showGoalAndIncentive: setting.showGoalAndIncentive,
       },
