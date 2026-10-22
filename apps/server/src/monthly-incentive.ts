@@ -241,11 +241,15 @@ export function registerMonthlyIncentiveRoutes(
         progressPercent,
         displayColor: displayTier.color,
         nextTierAvailable: nextTierIndex >= 0,
-        ...((setting.showGoalAndIncentive || req.user?.role === "owner") && {
-          tiers: setting.tiers,
-        }),
+        tiers: setting.tiers.map((tier) => ({
+          salesTargetCentavos: tier.salesTargetCentavos,
+          color: tier.color,
+          ...((setting.showGoalAndIncentive || req.user?.role === "owner") && {
+            incentiveCentavos: tier.incentiveCentavos,
+          }),
+        })),
         showOnCheckout: setting.showOnCheckout,
-        showGoalAndIncentive: setting.showGoalAndIncentive,
+        showIncentiveAmounts: setting.showGoalAndIncentive,
       },
     });
   });

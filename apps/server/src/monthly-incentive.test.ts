@@ -182,7 +182,7 @@ describe("monthly sales incentive settings and progress", () => {
     expect(ownerInitialProgress.body.progress).toMatchObject({
       month: todayInManila().slice(0, 7),
       salesCentavos: 0,
-      showGoalAndIncentive: false,
+      showIncentiveAmounts: false,
     });
     expect(ownerInitialProgress.body.progress.tiers).toEqual(
       initialSetting.body.tiers,
@@ -384,11 +384,19 @@ describe("monthly sales incentive settings and progress", () => {
       salesCentavos: 100_000,
       progressPercent: expect.any(Number),
       showOnCheckout: false,
-      showGoalAndIncentive: false,
+      showIncentiveAmounts: false,
     });
-    expect(progress.body.progress).not.toHaveProperty("tiers");
+    expect(progress.body.progress.tiers).toEqual(
+      updatedCurrentSetting.tiers.map(({ salesTargetCentavos, color }) => ({
+        salesTargetCentavos,
+        color,
+      })),
+    );
+    expect(progress.body.progress.tiers[0]).not.toHaveProperty(
+      "incentiveCentavos",
+    );
     const ownerProgress = await owner.get("/api/dashboard/monthly-incentive");
-    expect(ownerProgress.body.progress.showGoalAndIncentive).toBe(false);
+    expect(ownerProgress.body.progress.showIncentiveAmounts).toBe(false);
     expect(ownerProgress.body.progress.tiers).toEqual(
       updatedCurrentSetting.tiers,
     );
@@ -400,7 +408,7 @@ describe("monthly sales incentive settings and progress", () => {
     expect(ownerPreviousMonth.body.progress).toMatchObject({
       month: previousMonthKey,
       salesCentavos: 800_000,
-      showGoalAndIncentive: false,
+      showIncentiveAmounts: false,
     });
     expect(
       (
@@ -421,24 +429,47 @@ describe("monthly sales incentive settings and progress", () => {
       {
         ...savedSetting,
         showOnCheckout: true,
-        showGoalAndIncentive: true,
+        showGoalAndIncentive: false,
       },
     );
     expect(checkoutEnabled.status).toBe(200);
     expect(checkoutEnabled.body.showOnCheckout).toBe(true);
-    expect(checkoutEnabled.body.showGoalAndIncentive).toBe(true);
+    expect(checkoutEnabled.body.showGoalAndIncentive).toBe(false);
     expect(
       (await cashier.get("/api/dashboard/monthly-incentive")).body.progress
         .showOnCheckout,
     ).toBe(true);
     expect(
       (await cashier.get("/api/dashboard/monthly-incentive")).body.progress
-        .showGoalAndIncentive,
-    ).toBe(true);
+        .showIncentiveAmounts,
+    ).toBe(false);
     expect(
       (await cashier.get("/api/dashboard/monthly-incentive")).body.progress
         .tiers,
-    ).toEqual(savedSetting.tiers);
+    ).toEqual(
+      savedSetting.tiers.map(({ salesTargetCentavos, color }) => ({
+        salesTargetCentavos,
+        color,
+      })),
+    );
+
+    const incentiveAmountsEnabled = await postWithCsrf(
+      owner,
+      "put",
+      "/api/settings/monthly-incentive",
+      {
+        ...savedSetting,
+        showOnCheckout: false,
+        showGoalAndIncentive: true,
+      },
+    );
+    expect(incentiveAmountsEnabled.status).toBe(200);
+    const cashierProgressAfterAmountToggle = (
+      await cashier.get("/api/dashboard/monthly-incentive")
+    ).body.progress;
+    expect(cashierProgressAfterAmountToggle.showOnCheckout).toBe(false);
+    expect(cashierProgressAfterAmountToggle.showIncentiveAmounts).toBe(true);
+    expect(cashierProgressAfterAmountToggle.tiers).toEqual(savedSetting.tiers);
   });
 
   it("defaults checkout visibility off for settings saved before the option existed", async () => {

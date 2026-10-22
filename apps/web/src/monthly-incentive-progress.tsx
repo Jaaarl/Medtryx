@@ -9,9 +9,10 @@ type MonthlyIncentiveProgressData = {
   progressPercent: number;
   displayColor: string;
   nextTierAvailable: boolean;
-  tiers?: MonthlyIncentiveTier[];
+  tiers: (Omit<MonthlyIncentiveTier, "incentiveCentavos"> &
+    Partial<Pick<MonthlyIncentiveTier, "incentiveCentavos">>)[];
   showOnCheckout: boolean;
-  showGoalAndIncentive: boolean;
+  showIncentiveAmounts: boolean;
 };
 
 function pesos(centavos: number): string {
@@ -41,13 +42,13 @@ export function MonthlyIncentiveProgress({
   refreshKey,
   showDisabledState = false,
   allowMonthNavigation = false,
-  alwaysShowGoalAndIncentive = false,
+  alwaysShowIncentiveAmounts = false,
 }: {
   placement: "monthly-goals" | "checkout";
   refreshKey: number;
   showDisabledState?: boolean;
   allowMonthNavigation?: boolean;
-  alwaysShowGoalAndIncentive?: boolean;
+  alwaysShowIncentiveAmounts?: boolean;
 }) {
   const [progress, setProgress] = useState<MonthlyIncentiveProgressData | null>(
     null,
@@ -108,11 +109,7 @@ export function MonthlyIncentiveProgress({
       </div>
     );
   }
-  if (
-    !progress ||
-    ((progress.showGoalAndIncentive || alwaysShowGoalAndIncentive) &&
-      !progress.tiers?.length)
-  ) {
+  if (!progress || !progress.tiers.length) {
     return placement === "monthly-goals" && showDisabledState ? (
       <div className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty">
         Monthly sales progress has not been enabled by the owner yet.
@@ -121,9 +118,9 @@ export function MonthlyIncentiveProgress({
   }
   if (placement === "checkout" && !progress.showOnCheckout) return null;
 
-  const showGoalAndIncentive =
-    alwaysShowGoalAndIncentive || progress.showGoalAndIncentive;
-  const tiers = progress.tiers ?? [];
+  const showIncentiveAmounts =
+    alwaysShowIncentiveAmounts || progress.showIncentiveAmounts;
+  const tiers = progress.tiers;
   const nextTierIndex = tiers.findIndex(
     (tier) => tier.salesTargetCentavos > progress.salesCentavos,
   );
@@ -196,9 +193,7 @@ export function MonthlyIncentiveProgress({
         role="progressbar"
         aria-label={
           progress.nextTierAvailable
-            ? showGoalAndIncentive
-              ? `Progress to ${pesos(displayTier!.salesTargetCentavos)} sales`
-              : "Progress to next monthly milestone"
+            ? `Progress to ${pesos(displayTier!.salesTargetCentavos)} sales`
             : "Top monthly incentive tier reached"
         }
         aria-valuemin={0}
@@ -213,61 +208,58 @@ export function MonthlyIncentiveProgress({
             ? `${progress.progressPercent}% to next milestone`
             : "100% complete"}
         </span>
-        {showGoalAndIncentive && (
-          <span>
-            {nextTier
-              ? `Target: ${pesos(displayTier!.salesTargetCentavos)}`
-              : `Top target: ${pesos(displayTier!.salesTargetCentavos)}`}
-          </span>
+        <span>
+          {nextTier
+            ? `Target: ${pesos(displayTier!.salesTargetCentavos)}`
+            : `Top target: ${pesos(displayTier!.salesTargetCentavos)}`}
+        </span>
+      </div>
+
+      <div
+        className={`monthly-incentive-summary ${showIncentiveAmounts ? "" : "monthly-incentive-summary-goal-only"}`}
+      >
+        <div>
+          <span>Remaining sales</span>
+          <strong>
+            {progress.nextTierAvailable ? pesos(remaining) : "Top tier reached"}
+          </strong>
+        </div>
+        {showIncentiveAmounts && (
+          <div>
+            <span>
+              {progress.nextTierAvailable
+                ? "Potential incentive"
+                : "Top incentive reached"}
+            </span>
+            <strong>{pesos(displayTier!.incentiveCentavos ?? 0)}</strong>
+          </div>
         )}
       </div>
 
-      {showGoalAndIncentive && (
-        <>
-          <div className="monthly-incentive-summary">
-            <div>
-              <span>Remaining sales</span>
-              <strong>
-                {progress.nextTierAvailable
-                  ? pesos(remaining)
-                  : "Top tier reached"}
-              </strong>
-            </div>
-            <div>
+      <div
+        className="monthly-incentive-tiers"
+        aria-label="Incentive milestones"
+      >
+        {tiers.map((tier) => {
+          const achieved = tier.salesTargetCentavos <= progress.salesCentavos;
+          return (
+            <span
+              className={`monthly-incentive-tier ${achieved ? "monthly-incentive-tier-achieved" : ""}`}
+              key={tier.salesTargetCentavos}
+              style={{ "--tier-color": tier.color } as CSSProperties}
+            >
+              <i aria-hidden="true" />
               <span>
-                {progress.nextTierAvailable
-                  ? "Potential incentive"
-                  : "Top incentive reached"}
+                {pesos(tier.salesTargetCentavos)} sales
+                {showIncentiveAmounts && tier.incentiveCentavos !== undefined
+                  ? ` · ${pesos(tier.incentiveCentavos)} incentive`
+                  : ""}
               </span>
-              <strong>{pesos(displayTier!.incentiveCentavos)}</strong>
-            </div>
-          </div>
-
-          <div
-            className="monthly-incentive-tiers"
-            aria-label="Incentive milestones"
-          >
-            {tiers.map((tier) => {
-              const achieved =
-                tier.salesTargetCentavos <= progress.salesCentavos;
-              return (
-                <span
-                  className={`monthly-incentive-tier ${achieved ? "monthly-incentive-tier-achieved" : ""}`}
-                  key={tier.salesTargetCentavos}
-                  style={{ "--tier-color": tier.color } as CSSProperties}
-                >
-                  <i aria-hidden="true" />
-                  <span>
-                    {pesos(tier.salesTargetCentavos)} sales ·{" "}
-                    {pesos(tier.incentiveCentavos)}
-                  </span>
-                  {achieved && <small>Reached</small>}
-                </span>
-              );
-            })}
-          </div>
-        </>
-      )}
+              {achieved && <small>Reached</small>}
+            </span>
+          );
+        })}
+      </div>
     </section>
   );
 }

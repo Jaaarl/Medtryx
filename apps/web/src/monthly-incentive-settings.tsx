@@ -28,7 +28,7 @@ type TierDraft = {
 type SettingDraft = {
   enabled: boolean;
   showOnCheckout: boolean;
-  showGoalAndIncentive: boolean;
+  showIncentiveAmounts: boolean;
   tiers: TierDraft[];
 };
 
@@ -49,7 +49,7 @@ function makeDraft(setting: MonthlyIncentiveSetting): SettingDraft {
   return {
     enabled: setting.enabled,
     showOnCheckout: setting.showOnCheckout,
-    showGoalAndIncentive: setting.showGoalAndIncentive,
+    showIncentiveAmounts: setting.showGoalAndIncentive,
     tiers: setting.tiers.map((tier) => ({
       salesTarget: amountInput(tier.salesTargetCentavos),
       incentive: amountInput(tier.incentiveCentavos),
@@ -197,7 +197,7 @@ export function MonthlyIncentiveSettings({
     const parsed = monthlyIncentiveSettingSchema.safeParse({
       enabled: draft.enabled,
       showOnCheckout: draft.showOnCheckout,
-      showGoalAndIncentive: draft.showGoalAndIncentive,
+      showGoalAndIncentive: draft.showIncentiveAmounts,
       tiers,
     });
     if (!parsed.success) {
@@ -344,10 +344,10 @@ export function MonthlyIncentiveSettings({
             />
             <span className="monthly-incentive-switch" aria-hidden="true" />
             <span className="monthly-incentive-toggle-copy">
-              <strong>Also show progress at the top of Checkout</strong>
+              <strong>Show progress in Checkout</strong>
               <small>
-                Optional and off by default. The Dashboard remains available
-                when incentives are enabled.
+                Optional and off by default. This controls whether the progress
+                card appears in Checkout.
               </small>
             </span>
           </label>
@@ -356,23 +356,23 @@ export function MonthlyIncentiveSettings({
             <input
               className="monthly-incentive-toggle-input"
               type="checkbox"
-              checked={draft.showGoalAndIncentive}
+              checked={draft.showIncentiveAmounts}
               disabled={!loaded || loadFailed || saving}
               onChange={(event) => {
                 setDraft((current) => ({
                   ...current,
-                  showGoalAndIncentive: event.target.checked,
+                  showIncentiveAmounts: event.target.checked,
                 }));
                 setNotice("");
               }}
             />
             <span className="monthly-incentive-switch" aria-hidden="true" />
             <span className="monthly-incentive-toggle-copy">
-              <strong>Show goal and incentive amounts</strong>
+              <strong>Show incentive amounts to cashiers</strong>
               <small>
-                Off by default for cashiers. Owners always see amounts on
-                Monthly Goals; this option controls amounts on the cashier view
-                and Checkout.
+                Cashiers always see sales goals and progress when Monthly Goals
+                are enabled. This controls incentive amounts on the cashier page
+                and Checkout. Owners always see amounts on Monthly Goals.
               </small>
             </span>
           </label>
