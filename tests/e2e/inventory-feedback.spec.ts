@@ -81,6 +81,49 @@ test("product and stock headers sort their rows in both directions", async ({
   await expect(stockRows.first()).toContainText("Synthetic Sort Alpha");
 });
 
+test("stock adjustment pre-fills the current average acquisition cost", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const createResponse = await page.request.post("/api/products", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      sku: "SYN-ADJUST-COST-PREFILL",
+      name: "Synthetic Adjustment Cost Prefill",
+      unit: "piece",
+      sellingPrice: "10.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 2,
+      openingUnitCost: "4.00",
+    },
+  });
+  expect(createResponse.status()).toBe(201);
+  const created = (await createResponse.json()) as { product: { id: string } };
+  const receiptResponse = await page.request.post("/api/stock/receipts", {
+    headers: { "x-csrf-token": csrf.token },
+    data: {
+      productId: created.product.id,
+      quantity: 2,
+      unitCost: "6.00",
+    },
+  });
+  expect(receiptResponse.status()).toBe(201);
+
+  await page.goto("/stock");
+  await page.getByLabel("Search current stock").fill("SYN-ADJUST-COST-PREFILL");
+  await page
+    .locator(".stock-list-card .inventory-table tbody tr")
+    .filter({ hasText: "Synthetic Adjustment Cost Prefill" })
+    .click();
+  await page.getByLabel("Quantity change (use minus to remove)").fill("1");
+  await expect(page.locator("#adjust-cost")).toHaveValue("5.00");
+});
+
 test("adding a matching product from Products receives stock without duplicating it", async ({
   page,
 }) => {

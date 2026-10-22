@@ -55,6 +55,12 @@ type Product = {
   grossProfitEstimateApproved: boolean;
 };
 
+function adjustmentUnitCost(product: Product) {
+  return product.quantityOnHand > 0
+    ? product.weightedAverageUnitCost
+    : (product.latestAcquisitionCost ?? product.weightedAverageUnitCost);
+}
+
 type CatalogProduct = Pick<
   Product,
   | "id"
@@ -2723,16 +2729,28 @@ export function StockPage() {
   }
 
   function focusCostCorrection(productId: string) {
-    setSelectedId(productId);
+    const product = products.find((candidate) => candidate.id === productId);
+    if (product) selectStockProduct(product);
     document
       .getElementById("stock-cost-correction")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function selectStockProduct(product: Product) {
+    setSelectedId(product.id);
+    setAdjustCost(adjustmentUnitCost(product));
+    setAdjustZeroCostReason("");
+  }
+
   async function refreshProducts() {
     const result = await api.get<{ products: Product[] }>("/products");
     setProducts(result.products);
-    if (!selectedId && result.products[0]) setSelectedId(result.products[0].id);
+    const selectedProduct = result.products.find(
+      (product) => product.id === selectedId,
+    );
+    if (selectedProduct) setAdjustCost(adjustmentUnitCost(selectedProduct));
+    else if (!selectedId && result.products[0])
+      selectStockProduct(result.products[0]);
   }
   async function refreshEvents(id = selectedId) {
     const path = stockEventsPath(id, stockHistoryLimit, stockHistoryEventType);
@@ -2774,9 +2792,13 @@ export function StockPage() {
         const routeProduct = productData.products.find(
           (product) => product.id === requestedProductId,
         );
-        if (routeProduct) setSelectedId(routeProduct.id);
-        else if (productData.products[0])
+        if (routeProduct) {
+          setSelectedId(routeProduct.id);
+          setAdjustCost(adjustmentUnitCost(routeProduct));
+        } else if (productData.products[0]) {
           setSelectedId(productData.products[0].id);
+          setAdjustCost(adjustmentUnitCost(productData.products[0]));
+        }
       })
       .catch(() => {
         if (active) setError("Unable to load stock records.");
@@ -2896,7 +2918,6 @@ export function StockPage() {
       setNotice(`Stock adjustment recorded for ${selected.name}.`);
       setAdjustQty("");
       setReason("");
-      setAdjustCost("");
       setAdjustZeroCostReason("");
       setAdjustLotId("");
       setAdjustLotCode("");
@@ -3152,7 +3173,7 @@ export function StockPage() {
                           ? "inventory-row-selected"
                           : ""
                       }
-                      onClick={() => setSelectedId(product.id)}
+                      onClick={() => selectStockProduct(product)}
                     >
                       <td>
                         <strong className="product-description">
