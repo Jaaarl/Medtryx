@@ -43,9 +43,12 @@ test("Monthly Goals is separate from Dashboard and cashier access follows the ow
 
   await page.getByRole("button", { name: "Log out" }).click();
   await signIn(page, cashierCredentials);
+  await expect(page.getByRole("link", { name: "Dashboard" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Monthly Goals" })).toHaveCount(
     0,
   );
+  await page.goto("/dashboard");
+  await expect(page).toHaveURL(/\/checkout$/);
   await page.goto("/monthly-goals");
   await expect(page).toHaveURL(/\/checkout$/);
 

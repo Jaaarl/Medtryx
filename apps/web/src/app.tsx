@@ -63,7 +63,7 @@ const navigation = [
     to: "/dashboard",
     label: "Dashboard",
     icon: LayoutDashboard,
-    ownerOnly: false,
+    ownerOnly: true,
   },
   {
     to: "/monthly-goals",
@@ -205,6 +205,16 @@ function Guard({ ownerOnly = false }: { ownerOnly?: boolean }) {
   return <Outlet />;
 }
 
+function HomeRedirect() {
+  const { user } = useAuth();
+  return (
+    <Navigate
+      to={user?.role === "owner" ? "/dashboard" : "/checkout"}
+      replace
+    />
+  );
+}
+
 function Layout() {
   const { user, signOut } = useAuth();
   const monthlyGoalsEnabled = useContext(MonthlyGoalsVisibilityContext);
@@ -247,9 +257,11 @@ function Layout() {
         <div className="sidebar-header">
           <Link
             className="brand"
-            to="/dashboard"
+            to={user.role === "owner" ? "/dashboard" : "/checkout"}
             onClick={() => setMenuOpen(false)}
-            aria-label="Medtryx dashboard"
+            aria-label={
+              user.role === "owner" ? "Medtryx dashboard" : "Medtryx checkout"
+            }
           >
             <span className="brand-mark">M</span>
             <span className="brand-copy">
@@ -375,7 +387,12 @@ function LoginPage() {
     return <div className="loading-screen">Preparing secure sign in…</div>;
   if (user) {
     const from = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={from ?? "/dashboard"} replace />;
+    return (
+      <Navigate
+        to={from ?? (user.role === "owner" ? "/dashboard" : "/checkout")}
+        replace
+      />
+    );
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1018,8 +1035,7 @@ export function App() {
       <Route element={<Guard />}>
         <Route element={<MonthlyGoalsVisibilityProvider />}>
           <Route element={<Layout />}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
+            <Route index element={<HomeRedirect />} />
             <Route element={<MonthlyGoalsGuard />}>
               <Route path="monthly-goals" element={<MonthlyGoalsPage />} />
             </Route>
@@ -1032,6 +1048,7 @@ export function App() {
             <Route path="expenses" element={<ExpensesPage />} />
             <Route path="account" element={<AccountPage />} />
             <Route element={<Guard ownerOnly />}>
+              <Route path="dashboard" element={<DashboardPage />} />
               <Route path="products" element={<ProductsPage />} />
               <Route path="stock" element={<StockPage />} />
               <Route
