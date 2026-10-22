@@ -24,7 +24,16 @@ type SettingDraft = {
 };
 
 function amountInput(centavos: number): string {
-  return (centavos / 100).toFixed(2);
+  return new Intl.NumberFormat("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(centavos / 100);
+}
+
+function parseAmountInput(value: string): number | null {
+  if (!value.trim()) return null;
+  const amount = Number(value.replaceAll(",", ""));
+  return Number.isFinite(amount) ? amount : null;
 }
 
 function makeDraft(setting: MonthlyIncentiveSetting): SettingDraft {
@@ -42,14 +51,9 @@ function makeDraft(setting: MonthlyIncentiveSetting): SettingDraft {
 
 function tierFromDraft(tier: TierDraft): MonthlyIncentiveTier | null {
   if (!tier.salesTarget.trim() || !tier.incentive.trim()) return null;
-  const target = Number(tier.salesTarget);
-  const incentive = Number(tier.incentive);
-  if (
-    !Number.isFinite(target) ||
-    !Number.isFinite(incentive) ||
-    target <= 0 ||
-    incentive < 0
-  ) {
+  const target = parseAmountInput(tier.salesTarget);
+  const incentive = parseAmountInput(tier.incentive);
+  if (target === null || incentive === null || target <= 0 || incentive < 0) {
     return null;
   }
   return {
@@ -148,8 +152,8 @@ export function MonthlyIncentiveSettings({
   function addTier() {
     setDraft((current) => {
       const last = current.tiers.at(-1);
-      const previousTarget = Number(last?.salesTarget ?? 0);
-      const previousIncentive = Number(last?.incentive ?? 0);
+      const previousTarget = parseAmountInput(last?.salesTarget ?? "") ?? 0;
+      const previousIncentive = parseAmountInput(last?.incentive ?? "") ?? 0;
       return {
         ...current,
         tiers: [
@@ -368,14 +372,22 @@ export function MonthlyIncentiveSettings({
                 <input
                   aria-label={`Tier ${index + 1} monthly sales target in pesos`}
                   className="text-input"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={tier.salesTarget}
                   disabled={!loaded || loadFailed || saving}
                   onChange={(event) =>
                     updateTier(index, "salesTarget", event.target.value)
                   }
+                  onBlur={(event) => {
+                    const amount = parseAmountInput(event.currentTarget.value);
+                    if (amount !== null)
+                      updateTier(
+                        index,
+                        "salesTarget",
+                        amountInput(Math.round(amount * 100)),
+                      );
+                  }}
                 />
               </label>
               <label>
@@ -386,14 +398,22 @@ export function MonthlyIncentiveSettings({
                 <input
                   aria-label={`Tier ${index + 1} incentive in pesos`}
                   className="text-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={tier.incentive}
                   disabled={!loaded || loadFailed || saving}
                   onChange={(event) =>
                     updateTier(index, "incentive", event.target.value)
                   }
+                  onBlur={(event) => {
+                    const amount = parseAmountInput(event.currentTarget.value);
+                    if (amount !== null)
+                      updateTier(
+                        index,
+                        "incentive",
+                        amountInput(Math.round(amount * 100)),
+                      );
+                  }}
                 />
               </label>
               <label className="monthly-incentive-color-control">

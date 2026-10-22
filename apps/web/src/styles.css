@@ -5417,10 +5417,10 @@ a {
 .monthly-incentive-month-field {
   align-items: center;
   display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  margin: 0 0 18px;
-  max-width: 440px;
+  gap: 18px;
+  justify-content: center;
+  margin: 0 auto 18px;
+  max-width: 100%;
 }
 .monthly-incentive-month-field > .button {
   align-items: center;
@@ -5549,7 +5549,7 @@ a {
   position: relative;
 }
 .monthly-incentive-editor-row .text-input {
-  font-size: 12px;
+  font-size: 13px;
   height: 38px;
   padding-left: 25px;
   width: 100%;
@@ -5575,7 +5575,7 @@ a {
 }
 .monthly-incentive-color-control code {
   color: #68766f;
-  font-size: 9px;
+  font-size: 10px;
 }
 .monthly-incentive-remove {
   color: #89948d;
