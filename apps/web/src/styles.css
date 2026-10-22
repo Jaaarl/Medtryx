@@ -5289,6 +5289,23 @@ a {
   padding: 7px 11px;
   white-space: nowrap;
 }
+.monthly-incentive-heading-actions {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.monthly-incentive-month-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.monthly-incentive-month-navigation .button {
+  font-size: 10px;
+  min-height: 30px;
+  padding: 5px 9px;
+}
 .monthly-incentive-complete {
   background: #e5f3e9;
   color: #267541;
@@ -6764,6 +6781,9 @@ a {
   }
   .monthly-incentive-heading h2 {
     font-size: 20px;
+  }
+  .monthly-incentive-month-navigation {
+    max-width: 160px;
   }
   .monthly-incentive-sales-row > strong {
     font-size: 24px;

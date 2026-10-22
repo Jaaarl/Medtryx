@@ -12,7 +12,7 @@ export function DashboardPage() {
           <div className="eyebrow">STORE OVERVIEW</div>
           <h1>Dashboard</h1>
           <p>
-            Track this month’s store sales progress and incentive milestones.
+            Review monthly store sales progress and incentive milestones.
           </p>
         </div>
       </div>
@@ -20,6 +20,7 @@ export function DashboardPage() {
         placement="dashboard"
         refreshKey={0}
         showDisabledState={user?.role === "owner"}
+        allowMonthNavigation={user?.role === "owner"}
       />
       {user?.role === "owner" && (
         <p className="monthly-sales-dashboard-settings-link">

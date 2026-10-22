@@ -49,6 +49,7 @@ export const monthlyIncentiveSettingSchema = z
   .object({
     enabled: z.boolean(),
     showOnCheckout: z.boolean().default(false),
+    showGoalAndIncentive: z.boolean().default(false),
     tiers: z.array(monthlyIncentiveTierSchema).min(1).max(12),
   })
   .strict()
@@ -85,6 +86,7 @@ export type MonthlyIncentiveSetting = z.infer<
 export const defaultMonthlyIncentiveSetting: MonthlyIncentiveSetting = {
   enabled: false,
   showOnCheckout: false,
+  showGoalAndIncentive: false,
   tiers: [
     {
       salesTargetCentavos: 25_000_000,

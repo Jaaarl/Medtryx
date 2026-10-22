@@ -91,15 +91,40 @@ export function registerMonthlyIncentiveRoutes(
     },
   );
 
-  router.get("/dashboard/monthly-incentive", requireAuth, (_req, res) => {
+  router.get("/dashboard/monthly-incentive", requireAuth, (req, res) => {
+    const businessDate = todayInManila();
+    const currentMonth = businessDate.slice(0, 7);
+    const requestedMonth = req.query.month;
+    if (
+      requestedMonth !== undefined &&
+      (typeof requestedMonth !== "string" ||
+        !/^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth))
+    ) {
+      res.status(400).json({ error: "invalid_month" });
+      return;
+    }
+
+    const month =
+      typeof requestedMonth === "string" ? requestedMonth : currentMonth;
+    if (month > currentMonth) {
+      res.status(400).json({ error: "future_month_not_available" });
+      return;
+    }
+    if (month !== currentMonth && req.user?.role !== "owner") {
+      res.status(403).json({ error: "historical_progress_owner_only" });
+      return;
+    }
+
     const setting = monthlyIncentiveSetting(db);
     if (!setting.enabled) {
       res.json({ progress: null });
       return;
     }
 
-    const businessDate = todayInManila();
-    const month = businessDate.slice(0, 7);
+    const lastDateOfMonth = db
+      .prepare("SELECT date(?, '+1 month', '-1 day') AS day")
+      .get(`${month}-01`) as { day: string };
+    const endDate = month === currentMonth ? businessDate : lastDateOfMonth.day;
     const row = db
       .prepare(
         `SELECT COALESCE(SUM(s.amount_due_centavos - COALESCE(r.amount_centavos, 0)), 0)
@@ -108,14 +133,45 @@ export function registerMonthlyIncentiveRoutes(
          LEFT JOIN sale_reversals r ON r.sale_id = s.id
          WHERE s.business_date >= ? AND s.business_date <= ?`,
       )
-      .get(`${month}-01`, businessDate) as { sales_centavos: number };
+      .get(`${month}-01`, endDate) as { sales_centavos: number };
+    const currentTierIndex = setting.tiers.reduce(
+      (matched, tier, index) =>
+        tier.salesTargetCentavos <= row.sales_centavos ? index : matched,
+      -1,
+    );
+    const nextTierIndex = setting.tiers.findIndex(
+      (tier) => tier.salesTargetCentavos > row.sales_centavos,
+    );
+    const displayTier =
+      setting.tiers[
+        nextTierIndex >= 0 ? nextTierIndex : setting.tiers.length - 1
+      ]!;
+    const previousTarget =
+      currentTierIndex >= 0
+        ? setting.tiers[currentTierIndex]!.salesTargetCentavos
+        : 0;
+    const span = displayTier.salesTargetCentavos - previousTarget;
+    const progressPercent =
+      nextTierIndex >= 0
+        ? Math.min(
+            100,
+            Math.max(
+              0,
+              Math.round(((row.sales_centavos - previousTarget) / span) * 100),
+            ),
+          )
+        : 100;
 
     res.json({
       progress: {
         month,
         salesCentavos: row.sales_centavos,
-        tiers: setting.tiers,
+        progressPercent,
+        displayColor: displayTier.color,
+        nextTierAvailable: nextTierIndex >= 0,
+        ...(setting.showGoalAndIncentive && { tiers: setting.tiers }),
         showOnCheckout: setting.showOnCheckout,
+        showGoalAndIncentive: setting.showGoalAndIncentive,
       },
     });
   });

@@ -19,6 +19,7 @@ type TierDraft = {
 type SettingDraft = {
   enabled: boolean;
   showOnCheckout: boolean;
+  showGoalAndIncentive: boolean;
   tiers: TierDraft[];
 };
 
@@ -30,6 +31,7 @@ function makeDraft(setting: MonthlyIncentiveSetting): SettingDraft {
   return {
     enabled: setting.enabled,
     showOnCheckout: setting.showOnCheckout,
+    showGoalAndIncentive: setting.showGoalAndIncentive,
     tiers: setting.tiers.map((tier) => ({
       salesTarget: amountInput(tier.salesTargetCentavos),
       incentive: amountInput(tier.incentiveCentavos),
@@ -139,6 +141,7 @@ export function MonthlyIncentiveSettings() {
     const parsed = monthlyIncentiveSettingSchema.safeParse({
       enabled: draft.enabled,
       showOnCheckout: draft.showOnCheckout,
+      showGoalAndIncentive: draft.showGoalAndIncentive,
       tiers,
     });
     if (!parsed.success) {
@@ -240,6 +243,28 @@ export function MonthlyIncentiveSettings() {
             <small>
               Optional and off by default. The Dashboard remains available when
               incentives are enabled.
+            </small>
+          </span>
+        </label>
+
+        <label className="inventory-checkbox monthly-incentive-checkout-toggle">
+          <input
+            type="checkbox"
+            checked={draft.showGoalAndIncentive}
+            disabled={!loaded || loadFailed || saving}
+            onChange={(event) => {
+              setDraft((current) => ({
+                ...current,
+                showGoalAndIncentive: event.target.checked,
+              }));
+              setNotice("");
+            }}
+          />
+          <span>
+            <strong>Show goal and incentive amounts</strong>
+            <small>
+              Off by default. When enabled, the Dashboard and Checkout show
+              sales targets, remaining sales, and incentive amounts.
             </small>
           </span>
         </label>
