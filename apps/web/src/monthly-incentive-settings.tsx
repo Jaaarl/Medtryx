@@ -61,6 +61,26 @@ function tierFromDraft(tier: TierDraft): MonthlyIncentiveTier | null {
 
 const tierColors = ["#25875A", "#2878B8", "#C68120", "#7558B5", "#C45252"];
 
+function currentMonthInManila(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${values.year}-${values.month}`;
+}
+
+function monthLabel(month: string): string {
+  return new Date(`${month}-01T12:00:00+08:00`).toLocaleDateString("en-PH", {
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Manila",
+  });
+}
+
 export function MonthlyIncentiveSettings({
   onSaved,
 }: {
@@ -74,11 +94,14 @@ export function MonthlyIncentiveSettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [goalMonth, setGoalMonth] = useState(currentMonthInManila);
 
   useEffect(() => {
     let active = true;
     void api
-      .get<MonthlyIncentiveSetting>("/settings/monthly-incentive")
+      .get<MonthlyIncentiveSetting>(
+        `/settings/monthly-incentive?month=${encodeURIComponent(goalMonth)}`,
+      )
       .then((setting) => {
         if (active) setDraft(makeDraft(setting));
       })
@@ -94,7 +117,16 @@ export function MonthlyIncentiveSettings({
     return () => {
       active = false;
     };
-  }, []);
+  }, [goalMonth]);
+
+  function changeGoalMonth(month: string) {
+    if (!month || month === goalMonth) return;
+    setLoaded(false);
+    setLoadFailed(false);
+    setError("");
+    setNotice("");
+    setGoalMonth(month);
+  }
 
   function updateTier(index: number, key: keyof TierDraft, value: string) {
     setDraft((current) => ({
@@ -166,17 +198,19 @@ export function MonthlyIncentiveSettings({
     setSaving(true);
     try {
       const saved = await api.put<MonthlyIncentiveSetting>(
-        "/settings/monthly-incentive",
+        `/settings/monthly-incentive?month=${encodeURIComponent(goalMonth)}`,
         parsed.data,
       );
       setDraft(makeDraft(saved));
       onSaved?.();
       setNotice(
-        saved.enabled && saved.showOnCheckout
-          ? "Progress is available on Monthly Goals and Checkout."
-          : saved.enabled
-            ? "Progress is available on Monthly Goals."
-            : "Monthly Goals is hidden from cashier accounts.",
+        `Saved ${monthLabel(goalMonth)} goals and incentive settings. ${
+          saved.enabled && saved.showOnCheckout
+            ? "Progress is available on Monthly Goals and Checkout."
+            : saved.enabled
+              ? "Progress is available on Monthly Goals."
+              : "Monthly Goals is hidden from cashier accounts."
+        }`,
       );
     } catch {
       setError("Unable to save monthly incentive settings.");
@@ -191,8 +225,8 @@ export function MonthlyIncentiveSettings({
         <div>
           <h2>Monthly sales incentives</h2>
           <p>
-            Set store-wide sales milestones, incentive amounts, and the color
-            shown for each tier. Reversals reduce the original sale month.
+            Set monthly sales milestones, incentive amounts, and tier colors.
+            Each month keeps its saved goals when you update another month.
           </p>
         </div>
       </div>
@@ -207,6 +241,17 @@ export function MonthlyIncentiveSettings({
         </div>
       )}
       <div className="monthly-incentive-settings-body">
+        <label className="monthly-incentive-month-field">
+          <span>Configure goals for</span>
+          <input
+            className="text-input"
+            type="month"
+            value={goalMonth}
+            disabled={!loaded || loadFailed || saving}
+            onChange={(event) => changeGoalMonth(event.target.value)}
+          />
+        </label>
+
         <label className="inventory-checkbox monthly-incentive-toggle">
           <input
             type="checkbox"
@@ -276,6 +321,7 @@ export function MonthlyIncentiveSettings({
         </label>
 
         <div className="monthly-incentive-tier-editor">
+          <h3>{monthLabel(goalMonth)} sales milestones</h3>
           <div className="monthly-incentive-editor-heading">
             <span>Monthly sales target</span>
             <span>Incentive</span>
@@ -366,7 +412,7 @@ export function MonthlyIncentiveSettings({
             disabled={!loaded || loadFailed || saving}
             onClick={() => void save()}
           >
-            {saving ? "Saving…" : "Save incentive settings"}
+            {saving ? "Saving…" : "Save monthly goals and settings"}
           </button>
         </div>
       </div>

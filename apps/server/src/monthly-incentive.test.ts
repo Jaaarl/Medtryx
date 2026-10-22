@@ -34,6 +34,13 @@ function todayInManila(): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function shiftMonth(month: string, amount: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(Date.UTC(year!, monthNumber! - 1 + amount, 1))
+    .toISOString()
+    .slice(0, 7);
+}
+
 function postWithCsrf(
   agent: ReturnType<typeof request.agent>,
   method: "put" | "post",
@@ -54,6 +61,7 @@ async function resetUsers(): Promise<void> {
      DELETE FROM sale_reversals;
      DELETE FROM sales;
      DELETE FROM shifts;
+     DELETE FROM monthly_incentive_months;
      DELETE FROM settings;
      DELETE FROM users;`,
   );
@@ -272,6 +280,73 @@ describe("monthly sales incentive settings and progress", () => {
     expect(saved.status).toBe(200);
     expect(saved.body).toEqual(savedSetting);
 
+    const previousMonthSetting = {
+      ...savedSetting,
+      tiers: [
+        {
+          salesTargetCentavos: 750_000,
+          incentiveCentavos: 25_000,
+          color: "#C68120",
+        },
+      ],
+    };
+    const savedPreviousMonth = await postWithCsrf(
+      owner,
+      "put",
+      `/api/settings/monthly-incentive?month=${previousMonthKey}`,
+      previousMonthSetting,
+    );
+    expect(savedPreviousMonth.status).toBe(200);
+
+    const futureMonthKey = shiftMonth(currentDate.slice(0, 7), 1);
+    const futureMonthSetting = {
+      ...savedSetting,
+      tiers: [
+        {
+          salesTargetCentavos: 1_000_000,
+          incentiveCentavos: 50_000,
+          color: "#7558B5",
+        },
+        {
+          salesTargetCentavos: 2_000_000,
+          incentiveCentavos: 100_000,
+          color: "#C45252",
+        },
+      ],
+    };
+    const savedFutureMonth = await postWithCsrf(
+      owner,
+      "put",
+      `/api/settings/monthly-incentive?month=${futureMonthKey}`,
+      futureMonthSetting,
+    );
+    expect(savedFutureMonth.status).toBe(200);
+    expect(
+      (
+        await owner.get(
+          `/api/settings/monthly-incentive?month=${futureMonthKey}`,
+        )
+      ).body.tiers,
+    ).toEqual(futureMonthSetting.tiers);
+    expect(
+      (
+        await owner.get(
+          `/api/settings/monthly-incentive?month=${currentDate.slice(0, 7)}`,
+        )
+      ).body.tiers,
+    ).toEqual(savedSetting.tiers);
+    expect(
+      (
+        await owner.get(
+          `/api/settings/monthly-incentive?month=${previousMonthKey}`,
+        )
+      ).body.tiers,
+    ).toEqual(previousMonthSetting.tiers);
+    expect(
+      (await owner.get("/api/settings/monthly-incentive?month=not-a-month"))
+        .status,
+    ).toBe(400);
+
     const cashierUpdate = await postWithCsrf(
       cashier,
       "put",
@@ -303,6 +378,9 @@ describe("monthly sales incentive settings and progress", () => {
       salesCentavos: 800_000,
       showGoalAndIncentive: false,
     });
+    expect(ownerPreviousMonth.body.progress.tiers).toEqual(
+      previousMonthSetting.tiers,
+    );
     expect(
       (
         await cashier.get(

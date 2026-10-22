@@ -10,19 +10,41 @@ import { writeAuditEvent } from "./db.js";
 
 export function monthlyIncentiveSetting(
   db: Database.Database,
+  month?: string,
 ): typeof defaultMonthlyIncentiveSetting {
   const row = db
     .prepare("SELECT value_json FROM settings WHERE key = 'monthly_incentive'")
     .get() as { value_json: string } | undefined;
-  if (!row) return defaultMonthlyIncentiveSetting;
+
+  let setting: typeof defaultMonthlyIncentiveSetting;
+  if (!row) {
+    setting = defaultMonthlyIncentiveSetting;
+  } else {
+    try {
+      const parsed = monthlyIncentiveSettingSchema.safeParse(
+        JSON.parse(row.value_json),
+      );
+      setting = parsed.success ? parsed.data : defaultMonthlyIncentiveSetting;
+    } catch {
+      setting = defaultMonthlyIncentiveSetting;
+    }
+  }
+
+  if (!month) return setting;
+  const monthRow = db
+    .prepare("SELECT value_json FROM monthly_incentive_months WHERE month = ?")
+    .get(month) as { value_json: string } | undefined;
+  if (!monthRow) return setting;
 
   try {
-    const parsed = monthlyIncentiveSettingSchema.safeParse(
-      JSON.parse(row.value_json),
+    const monthly = monthlyIncentiveSettingSchema.safeParse(
+      JSON.parse(monthRow.value_json),
     );
-    return parsed.success ? parsed.data : defaultMonthlyIncentiveSetting;
+    return monthly.success
+      ? { ...setting, tiers: monthly.data.tiers }
+      : setting;
   } catch {
-    return defaultMonthlyIncentiveSetting;
+    return setting;
   }
 }
 
@@ -48,12 +70,37 @@ export function registerMonthlyIncentiveRoutes(
   const csrf = (req: Request, res: Response, next: NextFunction) =>
     requireCsrf(db, req, res, next);
 
+  function requestedSettingsMonth(
+    req: Request,
+    res: Response,
+    defaultToCurrent: boolean,
+  ): string | null {
+    const requestedMonth = req.query.month;
+    if (requestedMonth === undefined && defaultToCurrent) {
+      return todayInManila().slice(0, 7);
+    }
+    if (
+      typeof requestedMonth !== "string" ||
+      !/^\d{4}-(0[1-9]|1[0-2])$/.test(requestedMonth)
+    ) {
+      res.status(400).json({ error: "invalid_month" });
+      return null;
+    }
+    return requestedMonth;
+  }
+
   router.get(
     "/settings/monthly-incentive",
     requireAuth,
     requireOwner,
-    (_req, res) => {
-      res.json(monthlyIncentiveSetting(db));
+    (req, res) => {
+      if (req.query.month === undefined) {
+        res.json(monthlyIncentiveSetting(db));
+        return;
+      }
+      const month = requestedSettingsMonth(req, res, false);
+      if (!month) return;
+      res.json(monthlyIncentiveSetting(db, month));
     },
   );
 
@@ -69,7 +116,10 @@ export function registerMonthlyIncentiveRoutes(
         return;
       }
 
-      const previous = monthlyIncentiveSetting(db);
+      const month = requestedSettingsMonth(req, res, true);
+      if (!month) return;
+
+      const previous = monthlyIncentiveSetting(db, month);
       const value = parsed.data;
       const now = new Date().toISOString();
       db.transaction(() => {
@@ -79,12 +129,24 @@ export function registerMonthlyIncentiveRoutes(
            ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json,
              updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
         ).run(JSON.stringify(value), now, req.user!.id);
+        db.prepare(
+          `INSERT INTO monthly_incentive_months
+             (month, value_json, updated_at, updated_by)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT (month) DO UPDATE SET value_json = excluded.value_json,
+             updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+        ).run(month, JSON.stringify(value), now, req.user!.id);
         writeAuditEvent(db, {
           actorUserId: req.user!.id,
           action: "settings.monthly_incentive.updated",
           entityType: "setting",
-          entityId: "monthly_incentive",
-          details: { oldValue: previous, newValue: value, updatedAt: now },
+          entityId: `monthly_incentive:${month}`,
+          details: {
+            month,
+            oldValue: previous,
+            newValue: value,
+            updatedAt: now,
+          },
         });
       })();
       res.json(value);
@@ -115,7 +177,7 @@ export function registerMonthlyIncentiveRoutes(
       return;
     }
 
-    const setting = monthlyIncentiveSetting(db);
+    const setting = monthlyIncentiveSetting(db, month);
     if (!setting.enabled) {
       res.json({ progress: null });
       return;
