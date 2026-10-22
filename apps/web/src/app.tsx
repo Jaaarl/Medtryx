@@ -65,12 +65,6 @@ const navigation = [
     icon: LayoutDashboard,
     ownerOnly: true,
   },
-  {
-    to: "/monthly-goals",
-    label: "Monthly Goals",
-    icon: TrendingUp,
-    ownerOnly: false,
-  },
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
   {
     to: "/manual-checkout",
@@ -82,6 +76,12 @@ const navigation = [
     to: "/daily-sales",
     label: "Daily sales",
     icon: Activity,
+    ownerOnly: false,
+  },
+  {
+    to: "/monthly-goals",
+    label: "Monthly Goals",
+    icon: TrendingUp,
     ownerOnly: false,
   },
   { to: "/journal", label: "Journal", icon: BookOpen, ownerOnly: true },
