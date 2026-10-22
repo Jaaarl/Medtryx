@@ -2863,15 +2863,15 @@ a {
 }
 .stock-lots-card .inventory-table td:nth-child(7) {
   min-width: 350px;
-  text-align: left;
-  vertical-align: top;
+  text-align: center;
+  vertical-align: middle;
 }
 .stock-lot-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-  justify-content: flex-start;
+  justify-content: center;
 }
 .stock-lot-editor {
   display: grid;
