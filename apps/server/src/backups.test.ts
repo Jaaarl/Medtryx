@@ -11,16 +11,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
-import { createBackup, restoreBackup } from "./backup-service.js";
+import { createBackup, listBackups, restoreBackup } from "./backup-service.js";
 import {
   customerEncryptionKeyHex,
   decryptCustomerField,
 } from "./customer-data.js";
-import { openDatabase } from "./db.js";
+import { openDatabase, repositoryRoot } from "./db.js";
 import {
   applyMigrationsThrough,
   seedProductionMigrationRecords,
@@ -168,6 +168,23 @@ afterAll(() => {
 });
 
 describe("owner-only verified backup and restore", () => {
+  it.skipIf(process.platform !== "win32")(
+    "accepts backup folders on a Windows drive separate from the repository",
+    async () => {
+      const repositoryDrive = parse(repositoryRoot).root.toUpperCase();
+      const backupDrive = repositoryDrive.startsWith("C:") ? "Z:\\" : "C:\\";
+      const uniqueRoot = join(backupDrive, `medtryx-path-check-${randomUUID()}`);
+      process.env.MEDTRYX_BACKUP_PRIMARY_DIR = join(uniqueRoot, "primary");
+      process.env.MEDTRYX_BACKUP_SECONDARY_DIR = join(uniqueRoot, "secondary");
+      try {
+        await expect(listBackups()).resolves.toEqual([]);
+      } finally {
+        process.env.MEDTRYX_BACKUP_PRIMARY_DIR = primaryDirectory;
+        process.env.MEDTRYX_BACKUP_SECONDARY_DIR = secondaryDirectory;
+      }
+    },
+  );
+
   it("restores a populated schema-0026 backup through all pending migrations without losing production history", async () => {
     const owner = await signIn("owner.backups@example.test", ownerPassword);
     const token = (await owner.get("/api/auth/csrf")).body.token as string;

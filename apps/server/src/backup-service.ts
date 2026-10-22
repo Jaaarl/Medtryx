@@ -61,7 +61,10 @@ export class BackupError extends Error {
 
 function inside(base: string, candidate: string): boolean {
   const path = relative(resolve(base), resolve(candidate));
-  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`));
+  return (
+    path === "" ||
+    (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`))
+  );
 }
 
 function overlaps(left: string, right: string): boolean {
