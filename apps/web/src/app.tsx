@@ -56,8 +56,15 @@ import { ExpensesPage } from "./expenses-page";
 import { ActivityLogPage } from "./activity-log-page";
 import { OwnerAssistantPage } from "./owner-assistant-page";
 import { MonthlyIncentiveSettings } from "./monthly-incentive-settings";
+import { DashboardPage } from "./dashboard-page";
 
 const navigation = [
+  {
+    to: "/dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    ownerOnly: false,
+  },
   { to: "/checkout", label: "Checkout", icon: WalletCards, ownerOnly: false },
   {
     to: "/manual-checkout",
@@ -176,9 +183,9 @@ function Layout() {
         <div className="sidebar-header">
           <Link
             className="brand"
-            to="/checkout"
+            to="/dashboard"
             onClick={() => setMenuOpen(false)}
-            aria-label="Medtryx checkout"
+            aria-label="Medtryx dashboard"
           >
             <span className="brand-mark">M</span>
             <span className="brand-copy">
@@ -298,7 +305,7 @@ function LoginPage() {
     return <div className="loading-screen">Preparing secure sign in…</div>;
   if (user) {
     const from = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={from ?? "/checkout"} replace />;
+    return <Navigate to={from ?? "/dashboard"} replace />;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -941,7 +948,8 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Guard />}>
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/checkout" replace />} />
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardPage />} />
           <Route path="checkout" element={<CheckoutPage />} />
           <Route
             path="manual-checkout"
@@ -977,7 +985,7 @@ export function App() {
           </Route>
         </Route>
       </Route>
-      <Route path="*" element={<Navigate to="/checkout" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }

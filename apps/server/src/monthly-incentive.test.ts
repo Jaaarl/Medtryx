@@ -161,6 +161,7 @@ describe("monthly sales incentive settings and progress", () => {
     const initialSetting = await owner.get("/api/settings/monthly-incentive");
     expect(initialSetting.status).toBe(200);
     expect(initialSetting.body.enabled).toBe(false);
+    expect(initialSetting.body.showOnCheckout).toBe(false);
     expect(initialSetting.body.tiers).toHaveLength(2);
     expect((await cashier.get("/api/settings/monthly-incentive")).status).toBe(
       403,
@@ -245,6 +246,7 @@ describe("monthly sales incentive settings and progress", () => {
 
     const savedSetting = {
       enabled: true,
+      showOnCheckout: false,
       tiers: [
         {
           salesTargetCentavos: 250_000,
@@ -281,6 +283,46 @@ describe("monthly sales incentive settings and progress", () => {
       month: currentDate.slice(0, 7),
       salesCentavos: 100_000,
       tiers: savedSetting.tiers,
+      showOnCheckout: false,
     });
+
+    const checkoutEnabled = await postWithCsrf(
+      owner,
+      "put",
+      "/api/settings/monthly-incentive",
+      { ...savedSetting, showOnCheckout: true },
+    );
+    expect(checkoutEnabled.status).toBe(200);
+    expect(checkoutEnabled.body.showOnCheckout).toBe(true);
+    expect(
+      (await cashier.get("/api/dashboard/monthly-incentive")).body.progress
+        .showOnCheckout,
+    ).toBe(true);
+  });
+
+  it("defaults checkout visibility off for settings saved before the option existed", async () => {
+    const owner = await signIn("owner@monthly-incentive.test", ownerPassword);
+    db.prepare(
+      `INSERT INTO settings (key, value_json, updated_at, updated_by)
+       VALUES ('monthly_incentive', ?, ?, ?)`,
+    ).run(
+      JSON.stringify({
+        enabled: true,
+        tiers: [
+          {
+            salesTargetCentavos: 25_000_000,
+            incentiveCentavos: 5_000,
+            color: "#25875A",
+          },
+        ],
+      }),
+      new Date().toISOString(),
+      ownerId,
+    );
+
+    const setting = await owner.get("/api/settings/monthly-incentive");
+    expect(setting.status).toBe(200);
+    expect(setting.body.enabled).toBe(true);
+    expect(setting.body.showOnCheckout).toBe(false);
   });
 });

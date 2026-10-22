@@ -7,6 +7,7 @@ type MonthlyIncentiveProgressData = {
   month: string;
   salesCentavos: number;
   tiers: MonthlyIncentiveTier[];
+  showOnCheckout: boolean;
 };
 
 function pesos(centavos: number): string {
@@ -25,12 +26,17 @@ function monthName(month: string): string {
 }
 
 export function MonthlyIncentiveProgress({
+  placement,
   refreshKey,
 }: {
+  placement: "dashboard" | "checkout";
   refreshKey: number;
 }) {
   const [progress, setProgress] = useState<MonthlyIncentiveProgressData | null>(
     null,
+  );
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "failed">(
+    "loading",
   );
 
   useEffect(() => {
@@ -40,17 +46,47 @@ export function MonthlyIncentiveProgress({
         "/dashboard/monthly-incentive",
       )
       .then(({ progress: result }) => {
-        if (active) setProgress(result);
+        if (active) {
+          setProgress(result);
+          setLoadState("loaded");
+        }
       })
       .catch(() => {
-        if (active) setProgress(null);
+        if (active) {
+          setProgress(null);
+          setLoadState("failed");
+        }
       });
     return () => {
       active = false;
     };
   }, [refreshKey]);
 
-  if (!progress || progress.tiers.length === 0) return null;
+  if (placement === "dashboard" && loadState === "loading") {
+    return (
+      <div className="monthly-incentive-dashboard-state" role="status">
+        Loading monthly sales progress…
+      </div>
+    );
+  }
+  if (placement === "dashboard" && loadState === "failed") {
+    return (
+      <div
+        className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty"
+        role="status"
+      >
+        Unable to load monthly sales progress. Refresh the page to try again.
+      </div>
+    );
+  }
+  if (!progress || progress.tiers.length === 0) {
+    return placement === "dashboard" ? (
+      <div className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty">
+        Monthly sales progress has not been enabled by the owner yet.
+      </div>
+    ) : null;
+  }
+  if (placement === "checkout" && !progress.showOnCheckout) return null;
 
   const currentTierIndex = progress.tiers.reduce(
     (matched, tier, index) =>

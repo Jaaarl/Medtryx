@@ -5398,9 +5398,63 @@ a {
   padding: 0 20px 20px;
 }
 .monthly-incentive-toggle {
+  align-items: flex-start;
   border-bottom: 1px solid #edf1ee;
   margin-bottom: 15px;
   padding: 0 0 14px;
+}
+.monthly-incentive-toggle > input,
+.monthly-incentive-checkout-toggle > input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.monthly-incentive-toggle > span,
+.monthly-incentive-checkout-toggle > span {
+  display: grid;
+  gap: 4px;
+}
+.monthly-incentive-toggle strong,
+.monthly-incentive-checkout-toggle strong {
+  color: #28483b;
+  font-size: 11px;
+}
+.monthly-incentive-toggle small,
+.monthly-incentive-checkout-toggle small {
+  color: #78867e;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.monthly-incentive-checkout-toggle {
+  align-items: flex-start;
+  border-bottom: 1px solid #edf1ee;
+  margin: -2px 0 15px;
+  padding: 0 0 14px;
+}
+.monthly-incentive-dashboard-state {
+  background: #fff;
+  border: 1px solid #dce9e2;
+  border-radius: 12px;
+  color: #68776f;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 25px;
+  text-align: center;
+}
+.monthly-incentive-dashboard-empty {
+  background: #f8faf8;
+}
+.monthly-sales-dashboard-settings-link {
+  font-size: 12px;
+  margin: 14px 0 0;
+  text-align: right;
+}
+.monthly-sales-dashboard-settings-link a {
+  color: #28705e;
+  font-weight: 650;
+  text-decoration: none;
+}
+.monthly-sales-dashboard-settings-link a:hover {
+  text-decoration: underline;
 }
 .monthly-incentive-tier-editor {
   display: flex;

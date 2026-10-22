@@ -5777,7 +5777,10 @@ export function CheckoutPage({
         }
       />
       {!manualEntry && (
-        <MonthlyIncentiveProgress refreshKey={recentSalesRefresh} />
+        <MonthlyIncentiveProgress
+          placement="checkout"
+          refreshKey={recentSalesRefresh}
+        />
       )}
       {stockOverrideEnabled && (
         <div

@@ -115,6 +115,7 @@ export function registerMonthlyIncentiveRoutes(
         month,
         salesCentavos: row.sales_centavos,
         tiers: setting.tiers,
+        showOnCheckout: setting.showOnCheckout,
       },
     });
   });

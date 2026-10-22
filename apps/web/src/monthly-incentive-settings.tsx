@@ -18,6 +18,7 @@ type TierDraft = {
 
 type SettingDraft = {
   enabled: boolean;
+  showOnCheckout: boolean;
   tiers: TierDraft[];
 };
 
@@ -28,6 +29,7 @@ function amountInput(centavos: number): string {
 function makeDraft(setting: MonthlyIncentiveSetting): SettingDraft {
   return {
     enabled: setting.enabled,
+    showOnCheckout: setting.showOnCheckout,
     tiers: setting.tiers.map((tier) => ({
       salesTarget: amountInput(tier.salesTargetCentavos),
       incentive: amountInput(tier.incentiveCentavos),
@@ -136,6 +138,7 @@ export function MonthlyIncentiveSettings() {
     }
     const parsed = monthlyIncentiveSettingSchema.safeParse({
       enabled: draft.enabled,
+      showOnCheckout: draft.showOnCheckout,
       tiers,
     });
     if (!parsed.success) {
@@ -161,9 +164,11 @@ export function MonthlyIncentiveSettings() {
       );
       setDraft(makeDraft(saved));
       setNotice(
-        saved.enabled
-          ? "Monthly sales incentives are enabled for the dashboard."
-          : "Monthly sales incentives are hidden from the dashboard.",
+        saved.enabled && saved.showOnCheckout
+          ? "Monthly sales incentives are enabled on the Dashboard and Checkout."
+          : saved.enabled
+            ? "Monthly sales incentives are enabled on the Dashboard."
+            : "Monthly sales incentives are hidden from the dashboard.",
       );
     } catch {
       setError("Unable to save monthly incentive settings.");
@@ -208,11 +213,33 @@ export function MonthlyIncentiveSettings() {
             }}
           />
           <span>
-            <strong>Show monthly sales progress on the dashboard</strong>
+            <strong>Enable monthly sales progress</strong>
             <small>
               {draft.enabled
-                ? "Visible to owner and cashier accounts."
-                : "Hidden from all dashboards until you enable it."}
+                ? "Available on the Dashboard for owner and cashier accounts."
+                : "Hidden until you enable it."}
+            </small>
+          </span>
+        </label>
+
+        <label className="inventory-checkbox monthly-incentive-checkout-toggle">
+          <input
+            type="checkbox"
+            checked={draft.showOnCheckout}
+            disabled={!loaded || loadFailed || saving}
+            onChange={(event) => {
+              setDraft((current) => ({
+                ...current,
+                showOnCheckout: event.target.checked,
+              }));
+              setNotice("");
+            }}
+          />
+          <span>
+            <strong>Also show progress at the top of Checkout</strong>
+            <small>
+              Optional and off by default. The Dashboard remains available when
+              incentives are enabled.
             </small>
           </span>
         </label>
