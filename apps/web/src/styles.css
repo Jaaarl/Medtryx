@@ -5416,16 +5416,27 @@ a {
 }
 .monthly-incentive-month-field {
   align-items: center;
-  color: #53645a;
   display: flex;
-  font-size: 11px;
-  font-weight: 700;
-  gap: 12px;
+  gap: 8px;
+  justify-content: space-between;
   margin: 0 0 18px;
-  max-width: 340px;
+  max-width: 440px;
 }
-.monthly-incentive-month-field .text-input {
-  max-width: 190px;
+.monthly-incentive-month-field > .button {
+  align-items: center;
+  display: inline-flex;
+  gap: 3px;
+}
+.monthly-incentive-month-label {
+  color: #53645a;
+  display: grid;
+  font-size: 10px;
+  gap: 2px;
+  text-align: center;
+}
+.monthly-incentive-month-label strong {
+  color: #28483b;
+  font-size: 13px;
 }
 .monthly-incentive-toggle {
   align-items: flex-start;

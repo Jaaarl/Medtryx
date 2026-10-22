@@ -32,7 +32,13 @@ export function monthlyIncentiveSetting(
 
   if (!month) return setting;
   const monthRow = db
-    .prepare("SELECT value_json FROM monthly_incentive_months WHERE month = ?")
+    .prepare(
+      `SELECT value_json
+       FROM monthly_incentive_months
+       WHERE month <= ?
+       ORDER BY month DESC
+       LIMIT 1`,
+    )
     .get(month) as { value_json: string } | undefined;
   if (!monthRow) return setting;
 

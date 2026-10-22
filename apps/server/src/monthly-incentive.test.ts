@@ -299,6 +299,14 @@ describe("monthly sales incentive settings and progress", () => {
     expect(savedPreviousMonth.status).toBe(200);
 
     const futureMonthKey = shiftMonth(currentDate.slice(0, 7), 1);
+    expect(
+      (
+        await owner.get(
+          `/api/settings/monthly-incentive?month=${futureMonthKey}`,
+        )
+      ).body.tiers,
+    ).toEqual(savedSetting.tiers);
+
     const futureMonthSetting = {
       ...savedSetting,
       tiers: [

@@ -7,7 +7,7 @@ import type {
   MonthlyIncentiveSetting,
   MonthlyIncentiveTier,
 } from "@medtryx/shared";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { api } from "./api";
 
 type TierDraft = {
@@ -79,6 +79,13 @@ function monthLabel(month: string): string {
     year: "numeric",
     timeZone: "Asia/Manila",
   });
+}
+
+function shiftMonth(month: string, amount: number): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(Date.UTC(year!, monthNumber! - 1 + amount, 1))
+    .toISOString()
+    .slice(0, 7);
 }
 
 export function MonthlyIncentiveSettings({
@@ -241,16 +248,34 @@ export function MonthlyIncentiveSettings({
         </div>
       )}
       <div className="monthly-incentive-settings-body">
-        <label className="monthly-incentive-month-field">
-          <span>Configure goals for</span>
-          <input
-            className="text-input"
-            type="month"
-            value={goalMonth}
+        <div
+          className="monthly-incentive-month-field"
+          role="group"
+          aria-label="Choose monthly goals month"
+        >
+          <button
+            className="button button-quiet"
+            type="button"
+            aria-label={`Previous month from ${monthLabel(goalMonth)}`}
             disabled={!loaded || loadFailed || saving}
-            onChange={(event) => changeGoalMonth(event.target.value)}
-          />
-        </label>
+            onClick={() => changeGoalMonth(shiftMonth(goalMonth, -1))}
+          >
+            <ChevronLeft size={16} /> Previous
+          </button>
+          <div className="monthly-incentive-month-label">
+            <span>Goals for</span>
+            <strong>{monthLabel(goalMonth)}</strong>
+          </div>
+          <button
+            className="button button-quiet"
+            type="button"
+            aria-label={`Next month after ${monthLabel(goalMonth)}`}
+            disabled={!loaded || loadFailed || saving}
+            onClick={() => changeGoalMonth(shiftMonth(goalMonth, 1))}
+          >
+            Next <ChevronRight size={16} />
+          </button>
+        </div>
 
         <label className="inventory-checkbox monthly-incentive-toggle">
           <input
@@ -321,7 +346,7 @@ export function MonthlyIncentiveSettings({
         </label>
 
         <div className="monthly-incentive-tier-editor">
-          <h3>{monthLabel(goalMonth)} sales milestones</h3>
+          <h3>Sales milestones</h3>
           <div className="monthly-incentive-editor-heading">
             <span>Monthly sales target</span>
             <span>Incentive</span>
