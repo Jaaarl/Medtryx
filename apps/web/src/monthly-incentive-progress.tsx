@@ -28,9 +28,11 @@ function monthName(month: string): string {
 export function MonthlyIncentiveProgress({
   placement,
   refreshKey,
+  showDisabledState = false,
 }: {
   placement: "dashboard" | "checkout";
   refreshKey: number;
+  showDisabledState?: boolean;
 }) {
   const [progress, setProgress] = useState<MonthlyIncentiveProgressData | null>(
     null,
@@ -62,14 +64,22 @@ export function MonthlyIncentiveProgress({
     };
   }, [refreshKey]);
 
-  if (placement === "dashboard" && loadState === "loading") {
+  if (
+    placement === "dashboard" &&
+    showDisabledState &&
+    loadState === "loading"
+  ) {
     return (
       <div className="monthly-incentive-dashboard-state" role="status">
         Loading monthly sales progress…
       </div>
     );
   }
-  if (placement === "dashboard" && loadState === "failed") {
+  if (
+    placement === "dashboard" &&
+    showDisabledState &&
+    loadState === "failed"
+  ) {
     return (
       <div
         className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty"
@@ -80,7 +90,7 @@ export function MonthlyIncentiveProgress({
     );
   }
   if (!progress || progress.tiers.length === 0) {
-    return placement === "dashboard" ? (
+    return placement === "dashboard" && showDisabledState ? (
       <div className="monthly-incentive-dashboard-state monthly-incentive-dashboard-empty">
         Monthly sales progress has not been enabled by the owner yet.
       </div>

@@ -16,7 +16,11 @@ export function DashboardPage() {
           </p>
         </div>
       </div>
-      <MonthlyIncentiveProgress placement="dashboard" refreshKey={0} />
+      <MonthlyIncentiveProgress
+        placement="dashboard"
+        refreshKey={0}
+        showDisabledState={user?.role === "owner"}
+      />
       {user?.role === "owner" && (
         <p className="monthly-sales-dashboard-settings-link">
           <Link to="/settings">Manage monthly incentive settings</Link>
