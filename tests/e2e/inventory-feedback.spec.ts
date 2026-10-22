@@ -81,7 +81,7 @@ test("product and stock headers sort their rows in both directions", async ({
   await expect(stockRows.first()).toContainText("Synthetic Sort Alpha");
 });
 
-test("stock adjustment pre-fills the current average acquisition cost", async ({
+test("count corrections alone pre-fill the current average acquisition cost", async ({
   page,
 }) => {
   await signInOwner(page);
@@ -136,6 +136,23 @@ test("stock adjustment pre-fills the current average acquisition cost", async ({
     "Total quantity after adjustment: 3 piece",
   );
   await expect(quantityPreview).toHaveCSS("color", "rgb(180, 35, 24)");
+
+  await quantityChange.fill("1");
+  const reasonType = page.getByLabel("Reason type");
+  await reasonType.selectOption("DAMAGE");
+  await expect(page.locator("#adjust-cost")).toHaveValue("");
+  await page.getByLabel("Records").selectOption("200");
+  await expect(page.locator("#adjust-cost")).toHaveValue("");
+  await reasonType.selectOption("COUNT_CORRECTION");
+  await expect(page.locator("#adjust-cost")).toHaveValue("5.00");
+
+  await page
+    .getByRole("button", {
+      name: "Correct acquisition cost for Synthetic Adjustment Cost Prefill",
+    })
+    .click();
+  await expect(page.locator("#adjust-cost")).toHaveValue("");
+  await expect(page.locator("#cost-correction-unit-cost")).toHaveValue("");
 });
 
 test("adding a matching product from Products receives stock without duplicating it", async ({

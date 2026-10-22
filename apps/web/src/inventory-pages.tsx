@@ -2592,6 +2592,7 @@ export function StockPage() {
   const [receiptExpiryDate, setReceiptExpiryDate] = useState("");
   const [adjustQty, setAdjustQty] = useState("");
   const [reasonType, setReasonType] = useState("COUNT_CORRECTION");
+  const reasonTypeRef = useRef(reasonType);
   const [reason, setReason] = useState("");
   const [adjustCost, setAdjustCost] = useState("");
   const [adjustZeroCostReason, setAdjustZeroCostReason] = useState("");
@@ -2710,12 +2711,6 @@ export function StockPage() {
 
   useEffect(() => {
     if (!selected) return;
-    setCostCorrectionInput(selected.weightedAverageUnitCost);
-    setCostCorrectionReason("");
-  }, [selectedId, selected?.weightedAverageUnitCost]);
-
-  useEffect(() => {
-    if (!selected) return;
     setReceiptSellingPrice(selected.sellingPrice);
   }, [selectedId, selected?.sellingPrice]);
 
@@ -2729,8 +2724,11 @@ export function StockPage() {
   }
 
   function focusCostCorrection(productId: string) {
-    const product = products.find((candidate) => candidate.id === productId);
-    if (product) selectStockProduct(product);
+    setSelectedId(productId);
+    setAdjustCost("");
+    setAdjustZeroCostReason("");
+    setCostCorrectionInput("");
+    setCostCorrectionReason("");
     document
       .getElementById("stock-cost-correction")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2738,17 +2736,28 @@ export function StockPage() {
 
   function selectStockProduct(product: Product) {
     setSelectedId(product.id);
-    setAdjustCost(adjustmentUnitCost(product));
+    setAdjustCost(
+      reasonTypeRef.current === "COUNT_CORRECTION"
+        ? adjustmentUnitCost(product)
+        : "",
+    );
     setAdjustZeroCostReason("");
+    setCostCorrectionInput("");
+    setCostCorrectionReason("");
   }
 
-  async function refreshProducts() {
+  async function refreshProducts(updateAdjustmentCost = false) {
     const result = await api.get<{ products: Product[] }>("/products");
     setProducts(result.products);
     const selectedProduct = result.products.find(
       (product) => product.id === selectedId,
     );
-    if (selectedProduct) setAdjustCost(adjustmentUnitCost(selectedProduct));
+    if (updateAdjustmentCost && selectedProduct)
+      setAdjustCost(
+        reasonTypeRef.current === "COUNT_CORRECTION"
+          ? adjustmentUnitCost(selectedProduct)
+          : "",
+      );
     else if (!selectedId && result.products[0])
       selectStockProduct(result.products[0]);
   }
@@ -2794,11 +2803,21 @@ export function StockPage() {
         );
         if (routeProduct) {
           setSelectedId(routeProduct.id);
-          setAdjustCost(adjustmentUnitCost(routeProduct));
+          setAdjustCost(
+            reasonTypeRef.current === "COUNT_CORRECTION"
+              ? adjustmentUnitCost(routeProduct)
+              : "",
+          );
         } else if (productData.products[0]) {
           setSelectedId(productData.products[0].id);
-          setAdjustCost(adjustmentUnitCost(productData.products[0]));
+          setAdjustCost(
+            reasonTypeRef.current === "COUNT_CORRECTION"
+              ? adjustmentUnitCost(productData.products[0])
+              : "",
+          );
         }
+        setCostCorrectionInput("");
+        setCostCorrectionReason("");
       })
       .catch(() => {
         if (active) setError("Unable to load stock records.");
@@ -2911,7 +2930,7 @@ export function StockPage() {
           : {}),
       });
       await Promise.all([
-        refreshProducts(),
+        refreshProducts(true),
         refreshEvents(selected.id),
         refreshLots(),
       ]);
@@ -2945,6 +2964,7 @@ export function StockPage() {
       setNotice(
         `Average acquisition cost corrected for ${selected.name}. Past sales and receipt records were left unchanged.`,
       );
+      setCostCorrectionInput("");
       setCostCorrectionReason("");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -3653,7 +3673,17 @@ export function StockPage() {
                     id="adjust-type"
                     className="text-input select-input"
                     value={reasonType}
-                    onChange={(event) => setReasonType(event.target.value)}
+                    onChange={(event) => {
+                      const nextReasonType = event.target.value;
+                      reasonTypeRef.current = nextReasonType;
+                      setReasonType(nextReasonType);
+                      setAdjustCost(
+                        reasonTypeRef.current === "COUNT_CORRECTION" && selected
+                          ? adjustmentUnitCost(selected)
+                          : "",
+                      );
+                      setAdjustZeroCostReason("");
+                    }}
                   >
                     <option value="COUNT_CORRECTION">Count correction</option>
                     <option value="DAMAGE">Damage write-off</option>
