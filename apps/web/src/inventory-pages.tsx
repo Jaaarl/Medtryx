@@ -2022,7 +2022,7 @@ export function ProductsPage() {
                     const selected = duplicateProduct?.id === product.id;
                     return (
                       <button
-                        className={`duplicate-product-option${selected ? " is-selected" : ""}`}
+                        className={`duplicate-product-option${selected ? " is-selected" : ""}${product.active ? "" : " is-inactive"}`}
                         key={product.id}
                         type="button"
                         aria-pressed={selected}
