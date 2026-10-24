@@ -776,6 +776,10 @@ a {
   color: #786a4b;
   font-size: 9px;
 }
+.duplicate-product-inactive-label {
+  color: #b42318;
+  font-weight: 700;
+}
 .duplicate-product-option-action {
   flex: 0 0 auto;
   font-weight: 700;

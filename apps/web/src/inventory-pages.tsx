@@ -2041,7 +2041,11 @@ export function ProductsPage() {
                           <small>
                             {product.sku} · {product.unit} ·{" "}
                             {product.quantityOnHand} on hand
-                            {!product.active && " · inactive"}
+                            {!product.active && (
+                              <span className="duplicate-product-inactive-label">
+                                · INACTIVE
+                              </span>
+                            )}
                           </small>
                         </span>
                         <span className="duplicate-product-option-action">
