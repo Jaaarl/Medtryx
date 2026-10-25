@@ -397,6 +397,55 @@ describe("owner-approved full-sale reversals and cash movements", () => {
     });
   });
 
+  it("cancels only the selected sales from a Manila business day", async () => {
+    const owner = await signIn("owner.reversals@example.test", ownerPassword);
+    await configureApprovedPolicy(owner);
+    const product = await createProduct(owner);
+    await openShift(owner);
+    const selectedSale = await sell(owner, product.id, "QR");
+    const unselectedSale = await sell(owner, product.id, "QR");
+    const businessDate = (
+      db
+        .prepare("SELECT business_date FROM sales WHERE transaction_id = ?")
+        .get(selectedSale.transactionId) as { business_date: string }
+    ).business_date;
+
+    const canceled = await postWithCsrf(owner, "/api/sales/day-reversals", {
+      businessDate,
+      ownerPassword,
+      reason: "Cancel only the selected transaction",
+      restockReturnedGoods: false,
+      transactionIds: [selectedSale.transactionId],
+    });
+
+    expect(canceled.status, JSON.stringify(canceled.body)).toBe(201);
+    expect(canceled.body.result).toMatchObject({
+      businessDate,
+      canceledCount: 1,
+      skippedCount: 0,
+      skippedTransactions: [],
+      cashRefundCount: 0,
+      qrRefundCount: 1,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT s.transaction_id
+           FROM sales s JOIN sale_reversals r ON r.sale_id = s.id
+           ORDER BY s.transaction_id`,
+        )
+        .all(),
+    ).toEqual([{ transaction_id: selectedSale.transactionId }]);
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sale_reversals r
+           JOIN sales s ON s.id = r.sale_id WHERE s.transaction_id = ?`,
+        )
+        .get(unselectedSale.transactionId),
+    ).toEqual({ count: 0 });
+  });
+
   it("reports the transaction and reason when day cancellation skips a partial refund", async () => {
     const owner = await signIn("owner.reversals@example.test", ownerPassword);
     await configureApprovedPolicy(owner);

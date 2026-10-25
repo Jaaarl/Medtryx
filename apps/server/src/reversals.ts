@@ -112,8 +112,25 @@ const dayReversalSchema = z
     ownerPassword: z.string().min(1).max(128),
     reason: z.string().trim().min(3).max(500),
     restockReturnedGoods: z.boolean().default(false),
+    transactionIds: z
+      .array(z.string().trim().min(1).max(100))
+      .min(1)
+      .max(1_000)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.transactionIds &&
+      new Set(value.transactionIds).size !== value.transactionIds.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["transactionIds"],
+        message: "duplicate_transaction_id",
+      });
+    }
+  });
 const paymentSwitchSchema = z
   .object({ reason: z.string().trim().min(3).max(500) })
   .strict();
@@ -1956,11 +1973,22 @@ export function registerReversalRoutes(
             throw new ReversalError(403, "reauthentication_failed");
           }
 
+          const transactionIds = parsed.data.transactionIds;
+          const selectionFilter = transactionIds
+            ? `AND s.transaction_id IN (${transactionIds.map(() => "?").join(", ")})`
+            : "";
+          const selectionParams = transactionIds ?? [];
           const { totalCount } = db
             .prepare(
-              "SELECT COUNT(*) AS totalCount FROM sales WHERE business_date = ?",
+              `SELECT COUNT(*) AS totalCount FROM sales s
+               WHERE s.business_date = ? ${selectionFilter}`,
             )
-            .get(parsed.data.businessDate) as { totalCount: number };
+            .get(parsed.data.businessDate, ...selectionParams) as {
+            totalCount: number;
+          };
+          if (transactionIds && totalCount !== transactionIds.length) {
+            throw new ReversalError(400, "day_reversal_transaction_not_found");
+          }
           const skippedSales = db
             .prepare(
               `SELECT s.transaction_id,
@@ -1976,13 +2004,14 @@ export function registerReversalRoutes(
                         AS skip_reason
                FROM sales s
                WHERE s.business_date = ?
+                 ${selectionFilter}
                  AND EXISTS (
                    SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
                  )
                ORDER BY s.created_at, s.transaction_id
                LIMIT 20`,
             )
-            .all(parsed.data.businessDate) as Array<{
+            .all(parsed.data.businessDate, ...selectionParams) as Array<{
             transaction_id: string;
             skip_reason: "PARTIALLY_REFUNDED" | "ALREADY_REVERSED";
           }>;
@@ -1991,12 +2020,13 @@ export function registerReversalRoutes(
               `SELECT s.id, s.transaction_id, s.payment_method, s.shift_id
                FROM sales s
                WHERE s.business_date = ?
+                 ${selectionFilter}
                  AND NOT EXISTS (
                    SELECT 1 FROM sale_reversals r WHERE r.sale_id = s.id
                  )
                ORDER BY s.created_at, s.transaction_id`,
             )
-            .all(parsed.data.businessDate) as Array<{
+            .all(parsed.data.businessDate, ...selectionParams) as Array<{
             id: string;
             transaction_id: string;
             payment_method: "CASH" | "QR";

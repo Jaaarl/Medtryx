@@ -1961,7 +1961,17 @@ a {
   display: grid;
   gap: 4px;
 }
+.day-reversal-selection > span {
+  display: grid;
+  gap: 4px;
+}
 .day-reversal-restock small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  max-width: 760px;
+}
+.day-reversal-selection small {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
@@ -2182,6 +2192,24 @@ a {
 .inventory-table td:first-child {
   min-width: 168px;
   white-space: normal;
+}
+.sales-history-table th:first-child,
+.sales-history-table td:first-child {
+  min-width: 36px;
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: center;
+  width: 36px;
+}
+.sales-history-table td:nth-child(2) {
+  min-width: 168px;
+  white-space: normal;
+}
+.sales-history-table input[type="checkbox"] {
+  accent-color: #176b5b;
+  height: 14px;
+  margin: 0;
+  width: 14px;
 }
 .inventory-table td strong,
 .inventory-table td small {

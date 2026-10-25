@@ -240,6 +240,8 @@ function requestError(error: unknown): string {
     insufficient_shift_cash:
       "That drawer does not have enough expected cash for this operation.",
     insufficient_cash: "That drawer does not have enough expected cash.",
+    day_reversal_transaction_not_found:
+      "A selected transaction is no longer listed for this sales date. Refresh the page and select the transactions again.",
     open_shift_not_found:
       "That cash drawer is no longer open. Refresh and retry.",
     cash_amount_overflow:
@@ -302,6 +304,10 @@ export function SalesHistoryPage() {
   const [dayReversalPassword, setDayReversalPassword] = useState("");
   const [dayReversalConfirmation, setDayReversalConfirmation] = useState("");
   const [restockDayReturns, setRestockDayReturns] = useState(false);
+  const [selectedDayTransactions, setSelectedDayTransactions] = useState<
+    string[]
+  >([]);
+  const [cancelOnlyChecked, setCancelOnlyChecked] = useState(false);
   const [movementShiftId, setMovementShiftId] = useState("");
   const [movementType, setMovementType] = useState<"CASH_IN" | "CASH_OUT">(
     "CASH_IN",
@@ -321,6 +327,15 @@ export function SalesHistoryPage() {
   if (salesView === "DAY") salesParams.set("businessDate", selectedDate);
   const salesUrl = `/sales?${salesParams}`;
   const totalSalesPages = Math.max(1, Math.ceil(salesTotal / recordLimit));
+  const allVisibleSalesSelected =
+    sales.length > 0 &&
+    sales.every((item) => selectedDayTransactions.includes(item.transactionId));
+  const visibleSelectionWouldExceedLimit =
+    selectedDayTransactions.length +
+      sales.filter(
+        (item) => !selectedDayTransactions.includes(item.transactionId),
+      ).length >
+    1_000;
 
   async function refreshLists() {
     const [salesResult, shiftResult, varianceResult] = await Promise.all([
@@ -494,6 +509,10 @@ export function SalesHistoryPage() {
   async function reverseSelectedDay(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (salesView !== "DAY") return;
+    if (cancelOnlyChecked && selectedDayTransactions.length === 0) {
+      setError("Select at least one transaction to cancel.");
+      return;
+    }
     if (dayReversalConfirmation !== selectedDate) {
       setError(`Type ${selectedDate} to confirm the Manila sales date.`);
       return;
@@ -509,14 +528,20 @@ export function SalesHistoryPage() {
           ownerPassword: dayReversalPassword,
           reason: dayReversalReason,
           restockReturnedGoods: restockDayReturns,
+          ...(cancelOnlyChecked
+            ? { transactionIds: selectedDayTransactions }
+            : {}),
         },
       );
       const cashShiftCount = result.cashShiftIds.length;
+      const cancellationScope = cancelOnlyChecked ? "selected sale" : "sale";
       setNotice(
-        `${result.canceledCount} sale${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} posted to ${cashShiftCount} original cashier shift${cashShiftCount === 1 ? "" : "s"}, and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` Skipped ${result.skippedCount} already processed sale${result.skippedCount === 1 ? "" : "s"}: ${result.skippedTransactions.map((sale) => `${sale.transactionId} (${sale.reason === "PARTIALLY_REFUNDED" ? "partially refunded" : "already fully reversed"})`).join(", ")}${result.skippedCount > result.skippedTransactions.length ? `; showing ${result.skippedTransactions.length}` : ""}.` : ""}`,
+        `${result.canceledCount} ${cancellationScope}${result.canceledCount === 1 ? "" : "s"} cancelled for ${result.businessDate} (Manila time): ${result.cashRefundCount} cash refund${result.cashRefundCount === 1 ? "" : "s"} posted to ${cashShiftCount} original cashier shift${cashShiftCount === 1 ? "" : "s"}, and ${result.qrRefundCount} QR refund${result.qrRefundCount === 1 ? "" : "s"}.${result.skippedCount ? ` Skipped ${result.skippedCount} already processed sale${result.skippedCount === 1 ? "" : "s"}: ${result.skippedTransactions.map((sale) => `${sale.transactionId} (${sale.reason === "PARTIALLY_REFUNDED" ? "partially refunded" : "already fully reversed"})`).join(", ")}${result.skippedCount > result.skippedTransactions.length ? `; showing ${result.skippedTransactions.length}` : ""}.` : ""}`,
       );
       setDayReversalPassword("");
       setDayReversalConfirmation("");
+      setSelectedDayTransactions([]);
+      setCancelOnlyChecked(false);
       await refreshLists();
       if (selectedId) {
         const detail = await api.get<{ sale: SaleDetails }>(
@@ -780,6 +805,8 @@ export function SalesHistoryPage() {
                   setOwnerPassword("");
                   setDayReversalPassword("");
                   setDayReversalConfirmation("");
+                  setSelectedDayTransactions([]);
+                  setCancelOnlyChecked(false);
                   setSalesView(event.target.value as "RECENT" | "DAY");
                 }}
               >
@@ -808,6 +835,8 @@ export function SalesHistoryPage() {
                     setOwnerPassword("");
                     setDayReversalPassword("");
                     setDayReversalConfirmation("");
+                    setSelectedDayTransactions([]);
+                    setCancelOnlyChecked(false);
                     setSelectedDate(event.target.value);
                   }}
                 />
@@ -820,16 +849,41 @@ export function SalesHistoryPage() {
               onSubmit={(event) => void reverseSelectedDay(event)}
             >
               <div>
-                <h3>Cancel all eligible sales for {selectedDate}</h3>
+                <h3>
+                  {cancelOnlyChecked
+                    ? `Cancel checked eligible sales for ${selectedDate}`
+                    : `Cancel all eligible sales for ${selectedDate}`}
+                </h3>
                 <p>
-                  This uses Philippine time and refunds each sale by its saved
-                  payment method. Cash refunds go to the current open drawer
+                  {cancelOnlyChecked
+                    ? "Only checked transactions in the list below will be considered. You can select sales across pages. "
+                    : "This uses Philippine time and includes every eligible sale for the date. "}
+                  Refunds use each sale’s saved payment method. Cash refunds go
+                  to the current open drawer
                   {openShifts[0]
                     ? ` for ${openShifts[0].cashierEmail}`
-                    : "; a cash drawer must be open if the day includes cash sales"}
+                    : "; a cash drawer must be open if the selection includes cash sales"}
                   . Already reversed and partially refunded sales are skipped.
                 </p>
               </div>
+              <label className="inventory-checkbox day-reversal-selection">
+                <input
+                  type="checkbox"
+                  checked={cancelOnlyChecked}
+                  onChange={(event) =>
+                    setCancelOnlyChecked(event.target.checked)
+                  }
+                  disabled={saving}
+                />
+                <span>
+                  Only cancel checked sales ({selectedDayTransactions.length}{" "}
+                  selected)
+                  <small>
+                    Check transactions in the list below. Selection is kept when
+                    you move between pages, up to 1,000 transactions.
+                  </small>
+                </span>
+              </label>
               <Field
                 id="day-reversal-reason"
                 label="Reason for cancelling the day’s sales"
@@ -900,18 +954,50 @@ export function SalesHistoryPage() {
               <button
                 className="button button-danger"
                 type="submit"
-                disabled={saving || dayReversalConfirmation !== selectedDate}
+                disabled={
+                  saving ||
+                  dayReversalConfirmation !== selectedDate ||
+                  (cancelOnlyChecked && selectedDayTransactions.length === 0)
+                }
               >
                 {saving
                   ? "Refunding and cancelling day…"
-                  : "Refund and cancel all eligible sales"}
+                  : cancelOnlyChecked
+                    ? `Refund and cancel ${selectedDayTransactions.length} checked sale${selectedDayTransactions.length === 1 ? "" : "s"}`
+                    : "Refund and cancel all eligible sales"}
               </button>
             </form>
           )}
           <div className="inventory-table-wrap">
-            <table className="inventory-table">
+            <table className="inventory-table sales-history-table">
               <thead>
                 <tr>
+                  <th>
+                    {salesView === "DAY" && (
+                      <input
+                        type="checkbox"
+                        aria-label="Select all sales on this page"
+                        checked={allVisibleSalesSelected}
+                        disabled={
+                          loading ||
+                          saving ||
+                          sales.length === 0 ||
+                          (!allVisibleSalesSelected &&
+                            visibleSelectionWouldExceedLimit)
+                        }
+                        onChange={(event) => {
+                          const pageIds = sales.map(
+                            (item) => item.transactionId,
+                          );
+                          setSelectedDayTransactions((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, ...pageIds]))
+                              : current.filter((id) => !pageIds.includes(id)),
+                          );
+                        }}
+                      />
+                    )}
+                  </th>
                   <th>TRANSACTION</th>
                   <th>DATE / CASHIER</th>
                   <th>SETTLEMENT</th>
@@ -923,13 +1009,41 @@ export function SalesHistoryPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="table-loading">
+                    <td colSpan={7} className="table-loading">
                       Loading sales…
                     </td>
                   </tr>
                 ) : sales.length ? (
                   sales.map((item) => (
                     <tr key={item.id}>
+                      <td className="sale-selection-cell">
+                        {salesView === "DAY" && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${item.transactionId}`}
+                            checked={selectedDayTransactions.includes(
+                              item.transactionId,
+                            )}
+                            disabled={
+                              saving ||
+                              (!selectedDayTransactions.includes(
+                                item.transactionId,
+                              ) &&
+                                selectedDayTransactions.length >= 1_000)
+                            }
+                            onChange={(event) =>
+                              setSelectedDayTransactions((current) =>
+                                event.target.checked
+                                  ? [...current, item.transactionId]
+                                  : current.filter(
+                                      (transactionId) =>
+                                        transactionId !== item.transactionId,
+                                    ),
+                              )
+                            }
+                          />
+                        )}
+                      </td>
                       <td>
                         <strong>{item.transactionId}</strong>
                         {item.reversal && (
@@ -976,7 +1090,7 @@ export function SalesHistoryPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={6} className="table-loading">
+                    <td colSpan={7} className="table-loading">
                       {salesView === "DAY"
                         ? "No sales were recorded on this day."
                         : "No sales have been finalized yet."}
