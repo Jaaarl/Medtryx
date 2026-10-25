@@ -295,7 +295,7 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       await signIn(secondCashierPage, secondEmail, password);
       await secondCashierPage.goto("/expenses");
       await expect(
-        secondCashierPage.getByText(`Charged to ${email}`, { exact: true }),
+        secondCashierPage.getByText(`Open shift · ${email}`, { exact: true }),
       ).toBeVisible();
       await expect(
         secondCashierPage.getByRole("button", {
@@ -367,6 +367,69 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       actualCashCount: "0.00",
       variance: "65.00",
     });
+
+    await ownerPage.goto("/expenses");
+    const historyDate = ownerPage.getByLabel("Expense history date");
+    const today = await historyDate.inputValue();
+    await historyDate.fill("2020-01-15");
+    await ownerPage
+      .getByRole("combobox", { name: "Category", exact: true })
+      .selectOption("DELIVERY");
+    await ownerPage
+      .getByRole("combobox", {
+        name: "Who pays the delivery fee?",
+        exact: true,
+      })
+      .selectOption("OWNER");
+    await ownerPage.locator('input[inputmode="decimal"]').first().fill("2.00");
+    await ownerPage
+      .getByLabel("Description (optional)")
+      .fill("E2E backdated owner payment");
+    await ownerPage
+      .getByRole("button", { name: "Record expense", exact: true })
+      .click();
+    await expect(ownerPage.getByRole("status")).toContainText("Paid by owner");
+    await expect(historyDate).toHaveValue("2020-01-15");
+    await expect(
+      ownerPage.getByText("E2E backdated owner payment", { exact: true }),
+    ).toBeVisible();
+
+    const replacementShift = await post(page, "/shifts", {
+      openingCash: "100.00",
+    });
+    expect(replacementShift.status()).toBe(201);
+    await ownerPage.goto("/expenses");
+    const shiftPicker = ownerPage.getByLabel("Deduct from shift");
+    await expect(shiftPicker).toBeVisible();
+    await expect(shiftPicker).toHaveValue(
+      (await replacementShift.json()).shift.id as string,
+    );
+    await shiftPicker.selectOption(shiftId);
+    await expect(
+      ownerPage.getByText("Historical closed shift", { exact: false }),
+    ).toBeVisible();
+    await ownerPage.locator('input[inputmode="decimal"]').first().fill("2.00");
+    await ownerPage
+      .getByLabel("Description (optional)")
+      .fill("E2E selected closed shift expense");
+    await ownerPage
+      .getByRole("button", { name: "Record expense", exact: true })
+      .click();
+    await expect(ownerPage.getByRole("status")).toContainText(
+      /Expected cashier cash: .*?-67\.00/,
+    );
+    const correctedHistory = (
+      await (await ownerPage.request.get("/api/shifts/history")).json()
+    ).shifts as Array<{
+      id: string;
+      expectedCash: string;
+      variance: string;
+    }>;
+    expect(correctedHistory.find(({ id }) => id === shiftId)).toMatchObject({
+      expectedCash: "-67.00",
+      variance: "67.00",
+    });
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   } finally {
     await cashierContext.close();
   }

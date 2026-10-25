@@ -16,6 +16,13 @@ import { ExpenseHistory } from "./expense-history";
 type ExpenseResponse = {
   expenses: ExpenseEntry[];
   totals: ExpenseTotals;
+  availableShifts: Array<{
+    id: string;
+    cashierEmail: string;
+    expectedCash: string;
+    openedAt: string;
+    closedAt: string | null;
+  }>;
   registerShift: {
     id: string;
     cashierEmail: string;
@@ -45,6 +52,11 @@ function expenseError(error: unknown): string {
       "This payment would exceed the supported register balance.",
     expense_shift_changed:
       "The shift changed. Refresh and review the payment before trying again.",
+    expense_shift_selection_required:
+      "Choose which shift should be charged for this date.",
+    expense_shift_unavailable:
+      "The shift is unavailable for this payment. Refresh and review the selected date and shift.",
+    future_expense_date: "Payments cannot be recorded for a future date.",
     invalid_expense:
       "Enter a positive amount with up to two decimal places. Stock purchases need a positive product amount; Other expenses need a description.",
     expense_request_key_reused:
@@ -53,13 +65,29 @@ function expenseError(error: unknown): string {
       "This payment was already canceled. Refresh the payment list.",
     expense_not_found:
       "This payment could not be found. Refresh the payment list.",
-    expense_shift_unavailable:
-      "The original shift is unavailable, so its cash balance could not be updated.",
     forbidden: "You cannot cancel this payment.",
   };
   return error instanceof ApiError
     ? (messages[error.code] ?? "Unable to record the expense. Try again.")
     : "Unable to record the expense. Try again.";
+}
+
+function shiftLabel(shift: ExpenseResponse["availableShifts"][number]) {
+  const format = (value: string) =>
+    new Intl.DateTimeFormat("en-PH", {
+      timeZone: "Asia/Manila",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(value));
+  return (
+    shift.cashierEmail +
+    " · " +
+    format(shift.openedAt) +
+    "–" +
+    (shift.closedAt ? format(shift.closedAt) : "Open")
+  );
 }
 
 function paymentTotal(productAmount: string, deliveryFee: string): string {
@@ -79,6 +107,7 @@ export function ExpensesPage() {
   const { user } = useAuth();
   const [date, setDate] = useState(todayInManila);
   const [data, setData] = useState<ExpenseResponse | null>(null);
+  const [selectedShiftId, setSelectedShiftId] = useState("");
   const [category, setCategory] = useState<ExpenseCategory>("LUNCH");
   const [amount, setAmount] = useState("");
   const [deliveryFee, setDeliveryFee] = useState("");
@@ -111,6 +140,21 @@ export function ExpensesPage() {
       .then((result) => {
         if (active) {
           setData(result);
+          setSelectedShiftId((current) => {
+            if (result.availableShifts.some((shift) => shift.id === current))
+              return current;
+            const currentRegister = result.registerShift
+              ? result.availableShifts.find(
+                  (shift) => shift.id === result.registerShift?.id,
+                )
+              : undefined;
+            return (
+              currentRegister?.id ??
+              (result.availableShifts.length === 1
+                ? (result.availableShifts.at(0)?.id ?? "")
+                : "")
+            );
+          });
           setError("");
         }
       })
@@ -147,6 +191,7 @@ export function ExpensesPage() {
         expectedCash: string | null;
       }>("/expenses", {
         requestKey: requestKey.current,
+        businessDate: date,
         category,
         amount: totalPayment,
         description,
@@ -161,7 +206,7 @@ export function ExpensesPage() {
             }
           : {}),
         ...(!choosesPayer || paymentSource === "CASHIER"
-          ? { shiftId: data?.registerShift?.id }
+          ? { shiftId: selectedShiftId || undefined }
           : {}),
       });
       setNotice(
@@ -175,7 +220,6 @@ export function ExpensesPage() {
       setDescription("");
       setIncludedInUnitCost(false);
       setLoading(true);
-      setDate(todayInManila());
       setRefreshKey((key) => key + 1);
     } catch (caught) {
       setError(expenseError(caught));
@@ -216,8 +260,11 @@ export function ExpensesPage() {
   }
 
   const cashierPaid = !choosesPayer || paymentSource === "CASHIER";
+  const selectedShift = data?.availableShifts.find(
+    (shift) => shift.id === selectedShiftId,
+  );
   const canSubmit =
-    !saving && !loading && (!cashierPaid || Boolean(data?.registerShift));
+    !saving && !loading && (!cashierPaid || Boolean(selectedShift));
 
   return (
     <section className="page-section inventory-page expenses-page">
@@ -237,9 +284,12 @@ export function ExpensesPage() {
               className="text-input"
               type="date"
               value={date}
+              max={todayInManila()}
               aria-label="Expense history date"
+              disabled={saving}
               onChange={(event) => {
                 setLoading(true);
+                setSelectedShiftId("");
                 setDate(event.target.value);
               }}
             />
@@ -302,7 +352,10 @@ export function ExpensesPage() {
         <section className="create-card expense-form-card">
           <div className="expense-section-heading">
             <h2>Record payment or expense</h2>
-            <p>New payments are recorded for today’s Manila business date.</p>
+            <p>
+              New payments use {date}. Cashier-paid payments are deducted from a
+              shift that was open on this date.
+            </p>
           </div>
           <form
             className="expense-payment-form"
@@ -489,6 +542,27 @@ export function ExpensesPage() {
                 <strong className="expense-payment-total">
                   Total payment: ₱{totalPayment || "0.00"}
                 </strong>
+                {cashierPaid && (data?.availableShifts.length ?? 0) > 1 && (
+                  <label className="inventory-field expense-shift-select">
+                    <span>Deduct from shift</span>
+                    <select
+                      className="text-input"
+                      value={selectedShiftId}
+                      disabled={saving || loading}
+                      onChange={(event) => {
+                        draftChanged();
+                        setSelectedShiftId(event.target.value);
+                      }}
+                    >
+                      <option value="">Select a shift</option>
+                      {data?.availableShifts.map((shift) => (
+                        <option key={shift.id} value={shift.id}>
+                          {shiftLabel(shift)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <p className="expense-review-note">
                   {stockPurchase
                     ? "Stock purchase payments are excluded from operating expenses."
@@ -498,24 +572,40 @@ export function ExpensesPage() {
                 </p>
                 <div className="expense-drawer-note">
                   {cashierPaid ? (
-                    data?.registerShift ? (
+                    selectedShift ? (
                       <>
                         <strong>
-                          Charged to {data.registerShift.cashierEmail}
+                          {selectedShift.closedAt
+                            ? "Historical closed shift"
+                            : "Open shift"}{" "}
+                          · {selectedShift.cashierEmail}
                         </strong>
                         <span>
-                          Expected drawer cash: ₱
-                          {data.registerShift.expectedCash}
+                          Expected drawer cash: ₱{selectedShift.expectedCash}
                         </span>
                         <span>
                           Payments can be recorded even if this balance goes
                           below zero.
                         </span>
+                        {selectedShift.closedAt && (
+                          <span>
+                            This entry will update the closed shift’s expected
+                            cash and variance.
+                          </span>
+                        )}
                       </>
                     ) : (
                       <span>
-                        <Link to="/checkout">Open a cashier shift</Link> to pay
-                        from the drawer.
+                        {data?.availableShifts.length ? (
+                          "Select a shift to charge this payment."
+                        ) : date === todayInManila() ? (
+                          <>
+                            <Link to="/checkout">Open a cashier shift</Link> to
+                            pay from the drawer.
+                          </>
+                        ) : (
+                          "No cashier shift was open on this date. Choose another date or record an owner-paid delivery or stock payment."
+                        )}
                       </span>
                     )
                   ) : (

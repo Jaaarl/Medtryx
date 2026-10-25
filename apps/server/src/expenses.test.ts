@@ -612,9 +612,9 @@ describe("expense payments and reports", () => {
       varianceReason: "No Fault",
     });
     expect(closed.status).toBe(200);
-    expect((await cashier.get("/api/expenses")).body.expenses[0].canCancel).toBe(
-      false,
-    );
+    expect(
+      (await cashier.get("/api/expenses")).body.expenses[0].canCancel,
+    ).toBe(false);
     const cashierRejected = await post(
       cashier,
       `/expenses/${saved.body.expense.id}/cancellation`,
@@ -697,7 +697,81 @@ describe("expense payments and reports", () => {
     expect(count("cash_movements")).toBe(0);
   });
 
-  it("rejects an expense aimed at a shift that was replaced after the form loaded", async () => {
+  it("lists same-day shifts and records a historical expense against the selected closed shift", async () => {
+    const cashier = await signIn();
+    const closedShiftId = await openShift(cashier, "500.00");
+    const closed = await post(cashier, `/shifts/${closedShiftId}/close`, {
+      actualCashCount: "450.00",
+      varianceReason: "Cashier Fault",
+    });
+    expect(closed.status).toBe(200);
+    db.prepare(
+      "UPDATE shifts SET opened_at = ?, closed_at = ? WHERE id = ?",
+    ).run(
+      "2020-01-14T17:00:00.000Z",
+      "2020-01-15T03:00:00.000Z",
+      closedShiftId,
+    );
+    const openShiftId = await openShift(cashier, "300.00");
+    db.prepare("UPDATE shifts SET opened_at = ? WHERE id = ?").run(
+      "2020-01-15T04:00:00.000Z",
+      openShiftId,
+    );
+
+    const owner = await signIn("owner@expense.test");
+    const history = (
+      await cashier.get("/api/expenses?startDate=2020-01-15&endDate=2020-01-15")
+    ).body;
+    expect(history.availableShifts).toHaveLength(2);
+    expect(
+      (await owner.get("/api/expenses?startDate=2020-01-15&endDate=2020-01-15"))
+        .body.availableShifts,
+    ).toHaveLength(2);
+    expect(
+      (await post(owner, "/expenses", expense({ businessDate: "2020-01-15" })))
+        .body.error,
+    ).toBe("expense_shift_selection_required");
+
+    const input = expense({
+      businessDate: "2020-01-15",
+      shiftId: closedShiftId,
+      amount: "100.00",
+    });
+    const saved = await post(cashier, "/expenses", input);
+    expect(saved.status, JSON.stringify(saved.body)).toBe(201);
+    expect(saved.body.expense).toMatchObject({
+      businessDate: "2020-01-15",
+      shiftId: closedShiftId,
+    });
+    expect(saved.body.expectedCash).toBe("400.00");
+    expect(
+      db
+        .prepare(
+          "SELECT expected_cash_centavos, actual_cash_count_centavos, variance_centavos, variance_approval_status FROM shifts WHERE id = ?",
+        )
+        .get(closedShiftId),
+    ).toEqual({
+      expected_cash_centavos: 40000,
+      actual_cash_count_centavos: 45000,
+      variance_centavos: 5000,
+      variance_approval_status: "PENDING",
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT movement_type, amount_delta_centavos, shift_id FROM cash_movements ORDER BY rowid",
+        )
+        .all(),
+    ).toEqual([
+      {
+        movement_type: "CASH_OUT",
+        amount_delta_centavos: -10000,
+        shift_id: closedShiftId,
+      },
+    ]);
+  });
+
+  it("rejects a selected shift that did not overlap the chosen business date", async () => {
     const cashier = await signIn();
     const shiftId = await openShift(cashier);
     expect(
@@ -707,11 +781,18 @@ describe("expense payments and reports", () => {
         })
       ).status,
     ).toBe(200);
+    db.prepare(
+      "UPDATE shifts SET opened_at = ?, closed_at = ? WHERE id = ?",
+    ).run("2020-01-14T17:00:00.000Z", "2020-01-15T03:00:00.000Z", shiftId);
     await openShift(cashier);
     const owner = await signIn("owner@expense.test");
-    const rejected = await post(owner, "/expenses", expense({ shiftId }));
+    const rejected = await post(
+      owner,
+      "/expenses",
+      expense({ businessDate: manilaCalendarDate(), shiftId }),
+    );
     expect(rejected.status).toBe(409);
-    expect(rejected.body.error).toBe("expense_shift_changed");
+    expect(rejected.body.error).toBe("expense_shift_unavailable");
     expect(count("expenses")).toBe(0);
     expect(
       (await cashier.get("/api/shifts/current")).body.shift.expectedCash,

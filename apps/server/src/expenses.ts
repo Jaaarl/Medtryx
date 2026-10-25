@@ -12,6 +12,7 @@ const expenseSchema = z
   .object({
     requestKey: z.uuid(),
     shiftId: z.uuid().optional(),
+    businessDate: z.iso.date().optional(),
     category: z.enum(["LUNCH", "DELIVERY", "OTHER", "STOCK_PURCHASE"]),
     amount: z
       .string()
@@ -282,6 +283,36 @@ type RegisterShift = {
   expected_cash_centavos: number;
 };
 
+type ExpenseShift = RegisterShift & {
+  opened_at: string;
+  closed_at: string | null;
+};
+
+function manilaDayBounds(businessDate: string) {
+  const start = new Date(`${businessDate}T00:00:00.000+08:00`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function expenseShiftsForDate(
+  db: Database.Database,
+  businessDate: string,
+  actor: { id: string; role: string },
+): ExpenseShift[] {
+  const bounds = manilaDayBounds(businessDate);
+  return db
+    .prepare(
+      `SELECT sh.id, sh.cashier_user_id, sh.opened_at, sh.closed_at,
+         COALESCE(sh.expected_cash_centavos, sh.opening_cash_centavos) AS expected_cash_centavos,
+         u.email AS cashier_email
+       FROM shifts sh JOIN users u ON u.id = sh.cashier_user_id
+       WHERE sh.opened_at < ? AND (sh.closed_at IS NULL OR sh.closed_at > ?)
+         AND (? = 'owner' OR sh.cashier_user_id = ? OR sh.closed_at IS NULL)
+       ORDER BY sh.opened_at, sh.id`,
+    )
+    .all(bounds.end, bounds.start, actor.role, actor.id) as ExpenseShift[];
+}
+
 function openRegister(db: Database.Database): RegisterShift | undefined {
   return db
     .prepare(
@@ -320,9 +351,20 @@ export function registerExpenseRoutes(
       { id: user.id, role: user.role },
     );
     const shift = openRegister(db);
+    const availableShifts = expenseShiftsForDate(db, start.data, {
+      id: user.id,
+      role: user.role,
+    });
     res.json({
       expenses,
       totals: summarizeExpenses(expenses),
+      availableShifts: availableShifts.map((available) => ({
+        id: available.id,
+        cashierEmail: available.cashier_email,
+        expectedCash: money(available.expected_cash_centavos),
+        openedAt: available.opened_at,
+        closedAt: available.closed_at,
+      })),
       registerShift: shift
         ? {
             id: shift.id,
@@ -346,6 +388,11 @@ export function registerExpenseRoutes(
     const amount = Number(cents(input.amount));
     const productAmount = Number(cents(input.productAmount));
     const deliveryFee = Number(cents(input.deliveryFee));
+    const businessDate = input.businessDate ?? manilaCalendarDate();
+    if (businessDate > manilaCalendarDate()) {
+      res.status(400).json({ error: "future_expense_date" });
+      return;
+    }
     try {
       const result = db.transaction(() => {
         const saved = db
@@ -379,24 +426,53 @@ export function registerExpenseRoutes(
             saved.description !== input.description ||
             saved.payment_source !== input.paymentSource ||
             Boolean(saved.included_in_unit_cost) !== input.includedInUnitCost ||
+            saved.business_date !== businessDate ||
             (input.shiftId !== undefined && saved.shift_id !== input.shiftId)
           ) {
             throw new ExpenseError(409, "expense_request_key_reused");
           }
           return { id: saved.id, date: saved.business_date, created: false };
         }
-        const shift =
-          input.paymentSource === "CASHIER" ? openRegister(db) : undefined;
+        let shift: ExpenseShift | undefined;
         if (input.paymentSource === "CASHIER") {
-          if (!shift) throw new ExpenseError(409, "open_shift_required");
-          if (input.shiftId !== undefined && shift.id !== input.shiftId)
-            throw new ExpenseError(409, "expense_shift_changed");
+          const availableShifts = expenseShiftsForDate(db, businessDate, {
+            id: user.id,
+            role: user.role,
+          });
+          if (input.shiftId !== undefined) {
+            shift = availableShifts.find(
+              (candidate) => candidate.id === input.shiftId,
+            );
+            if (!shift)
+              throw new ExpenseError(409, "expense_shift_unavailable");
+          } else {
+            const currentShift = openRegister(db);
+            const today = manilaCalendarDate();
+            shift =
+              businessDate === today
+                ? availableShifts.find(
+                    (candidate) => candidate.id === currentShift?.id,
+                  )
+                : undefined;
+            if (!shift && availableShifts.length === 1)
+              shift = availableShifts[0];
+            if (!shift) {
+              if (availableShifts.length > 1)
+                throw new ExpenseError(409, "expense_shift_selection_required");
+              throw new ExpenseError(
+                409,
+                businessDate === today
+                  ? "open_shift_required"
+                  : "expense_shift_unavailable",
+              );
+            }
+          }
           if (!Number.isSafeInteger(shift.expected_cash_centavos - amount))
             throw new ExpenseError(409, "cash_amount_overflow");
         }
         const now = new Date();
         const createdAt = now.toISOString();
-        const date = manilaCalendarDate(now);
+        const date = businessDate;
         const id = randomUUID();
         const movementId = shift ? randomUUID() : null;
         if (shift && movementId) {
@@ -412,14 +488,62 @@ export function registerExpenseRoutes(
             user.id,
             createdAt,
           );
-          const updated = db
-            .prepare(
-              `UPDATE shifts SET expected_cash_centavos = COALESCE(expected_cash_centavos, opening_cash_centavos) - ?
-             WHERE id = ? AND closed_at IS NULL`,
+          const expectedCash = shift.expected_cash_centavos - amount;
+          if (shift.closed_at === null) {
+            const updated = db
+              .prepare(
+                `UPDATE shifts SET expected_cash_centavos = ?
+                 WHERE id = ? AND closed_at IS NULL`,
+              )
+              .run(expectedCash, shift.id);
+            if (updated.changes !== 1)
+              throw new ExpenseError(409, "expense_shift_changed");
+          } else {
+            const closedShift = db
+              .prepare(
+                `SELECT actual_cash_count_centavos, variance_reason
+                 FROM shifts WHERE id = ? AND closed_at IS NOT NULL`,
+              )
+              .get(shift.id) as
+              | {
+                  actual_cash_count_centavos: number | null;
+                  variance_reason: string | null;
+                }
+              | undefined;
+            if (
+              closedShift?.actual_cash_count_centavos === null ||
+              !closedShift
             )
-            .run(amount, shift.id);
-          if (updated.changes !== 1)
-            throw new ExpenseError(409, "open_shift_required");
+              throw new ExpenseError(409, "expense_shift_unavailable");
+            const variance =
+              closedShift.actual_cash_count_centavos - expectedCash;
+            if (!Number.isSafeInteger(variance))
+              throw new ExpenseError(409, "cash_amount_overflow");
+            const varianceReason =
+              variance === 0
+                ? closedShift.variance_reason
+                : (closedShift.variance_reason ??
+                  "Payment recorded after shift close.");
+            const updated = db
+              .prepare(
+                `UPDATE shifts
+                 SET expected_cash_centavos = ?, variance_centavos = ?,
+                     variance_reason = ?, variance_approval_status = ?,
+                     variance_approved_by_user_id = NULL, variance_approved_at = NULL,
+                     variance_approval_note = NULL
+                 WHERE id = ? AND closed_at IS NOT NULL
+                   AND actual_cash_count_centavos IS NOT NULL`,
+              )
+              .run(
+                expectedCash,
+                variance,
+                varianceReason,
+                variance === 0 ? "NONE" : "PENDING",
+                shift.id,
+              );
+            if (updated.changes !== 1)
+              throw new ExpenseError(409, "expense_shift_unavailable");
+          }
         }
         db.prepare(
           `INSERT INTO expenses (id, request_id, business_date, category, amount_centavos,
@@ -459,6 +583,7 @@ export function registerExpenseRoutes(
             invoiceReference: input.invoiceReference,
             paymentSource: input.paymentSource,
             includedInUnitCost: input.includedInUnitCost,
+            businessDate: date,
             description: input.description,
             shiftId: shift?.id ?? null,
             cashMovementId: movementId,
@@ -476,7 +601,9 @@ export function registerExpenseRoutes(
       ).find((entry) => entry.id === result.id)!;
       const balance = expense.shiftId
         ? (db
-            .prepare("SELECT expected_cash_centavos FROM shifts WHERE id = ?")
+            .prepare(
+              "SELECT COALESCE(expected_cash_centavos, opening_cash_centavos) AS expected_cash_centavos FROM shifts WHERE id = ?",
+            )
             .get(expense.shiftId) as { expected_cash_centavos: number })
         : undefined;
       res.status(result.created ? 201 : 200).json({
