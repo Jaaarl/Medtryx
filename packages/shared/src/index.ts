@@ -142,6 +142,10 @@ export type ExpenseEntry = {
   cashierEmail: string | null;
   shiftId: string | null;
   createdAt: string;
+  cancelled: boolean;
+  cancelledAt: string | null;
+  cancelledByEmail: string | null;
+  canCancel: boolean;
 };
 
 export type ExpenseTotals = {

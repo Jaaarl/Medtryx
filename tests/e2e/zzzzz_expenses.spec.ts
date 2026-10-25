@@ -7,7 +7,7 @@ async function signIn(page: Page, email: string, password: string) {
   await page.getByLabel("Email address or username").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/checkout$/);
+  await expect(page).toHaveURL(/\/(checkout|dashboard)$/);
 }
 
 async function post(page: Page, path: string, data: Record<string, unknown>) {
@@ -22,7 +22,7 @@ async function post(page: Page, path: string, data: Record<string, unknown>) {
 test("owner and cashier record expenses from zero cash and reconcile negative balances", async ({
   page: ownerPage,
   browser,
-}) => {
+}, testInfo) => {
   test.setTimeout(60_000);
   const pageErrors: string[] = [];
   ownerPage.on("pageerror", (error) => pageErrors.push(error.message));
@@ -206,7 +206,7 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       "Expected cashier cash: ₱-15275.00",
     );
     await ownerPage.screenshot({
-      path: "/tmp/medtryx-expenses-desktop.png",
+      path: testInfo.outputPath("medtryx-expenses-desktop.png"),
       fullPage: true,
     });
 
@@ -246,6 +246,21 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
         .filter({ hasText: "E2E delivery already in unit cost" }),
     ).toBeVisible();
 
+    await ownerPage.goto("/expenses");
+    const ownerCancellation = ownerPage
+      .getByRole("row")
+      .filter({ hasText: "E2E cleaning supplies" });
+    ownerPage.once("dialog", (dialog) => void dialog.accept());
+    await ownerCancellation
+      .getByRole("button", { name: "Cancel payment", exact: true })
+      .click();
+    await expect(ownerPage.getByRole("status")).toContainText(
+      "Expected cashier cash: \u20B1-15260.00",
+    );
+    await expect(ownerCancellation).toContainText(
+      "Cancelled by owner@example.test",
+    );
+
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/expenses");
     await expect(
@@ -258,7 +273,7 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       page.getByRole("button", { name: "Record expense", exact: true }),
     ).toBeEnabled();
     await page.screenshot({
-      path: "/tmp/medtryx-expenses-mobile.png",
+      path: testInfo.outputPath("medtryx-expenses-mobile.png"),
       fullPage: true,
     });
     expect(
@@ -298,7 +313,7 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
         .getByRole("button", { name: "Record expense", exact: true })
         .click();
       await expect(secondCashierPage.getByRole("status")).toContainText(
-        "Expected cashier cash: ₱-15280.00",
+        "Expected cashier cash: ₱-15265.00",
       );
       await expect(
         secondCashierPage.getByText("E2E second cashier lunch", {
@@ -308,6 +323,20 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
     } finally {
       await secondCashierContext.close();
     }
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/expenses");
+    const cashierCancellation = page
+      .getByRole("row")
+      .filter({ hasText: "E2E-CASHIER-COD" });
+    page.once("dialog", (dialog) => void dialog.accept());
+    await cashierCancellation
+      .getByRole("button", { name: "Cancel payment", exact: true })
+      .click();
+    await expect(page.getByRole("status")).toContainText(
+      "Expected cashier cash: \u20B1-65.00",
+    );
+    await expect(cashierCancellation).toContainText(`Cancelled by ${email}`);
 
     await page.goto("/checkout");
     await page
@@ -334,9 +363,9 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
       variance: string;
     }>;
     expect(history.find(({ id }) => id === shiftId)).toMatchObject({
-      expectedCash: "-15280.00",
+      expectedCash: "-65.00",
       actualCashCount: "0.00",
-      variance: "15280.00",
+      variance: "65.00",
     });
   } finally {
     await cashierContext.close();

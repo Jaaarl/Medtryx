@@ -772,12 +772,21 @@ function csvForReport(report: ReturnType<typeof reportRows>): string {
     ]);
   }
   for (const expense of report.expenses) {
-    rows.push([
+    const paymentStatus = expense.cancelled
+      ? `cancelled ${expense.cancelledAt} by ${expense.cancelledByEmail ?? "unknown"}${expense.paymentSource === "CASHIER" ? " / refunded to original shift" : " / owner-paid; drawer unchanged"}`
+      : `paid by ${expense.paymentSource}${expense.cashierEmail ? ` (${expense.cashierEmail})` : ""}`;
+    const expenseDetails =
       expense.category === "STOCK_PURCHASE"
-        ? "Stock purchase payment"
-        : "Expense payment",
+        ? `products ${expense.productAmount} / delivery fee ${expense.deliveryFee} / supplier ${expense.supplier} / invoice ${expense.invoiceReference} / stock acquisition payment (excluded from operating expenses)`
+        : `included in unit cost ${expense.includedInUnitCost ? "yes" : "no"}`;
+    rows.push([
+      expense.cancelled
+        ? "Cancelled payment"
+        : expense.category === "STOCK_PURCHASE"
+          ? "Stock purchase payment"
+          : "Expense payment",
       `${expense.businessDate} ${expense.category} / ${expense.description}`,
-      `${expense.amount} / paid by ${expense.paymentSource}${expense.cashierEmail ? ` (${expense.cashierEmail})` : ""} / operating expense ${expense.operatingExpense}${expense.category === "STOCK_PURCHASE" ? ` / products ${expense.productAmount} / delivery fee ${expense.deliveryFee} / supplier ${expense.supplier} / invoice ${expense.invoiceReference} / stock acquisition payment (excluded from operating expenses)` : ` / included in unit cost ${expense.includedInUnitCost ? "yes" : "no"}`} / recorded by ${expense.recordedByEmail}`,
+      `${expense.amount} / ${paymentStatus} / operating expense ${expense.operatingExpense} / ${expenseDetails} / recorded by ${expense.recordedByEmail}`,
     ]);
   }
   for (const bundle of report.bundlePromotions) {

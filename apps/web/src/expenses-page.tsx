@@ -44,11 +44,18 @@ function expenseError(error: unknown): string {
     cash_amount_overflow:
       "This payment would exceed the supported register balance.",
     expense_shift_changed:
-      "The open cashier shift changed. Refresh and review who will pay before recording this expense.",
+      "The shift changed. Refresh and review the payment before trying again.",
     invalid_expense:
       "Enter a positive amount with up to two decimal places. Stock purchases need a positive product amount; Other expenses need a description.",
     expense_request_key_reused:
       "This payment was already recorded with different details. Refresh before adding another expense.",
+    expense_already_cancelled:
+      "This payment was already canceled. Refresh the payment list.",
+    expense_not_found:
+      "This payment could not be found. Refresh the payment list.",
+    expense_shift_unavailable:
+      "The original shift is unavailable, so its cash balance could not be updated.",
+    forbidden: "You cannot cancel this payment.",
   };
   return error instanceof ApiError
     ? (messages[error.code] ?? "Unable to record the expense. Try again.")
@@ -86,6 +93,7 @@ export function ExpensesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [cancellingId, setCancellingId] = useState("");
   const requestKey = useRef("");
   const submitting = useRef(false);
   const stockPurchase = category === "STOCK_PURCHASE";
@@ -174,6 +182,36 @@ export function ExpensesPage() {
     } finally {
       submitting.current = false;
       setSaving(false);
+    }
+  }
+
+  async function cancelExpense(expense: ExpenseEntry) {
+    if (
+      !window.confirm(
+        `Cancel this ${expense.category.toLowerCase().replaceAll("_", " ")} payment for \u20B1${expense.amount}? ${expense.paymentSource === "CASHIER" ? "Cashier-paid money will be returned to its original shift." : "This owner-paid amount will not change the cashier shift."}`,
+      )
+    )
+      return;
+    setError("");
+    setNotice("");
+    setCancellingId(expense.id);
+    try {
+      const result = await api.post<{
+        expectedCash: string | null;
+      }>(`/expenses/${expense.id}/cancellation`);
+      setNotice(
+        `Payment canceled.${
+          result.expectedCash === null
+            ? " Owner-paid amount did not affect the cashier shift."
+            : ` Refunded to the original shift. Expected cashier cash: \u20B1${result.expectedCash}.`
+        }`,
+      );
+      setLoading(true);
+      setRefreshKey((key) => key + 1);
+    } catch (caught) {
+      setError(expenseError(caught));
+    } finally {
+      setCancellingId("");
     }
   }
 
@@ -523,6 +561,8 @@ export function ExpensesPage() {
                 expenses={data.expenses}
                 className="expense-page-history"
                 description={`${user?.role === "owner" ? "All store payments" : "Payments charged to your shifts and payments you recorded"} for ${date}.`}
+                onCancel={(expense) => void cancelExpense(expense)}
+                cancellingId={cancellingId}
               />
             )
           )}

@@ -4,11 +4,18 @@ export function clearExpenseLedgerForTest(db: Database.Database): void {
   db.transaction(() => {
     db.exec(`DROP TRIGGER IF EXISTS expenses_no_update;
       DROP TRIGGER IF EXISTS expenses_no_delete;
+      DROP TRIGGER IF EXISTS expense_cancellations_no_update;
+      DROP TRIGGER IF EXISTS expense_cancellations_no_delete;
+      DELETE FROM expense_cancellations;
       DELETE FROM expenses;
       CREATE TRIGGER expenses_no_update BEFORE UPDATE ON expenses
       BEGIN SELECT RAISE(ABORT, 'expenses_are_append_only'); END;
       CREATE TRIGGER expenses_no_delete BEFORE DELETE ON expenses
-      BEGIN SELECT RAISE(ABORT, 'expenses_are_append_only'); END;`);
+      BEGIN SELECT RAISE(ABORT, 'expenses_are_append_only'); END;
+      CREATE TRIGGER expense_cancellations_no_update BEFORE UPDATE ON expense_cancellations
+      BEGIN SELECT RAISE(ABORT, 'expense_cancellations_are_append_only'); END;
+      CREATE TRIGGER expense_cancellations_no_delete BEFORE DELETE ON expense_cancellations
+      BEGIN SELECT RAISE(ABORT, 'expense_cancellations_are_append_only'); END;`);
   })();
 }
 

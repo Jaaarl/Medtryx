@@ -877,6 +877,7 @@ const restoreTables = [
   "sale_reversal_lines",
   "cash_movements",
   "expenses",
+  "expense_cancellations",
   "lot_stock_movements",
   "sale_line_lot_allocations",
   "daily_sales_ledger",

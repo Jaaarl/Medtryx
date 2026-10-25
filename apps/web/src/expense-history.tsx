@@ -11,10 +11,14 @@ export function ExpenseHistory({
   expenses,
   className = "",
   description,
+  onCancel,
+  cancellingId,
 }: {
   expenses: ExpenseEntry[];
   className?: string;
   description?: string;
+  onCancel?: (expense: ExpenseEntry) => void;
+  cancellingId?: string;
 }) {
   return (
     <section
@@ -41,6 +45,7 @@ export function ExpenseHistory({
                 <th>PAID BY</th>
                 <th>RECORDED</th>
                 <th>RECORDED BY</th>
+                {onCancel && <th>ACTION</th>}
               </tr>
             </thead>
             <tbody>
@@ -48,6 +53,11 @@ export function ExpenseHistory({
                 <tr key={expense.id}>
                   <td>
                     <strong>{expenseLabels[expense.category]}</strong>
+                    {expense.cancelled && (
+                      <small className="expense-cancelled-label">
+                        Cancelled by {expense.cancelledByEmail ?? "staff"}
+                      </small>
+                    )}
                     {expense.description && (
                       <small>{expense.description}</small>
                     )}
@@ -93,6 +103,24 @@ export function ExpenseHistory({
                     })}
                   </td>
                   <td data-label="Recorded by">{expense.recordedByEmail}</td>
+                  {onCancel && (
+                    <td data-label="Action">
+                      {expense.canCancel ? (
+                        <button
+                          className="button button-secondary expense-cancel-button"
+                          type="button"
+                          disabled={cancellingId === expense.id}
+                          onClick={() => onCancel(expense)}
+                        >
+                          {cancellingId === expense.id
+                            ? "Cancelling…"
+                            : "Cancel payment"}
+                        </button>
+                      ) : expense.cancelled ? (
+                        <span className="expense-cancelled-label">Cancelled</span>
+                      ) : null}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -333,7 +333,9 @@ describe("expense payments and reports", () => {
       cashierEmail: "cashier@expense.test",
       recordedByEmail: "owner@expense.test",
     });
-    expect((await cashier.get("/api/expenses")).body.expenses).toHaveLength(1);
+    expect((await cashier.get("/api/expenses")).body.expenses).toMatchObject([
+      { canCancel: true },
+    ]);
     const second = await signIn("second@expense.test");
     expect((await second.get("/api/expenses")).body.expenses).toHaveLength(0);
     const secondPayment = await post(second, "/expenses", expense());
@@ -341,6 +343,7 @@ describe("expense payments and reports", () => {
     expect(secondPayment.body.expense).toMatchObject({
       cashierEmail: "cashier@expense.test",
       recordedByEmail: "second@expense.test",
+      canCancel: true,
     });
     expect((await cashier.get("/api/expenses")).body.expenses).toHaveLength(2);
     expect((await second.get("/api/expenses")).body.expenses).toHaveLength(1);
@@ -503,6 +506,171 @@ describe("expense payments and reports", () => {
       expectedCash: "-70.00",
       actualCashCount: "0.00",
       variance: "70.00",
+    });
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("lets the cashier cancel a shift payment, restores that shift, and removes the payment from totals", async () => {
+    const cashier = await signIn();
+    const shiftId = await openShift(cashier, "500.00");
+    const saved = await post(cashier, "/expenses", expense());
+    expect(saved.body.expectedCash).toBe("380.00");
+    const listed = (await cashier.get("/api/expenses")).body.expenses[0];
+    expect(listed.canCancel).toBe(true);
+
+    const cancelled = await post(
+      cashier,
+      `/expenses/${saved.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    expect(cancelled.body).toMatchObject({
+      expectedCash: "500.00",
+      expense: {
+        id: saved.body.expense.id,
+        cancelled: true,
+        cancelledByEmail: "cashier@expense.test",
+        canCancel: false,
+      },
+    });
+    expect(
+      (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+    ).toBe("500.00");
+    expect(
+      db
+        .prepare(
+          "SELECT movement_type, amount_delta_centavos, shift_id FROM cash_movements ORDER BY rowid",
+        )
+        .all(),
+    ).toEqual([
+      {
+        movement_type: "CASH_OUT",
+        amount_delta_centavos: -12000,
+        shift_id: shiftId,
+      },
+      {
+        movement_type: "CASH_IN",
+        amount_delta_centavos: 12000,
+        shift_id: shiftId,
+      },
+    ]);
+    expect((await cashier.get("/api/expenses")).body.totals).toMatchObject({
+      paymentCount: 0,
+      totalPayments: "0.00",
+      operatingExpenses: "0.00",
+      cashierPaid: "0.00",
+    });
+    const repeated = await post(
+      cashier,
+      `/expenses/${saved.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(repeated.status).toBe(409);
+    expect(repeated.body.error).toBe("expense_already_cancelled");
+    expect(count("cash_movements")).toBe(2);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("cancels an owner-paid expense without changing cashier shift cash", async () => {
+    const cashier = await signIn();
+    await openShift(cashier, "500.00");
+    const saved = await post(
+      cashier,
+      "/expenses",
+      expense({ category: "DELIVERY", paymentSource: "OWNER" }),
+    );
+    expect(saved.body.expense.canCancel).toBe(true);
+    const cancelled = await post(
+      cashier,
+      `/expenses/${saved.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.expectedCash).toBeNull();
+    expect(cancelled.body.expense).toMatchObject({
+      cancelled: true,
+      canCancel: false,
+    });
+    expect(
+      (await cashier.get("/api/shifts/current")).body.shift.expectedCash,
+    ).toBe("500.00");
+    expect(count("cash_movements")).toBe(0);
+    expect((await cashier.get("/api/expenses")).body.totals).toMatchObject({
+      paymentCount: 0,
+      ownerPaid: "0.00",
+      totalPayments: "0.00",
+    });
+  });
+
+  it("lets the owner cancel a closed-shift payment and sends the variance back for approval", async () => {
+    const cashier = await signIn();
+    const shiftId = await openShift(cashier, "1000.00");
+    const saved = await post(cashier, "/expenses", expense());
+    expect(saved.body.expectedCash).toBe("880.00");
+    const closed = await post(cashier, `/shifts/${shiftId}/close`, {
+      actualCashCount: "900.00",
+      varianceReason: "No Fault",
+    });
+    expect(closed.status).toBe(200);
+    expect((await cashier.get("/api/expenses")).body.expenses[0].canCancel).toBe(
+      false,
+    );
+    const cashierRejected = await post(
+      cashier,
+      `/expenses/${saved.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(cashierRejected.status).toBe(403);
+
+    const owner = await signIn("owner@expense.test");
+    const cancelled = await post(
+      owner,
+      `/expenses/${saved.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    expect(cancelled.body.expectedCash).toBe("1000.00");
+    const shift = db
+      .prepare(
+        "SELECT expected_cash_centavos, actual_cash_count_centavos, variance_centavos, variance_approval_status FROM shifts WHERE id = ?",
+      )
+      .get(shiftId);
+    expect(shift).toEqual({
+      expected_cash_centavos: 100000,
+      actual_cash_count_centavos: 90000,
+      variance_centavos: -10000,
+      variance_approval_status: "PENDING",
+    });
+    expect(
+      db
+        .prepare(
+          "SELECT movement_type, amount_delta_centavos, shift_id FROM cash_movements ORDER BY rowid",
+        )
+        .all(),
+    ).toEqual([
+      {
+        movement_type: "CASH_OUT",
+        amount_delta_centavos: -12000,
+        shift_id: shiftId,
+      },
+      {
+        movement_type: "CASH_IN",
+        amount_delta_centavos: 12000,
+        shift_id: shiftId,
+      },
+    ]);
+    const report = (await owner.get("/api/reports/daily")).body.report;
+    expect(report.metrics).toMatchObject({
+      expensePayments: "0.00",
+      operatingExpenses: "0.00",
+      cashIn: "120.00",
+      cashOut: "120.00",
+      netCashImpact: "0.00",
+    });
+    expect(report.expenses[0]).toMatchObject({
+      cancelled: true,
+      cancelledByEmail: "owner@expense.test",
+      canCancel: false,
     });
     expect(db.pragma("foreign_key_check")).toEqual([]);
   });

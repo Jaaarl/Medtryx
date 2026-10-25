@@ -48,7 +48,7 @@ describe("single payments migration from the committed 0026 schema", () => {
           .all();
         const originalOtherSchema = db
           .prepare(
-            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' AND tbl_name <> 'products' AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
+            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
           )
           .all();
         db.close();
@@ -65,7 +65,7 @@ describe("single payments migration from the committed 0026 schema", () => {
         expect(
           db
             .prepare(
-              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name <> 'shifts' AND tbl_name <> 'expenses' AND tbl_name <> 'products' AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
+              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
             )
             .all(),
         ).toEqual(originalOtherSchema);
@@ -73,7 +73,13 @@ describe("single payments migration from the committed 0026 schema", () => {
           db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
         ).toEqual({ count: 0 });
         const applied = appliedRows(db);
-        expect(applied).toHaveLength(29);
+        expect(applied).toHaveLength(31);
+        expect(applied[30]).toMatchObject({
+          name: "0031_expense_cancellations.sql",
+        });
+        expect(applied[29]).toMatchObject({
+          name: "0030_monthly_incentive_goals.sql",
+        });
         expect(applied[28]).toMatchObject({
           name: "0029_signed_shift_cash_counts.sql",
         });

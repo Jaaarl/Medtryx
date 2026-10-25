@@ -256,12 +256,17 @@ describe("owner-only verified backup and restore", () => {
       );
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-      ).toEqual({ count: 29 });
+      ).toEqual({ count: 31 });
       expect(
         db
           .prepare("SELECT name FROM schema_migrations WHERE name = ?")
           .get("0029_signed_shift_cash_counts.sql"),
       ).toEqual({ name: "0029_signed_shift_cash_counts.sql" });
+      expect(
+        db
+          .prepare("SELECT name FROM schema_migrations WHERE name = ?")
+          .get("0031_expense_cancellations.sql"),
+      ).toEqual({ name: "0031_expense_cancellations.sql" });
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
       ).toEqual({ count: 0 });
@@ -340,6 +345,12 @@ describe("owner-only verified backup and restore", () => {
       paymentSource: "CASHIER",
     });
     expect(lunch.status).toBe(201);
+    const cancellation = await postWithCsrf(
+      owner,
+      `/expenses/${lunch.body.expense.id}/cancellation`,
+      {},
+    );
+    expect(cancellation.status, JSON.stringify(cancellation.body)).toBe(200);
     expect(
       (
         await postWithCsrf(owner, "/expenses", {
@@ -387,7 +398,8 @@ describe("owner-only verified backup and restore", () => {
     const payments = (await signedIn.get("/api/expenses")).body;
     expect(payments.expenses).toHaveLength(4);
     expect(payments.totals).toMatchObject({
-      operatingExpenses: "30.00",
+      paymentCount: 3,
+      operatingExpenses: "0.00",
       includedInUnitCost: "15.00",
       stockPurchasePayments: "30400.00",
       stockProductPayments: "30000.00",
@@ -419,12 +431,26 @@ describe("owner-only verified backup and restore", () => {
         }),
       ]),
     );
-    expect(payments.registerShift.expectedCash).toBe("-15230.00");
+    expect(payments.expenses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: lunch.body.expense.id,
+          cancelled: true,
+          cancelledByEmail: "owner.backups@example.test",
+        }),
+      ]),
+    );
+    expect(payments.registerShift.expectedCash).toBe("-15200.00");
     expect(() =>
       db
         .prepare("DELETE FROM expenses WHERE id = ?")
         .run(lunch.body.expense.id),
     ).toThrow("expenses_are_append_only");
+    expect(() =>
+      db
+        .prepare("DELETE FROM expense_cancellations WHERE expense_id = ?")
+        .run(lunch.body.expense.id),
+    ).toThrow("expense_cancellations_are_append_only");
     expect(db.pragma("foreign_key_check")).toEqual([]);
   });
 

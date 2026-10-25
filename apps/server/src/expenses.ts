@@ -123,17 +123,23 @@ export function getExpenseEntries(
   endDate: string,
   cashierId?: string,
   recordedByUserId?: string,
+  actor?: { id: string; role: string },
 ): ExpenseEntry[] {
   const rows = db
     .prepare(
       `SELECT e.id, e.business_date, e.category, e.amount_centavos,
             e.description, e.payment_source, e.included_in_unit_cost,
             e.product_amount_centavos, e.delivery_fee_centavos, e.supplier, e.invoice_reference,
-            e.shift_id, e.created_at, u.email AS recorded_by_email,
-            cashier.email AS cashier_email
+            e.shift_id, e.created_at, e.recorded_by_user_id,
+            u.email AS recorded_by_email, cashier.email AS cashier_email,
+            sh.cashier_user_id AS shift_cashier_user_id,
+            sh.closed_at AS shift_closed_at,
+            ec.created_at AS cancelled_at, canceller.email AS cancelled_by_email
      FROM expenses e JOIN users u ON u.id = e.recorded_by_user_id
      LEFT JOIN shifts sh ON sh.id = e.shift_id
      LEFT JOIN users cashier ON cashier.id = sh.cashier_user_id
+     LEFT JOIN expense_cancellations ec ON ec.expense_id = e.id
+     LEFT JOIN users canceller ON canceller.id = ec.cancelled_by_user_id
      WHERE e.business_date >= ? AND e.business_date <= ?
        ${cashierId ? `AND (sh.cashier_user_id = ? OR (e.shift_id IS NULL AND e.recorded_by_user_id = ?)${recordedByUserId ? " OR e.recorded_by_user_id = ?" : ""})` : ""}
      ORDER BY e.created_at DESC, e.id DESC`,
@@ -162,8 +168,13 @@ export function getExpenseEntries(
     included_in_unit_cost: number;
     shift_id: string | null;
     created_at: string;
+    recorded_by_user_id: string;
     recorded_by_email: string;
     cashier_email: string | null;
+    shift_cashier_user_id: string | null;
+    shift_closed_at: string | null;
+    cancelled_at: string | null;
+    cancelled_by_email: string | null;
   }>;
   return rows.map((row) => ({
     id: row.id,
@@ -182,7 +193,9 @@ export function getExpenseEntries(
     paymentSource: row.payment_source,
     includedInUnitCost: row.included_in_unit_cost === 1,
     operatingExpense: money(
-      row.category === "STOCK_PURCHASE" || row.included_in_unit_cost
+      row.cancelled_at !== null ||
+        row.category === "STOCK_PURCHASE" ||
+        row.included_in_unit_cost
         ? 0
         : row.amount_centavos,
     ),
@@ -190,13 +203,28 @@ export function getExpenseEntries(
     cashierEmail: row.cashier_email,
     shiftId: row.shift_id,
     createdAt: row.created_at,
+    cancelled: row.cancelled_at !== null,
+    cancelledAt: row.cancelled_at,
+    cancelledByEmail: row.cancelled_by_email,
+    canCancel:
+      row.cancelled_at === null &&
+      (actor?.role === "owner" ||
+        (actor?.role === "cashier" &&
+          ((row.shift_id !== null &&
+            row.shift_closed_at === null &&
+            (row.shift_cashier_user_id === actor.id ||
+              row.recorded_by_user_id === actor.id)) ||
+            (row.shift_id === null &&
+              row.payment_source === "OWNER" &&
+              row.recorded_by_user_id === actor.id)))),
   }));
 }
 
 export function summarizeExpenses(entries: ExpenseEntry[]): ExpenseTotals {
+  const activeEntries = entries.filter((entry) => !entry.cancelled);
   const sum = (filter: (entry: ExpenseEntry) => boolean, operating = false) =>
     money(
-      entries
+      activeEntries
         .filter(filter)
         .reduce(
           (total, entry) =>
@@ -205,7 +233,7 @@ export function summarizeExpenses(entries: ExpenseEntry[]): ExpenseTotals {
         ),
     );
   return {
-    paymentCount: entries.length,
+    paymentCount: activeEntries.length,
     totalPayments: sum(() => true),
     operatingExpenses: sum(() => true, true),
     cashierPaid: sum((entry) => entry.paymentSource === "CASHIER"),
@@ -213,10 +241,13 @@ export function summarizeExpenses(entries: ExpenseEntry[]): ExpenseTotals {
     includedInUnitCost: sum((entry) => entry.includedInUnitCost),
     stockPurchasePayments: sum((entry) => entry.category === "STOCK_PURCHASE"),
     stockProductPayments: money(
-      entries.reduce((total, entry) => total + cents(entry.productAmount), 0n),
+      activeEntries.reduce(
+        (total, entry) => total + cents(entry.productAmount),
+        0n,
+      ),
     ),
     stockDeliveryFees: money(
-      entries
+      activeEntries
         .filter((entry) => entry.category === "STOCK_PURCHASE")
         .reduce((total, entry) => total + cents(entry.deliveryFee), 0n),
     ),
@@ -286,6 +317,7 @@ export function registerExpenseRoutes(
       end.data,
       user.role === "owner" ? undefined : user.id,
       user.role === "owner" ? undefined : user.id,
+      { id: user.id, role: user.role },
     );
     const shift = openRegister(db);
     res.json({
@@ -434,9 +466,14 @@ export function registerExpenseRoutes(
         });
         return { id, date, created: true };
       })();
-      const expense = getExpenseEntries(db, result.date, result.date).find(
-        (entry) => entry.id === result.id,
-      )!;
+      const expense = getExpenseEntries(
+        db,
+        result.date,
+        result.date,
+        undefined,
+        undefined,
+        { id: user.id, role: user.role },
+      ).find((entry) => entry.id === result.id)!;
       const balance = expense.shiftId
         ? (db
             .prepare("SELECT expected_cash_centavos FROM shifts WHERE id = ?")
@@ -452,4 +489,188 @@ export function registerExpenseRoutes(
       else throw error;
     }
   });
+
+  router.post(
+    "/expenses/:expenseId/cancellation",
+    requireAuth,
+    csrf,
+    (req, res) => {
+      const expenseId = z.uuid().safeParse(req.params.expenseId);
+      if (!expenseId.success || !req.user) {
+        res.status(400).json({ error: "invalid_request" });
+        return;
+      }
+      const user = req.user;
+      try {
+        const result = db.transaction(() => {
+          const expense = db
+            .prepare(
+              `SELECT e.id, e.business_date, e.category, e.amount_centavos,
+                    e.description, e.payment_source, e.supplier,
+                    e.invoice_reference, e.recorded_by_user_id, e.shift_id,
+                    sh.cashier_user_id, sh.expected_cash_centavos,
+                    sh.opening_cash_centavos, sh.closed_at,
+                    sh.actual_cash_count_centavos, sh.variance_reason,
+                    ec.id AS cancellation_id
+             FROM expenses e
+             LEFT JOIN shifts sh ON sh.id = e.shift_id
+             LEFT JOIN expense_cancellations ec ON ec.expense_id = e.id
+             WHERE e.id = ?`,
+            )
+            .get(expenseId.data) as
+            | {
+                id: string;
+                business_date: string;
+                category: ExpenseEntry["category"];
+                amount_centavos: number;
+                description: string;
+                payment_source: ExpenseEntry["paymentSource"];
+                supplier: string;
+                invoice_reference: string;
+                recorded_by_user_id: string;
+                shift_id: string | null;
+                cashier_user_id: string | null;
+                expected_cash_centavos: number | null;
+                opening_cash_centavos: number | null;
+                closed_at: string | null;
+                actual_cash_count_centavos: number | null;
+                variance_reason: string | null;
+                cancellation_id: string | null;
+              }
+            | undefined;
+          if (!expense) throw new ExpenseError(404, "expense_not_found");
+          if (expense.cancellation_id)
+            throw new ExpenseError(409, "expense_already_cancelled");
+          const allowed =
+            user.role === "owner" ||
+            (user.role === "cashier" &&
+              ((expense.shift_id !== null &&
+                expense.closed_at === null &&
+                (expense.cashier_user_id === user.id ||
+                  expense.recorded_by_user_id === user.id)) ||
+                (expense.shift_id === null &&
+                  expense.payment_source === "OWNER" &&
+                  expense.recorded_by_user_id === user.id)));
+          if (!allowed) throw new ExpenseError(403, "forbidden");
+
+          const amount = expense.amount_centavos;
+          const now = new Date().toISOString();
+          const cancellationId = randomUUID();
+          let movementId: string | null = null;
+          let expectedCash: number | null = null;
+          if (expense.shift_id) {
+            const previousExpected =
+              expense.expected_cash_centavos ?? expense.opening_cash_centavos;
+            if (previousExpected === null)
+              throw new ExpenseError(409, "expense_shift_unavailable");
+            const adjustedExpected = previousExpected + amount;
+            if (!Number.isSafeInteger(adjustedExpected))
+              throw new ExpenseError(409, "cash_amount_overflow");
+            movementId = randomUUID();
+            const details = [
+              expense.category === "STOCK_PURCHASE"
+                ? "Stock purchase / COD"
+                : `Expense: ${expense.category}`,
+              expense.supplier,
+              expense.invoice_reference,
+              expense.description,
+            ].filter(Boolean);
+            db.prepare(
+              `INSERT INTO cash_movements
+              (id, shift_id, movement_type, amount_delta_centavos, reason, actor_user_id, created_at)
+             VALUES (?, ?, 'CASH_IN', ?, ?, ?, ?)`,
+            ).run(
+              movementId,
+              expense.shift_id,
+              amount,
+              `Refund canceled payment: ${details.join(" / ")}`,
+              user.id,
+              now,
+            );
+            if (expense.closed_at === null) {
+              const updated = db
+                .prepare(
+                  `UPDATE shifts SET expected_cash_centavos = ?
+                 WHERE id = ? AND closed_at IS NULL`,
+                )
+                .run(adjustedExpected, expense.shift_id);
+              if (updated.changes !== 1)
+                throw new ExpenseError(409, "expense_shift_changed");
+            } else {
+              if (expense.actual_cash_count_centavos === null)
+                throw new ExpenseError(409, "expense_shift_unavailable");
+              const variance =
+                expense.actual_cash_count_centavos - adjustedExpected;
+              if (!Number.isSafeInteger(variance))
+                throw new ExpenseError(409, "cash_amount_overflow");
+              const varianceReason =
+                variance === 0
+                  ? expense.variance_reason
+                  : (expense.variance_reason ??
+                    "Payment refund recorded after shift close.");
+              db.prepare(
+                `UPDATE shifts
+               SET expected_cash_centavos = ?, variance_centavos = ?,
+                   variance_reason = ?, variance_approval_status = ?,
+                   variance_approved_by_user_id = NULL, variance_approved_at = NULL,
+                   variance_approval_note = NULL
+               WHERE id = ? AND closed_at IS NOT NULL`,
+              ).run(
+                adjustedExpected,
+                variance,
+                varianceReason,
+                variance === 0 ? "NONE" : "PENDING",
+                expense.shift_id,
+              );
+            }
+            expectedCash = adjustedExpected;
+          }
+
+          const reason = `Cancelled ${expense.category} payment (${money(amount)}): ${[
+            expense.supplier,
+            expense.invoice_reference,
+            expense.description,
+          ]
+            .filter(Boolean)
+            .join(" / ")}`;
+          db.prepare(
+            `INSERT INTO expense_cancellations
+             (id, expense_id, cash_movement_id, cancelled_by_user_id, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          ).run(cancellationId, expense.id, movementId, user.id, reason, now);
+          writeAuditEvent(db, {
+            actorUserId: user.id,
+            action: "expense.cancelled",
+            entityType: "expense",
+            entityId: expense.id,
+            details: {
+              category: expense.category,
+              amountCentavos: amount,
+              paymentSource: expense.payment_source,
+              shiftId: expense.shift_id,
+              cashMovementId: movementId,
+              reason,
+            },
+          });
+          return {
+            date: expense.business_date,
+            expectedCash: expectedCash === null ? null : money(expectedCash),
+          };
+        })();
+        const expense = getExpenseEntries(
+          db,
+          result.date,
+          result.date,
+          user.role === "owner" ? undefined : user.id,
+          user.role === "owner" ? undefined : user.id,
+          { id: user.id, role: user.role },
+        ).find((entry) => entry.id === expenseId.data)!;
+        res.json({ expense, expectedCash: result.expectedCash });
+      } catch (error) {
+        if (error instanceof ExpenseError)
+          res.status(error.status).json({ error: error.code });
+        else throw error;
+      }
+    },
+  );
 }
