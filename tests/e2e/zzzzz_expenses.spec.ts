@@ -250,9 +250,26 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
     const ownerCancellation = ownerPage
       .getByRole("row")
       .filter({ hasText: "E2E cleaning supplies" });
-    ownerPage.once("dialog", (dialog) => void dialog.accept());
     await ownerCancellation
       .getByRole("button", { name: "Cancel payment", exact: true })
+      .click();
+    const ownerCancelDialog = ownerPage.getByRole("dialog", {
+      name: "Cancel this payment?",
+    });
+    await expect(ownerCancelDialog).toBeVisible();
+    await expect(ownerCancelDialog).toContainText(
+      "Cashier-paid money will be returned to its original shift.",
+    );
+    await ownerCancelDialog
+      .getByRole("button", { name: "Keep payment", exact: true })
+      .click();
+    await expect(ownerCancelDialog).toBeHidden();
+    await ownerCancellation
+      .getByRole("button", { name: "Cancel payment", exact: true })
+      .click();
+    await ownerPage
+      .getByRole("dialog", { name: "Cancel this payment?" })
+      .getByRole("button", { name: "Confirm cancellation", exact: true })
       .click();
     await expect(ownerPage.getByRole("status")).toContainText(
       "Expected cashier cash: \u20B1-15260.00",
@@ -329,9 +346,12 @@ test("owner and cashier record expenses from zero cash and reconcile negative ba
     const cashierCancellation = page
       .getByRole("row")
       .filter({ hasText: "E2E-CASHIER-COD" });
-    page.once("dialog", (dialog) => void dialog.accept());
     await cashierCancellation
       .getByRole("button", { name: "Cancel payment", exact: true })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Cancel this payment?" })
+      .getByRole("button", { name: "Confirm cancellation", exact: true })
       .click();
     await expect(page.getByRole("status")).toContainText(
       "Expected cashier cash: \u20B1-65.00",

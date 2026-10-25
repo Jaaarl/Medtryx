@@ -103,6 +103,90 @@ function paymentTotal(productAmount: string, deliveryFee: string): string {
   return `${Math.floor(total / 100)}.${String(total % 100).padStart(2, "0")}`;
 }
 
+type ExpenseCancellationDialogProps = {
+  expense: ExpenseEntry;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => void;
+};
+
+function ExpenseCancellationDialog({
+  expense,
+  busy,
+  error,
+  onClose,
+  onConfirm,
+}: ExpenseCancellationDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    closeRef.current?.focus();
+    return () => dialog?.close();
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="expense-cancellation-dialog"
+      aria-labelledby="expense-cancellation-title"
+      aria-describedby="expense-cancellation-description"
+      aria-busy={busy}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) onClose();
+      }}
+    >
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onConfirm();
+        }}
+      >
+        <span className="eyebrow">PAYMENT HISTORY</span>
+        <h2 id="expense-cancellation-title">Cancel this payment?</h2>
+        <p className="expense-cancellation-amount">
+          <strong>
+            {expense.category.toLowerCase().replaceAll("_", " ")} payment
+          </strong>
+          <span>₱{expense.amount}</span>
+        </p>
+        <p id="expense-cancellation-description">
+          {expense.paymentSource === "CASHIER"
+            ? "Cashier-paid money will be returned to its original shift. If that shift is closed, its cash variance will be recalculated."
+            : "This owner-paid amount will be removed from payment totals without changing cashier shift cash."}
+        </p>
+        {error && (
+          <div className="banner banner-error" role="alert">
+            {error}
+          </div>
+        )}
+        <div className="product-delete-actions">
+          <button
+            ref={closeRef}
+            className="button button-secondary"
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+          >
+            Keep payment
+          </button>
+          <button
+            className="button button-danger"
+            type="submit"
+            disabled={busy}
+          >
+            {busy ? "Cancelling…" : "Confirm cancellation"}
+          </button>
+        </div>
+      </form>
+    </dialog>
+  );
+}
+
 export function ExpensesPage() {
   const { user } = useAuth();
   const [date, setDate] = useState(todayInManila);
@@ -123,8 +207,13 @@ export function ExpensesPage() {
   const [notice, setNotice] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [cancellingId, setCancellingId] = useState("");
+  const [expenseToCancel, setExpenseToCancel] = useState<ExpenseEntry | null>(
+    null,
+  );
+  const [cancellationError, setCancellationError] = useState("");
   const requestKey = useRef("");
   const submitting = useRef(false);
+  const cancelling = useRef(false);
   const stockPurchase = category === "STOCK_PURCHASE";
   const choosesPayer = category === "DELIVERY" || stockPurchase;
   const totalPayment = stockPurchase
@@ -229,15 +318,13 @@ export function ExpensesPage() {
     }
   }
 
-  async function cancelExpense(expense: ExpenseEntry) {
-    if (
-      !window.confirm(
-        `Cancel this ${expense.category.toLowerCase().replaceAll("_", " ")} payment for \u20B1${expense.amount}? ${expense.paymentSource === "CASHIER" ? "Cashier-paid money will be returned to its original shift." : "This owner-paid amount will not change the cashier shift."}`,
-      )
-    )
-      return;
+  async function cancelExpense() {
+    const expense = expenseToCancel;
+    if (!expense || cancelling.current) return;
+    cancelling.current = true;
     setError("");
     setNotice("");
+    setCancellationError("");
     setCancellingId(expense.id);
     try {
       const result = await api.post<{
@@ -250,11 +337,13 @@ export function ExpensesPage() {
             : ` Refunded to the original shift. Expected cashier cash: \u20B1${result.expectedCash}.`
         }`,
       );
+      setExpenseToCancel(null);
       setLoading(true);
       setRefreshKey((key) => key + 1);
     } catch (caught) {
-      setError(expenseError(caught));
+      setCancellationError(expenseError(caught));
     } finally {
+      cancelling.current = false;
       setCancellingId("");
     }
   }
@@ -651,13 +740,29 @@ export function ExpensesPage() {
                 expenses={data.expenses}
                 className="expense-page-history"
                 description={`${user?.role === "owner" ? "All store payments" : "Payments charged to your shifts and payments you recorded"} for ${date}.`}
-                onCancel={(expense) => void cancelExpense(expense)}
+                onCancel={(expense) => {
+                  setError("");
+                  setNotice("");
+                  setCancellationError("");
+                  setExpenseToCancel(expense);
+                }}
                 cancellingId={cancellingId}
               />
             )
           )}
         </div>
       </div>
+      {expenseToCancel && (
+        <ExpenseCancellationDialog
+          expense={expenseToCancel}
+          busy={cancellingId === expenseToCancel.id}
+          error={cancellationError}
+          onClose={() => {
+            if (!cancelling.current) setExpenseToCancel(null);
+          }}
+          onConfirm={() => void cancelExpense()}
+        />
+      )}
     </section>
   );
 }
