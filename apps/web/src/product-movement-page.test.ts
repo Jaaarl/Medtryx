@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { filterProductMovements } from "./product-movement-page";
+import {
+  filterProductMovements,
+  sortProductMovements,
+} from "./product-movement-page";
 
 function product(
   id: string,
@@ -43,5 +46,49 @@ describe("product movement search", () => {
       filterProductMovements(products, "FAST", "MED").map((row) => row.id),
     ).toEqual(["1"]);
     expect(filterProductMovements(products, "SLOW", "para")).toEqual([]);
+  });
+});
+
+describe("product movement sorting", () => {
+  const products = [
+    {
+      ...product("1", "Paracetamol 500 mg", "MED-PARA-500", "FAST"),
+      unitsSold: 12,
+      lastSoldAt: "2026-05-02T10:00:00.000Z",
+    },
+    {
+      ...product("2", "Amoxicillin 250 mg", "MED-AMOX-250", "SLOW"),
+      unitsSold: 3,
+      lastSoldAt: "2026-05-01T10:00:00.000Z",
+    },
+    {
+      ...product("3", "Vitamin C", "MED-VIT-C", "FAST"),
+      unitsSold: 7,
+      lastSoldAt: null,
+    },
+  ];
+
+  it("sorts numeric columns in ascending and descending order", () => {
+    expect(
+      sortProductMovements(products, {
+        key: "unitsSold",
+        direction: "asc",
+      }).map((row) => row.id),
+    ).toEqual(["2", "3", "1"]);
+    expect(
+      sortProductMovements(products, {
+        key: "unitsSold",
+        direction: "desc",
+      }).map((row) => row.id),
+    ).toEqual(["1", "3", "2"]);
+  });
+
+  it("keeps products without a last-sold date at the end", () => {
+    expect(
+      sortProductMovements(products, {
+        key: "lastSoldAt",
+        direction: "desc",
+      }).map((row) => row.id),
+    ).toEqual(["1", "2", "3"]);
   });
 });

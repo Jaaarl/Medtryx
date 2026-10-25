@@ -29,6 +29,22 @@ type ProductMovementReport = {
 };
 
 type MovementFilter = "ALL" | "FAST" | "SLOW";
+type MovementSortKey =
+  | "product"
+  | "movement"
+  | "unitsSold"
+  | "unitsReturned"
+  | "netUnitsMoved"
+  | "averageUnitsMovedPerDay"
+  | "transactionCount"
+  | "quantityOnHand"
+  | "lastSoldAt";
+type SortDirection = "asc" | "desc";
+
+type MovementSort = {
+  key: MovementSortKey;
+  direction: SortDirection;
+};
 
 export function filterProductMovements(
   products: ProductMovement[],
@@ -44,6 +60,82 @@ export function filterProductMovements(
       .includes(normalizedQuery);
     return matchesMovement && matchesSearch;
   });
+}
+
+export function sortProductMovements(
+  products: ProductMovement[],
+  { key, direction }: MovementSort,
+): ProductMovement[] {
+  const multiplier = direction === "asc" ? 1 : -1;
+  const valueFor = (product: ProductMovement): string | number | null => {
+    switch (key) {
+      case "product":
+        return product.name;
+      case "movement":
+        return product.movement;
+      case "unitsSold":
+        return product.unitsSold;
+      case "unitsReturned":
+        return product.unitsReturned;
+      case "netUnitsMoved":
+        return product.netUnitsMoved;
+      case "averageUnitsMovedPerDay":
+        return product.averageUnitsMovedPerDay;
+      case "transactionCount":
+        return product.transactionCount;
+      case "quantityOnHand":
+        return product.quantityOnHand;
+      case "lastSoldAt":
+        return product.lastSoldAt ? Date.parse(product.lastSoldAt) : null;
+    }
+  };
+
+  return [...products].sort((left, right) => {
+    const leftValue = valueFor(left);
+    const rightValue = valueFor(right);
+    if (leftValue === null) return rightValue === null ? 0 : 1;
+    if (rightValue === null) return -1;
+    const comparison =
+      typeof leftValue === "number" && typeof rightValue === "number"
+        ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue), undefined, {
+            numeric: true,
+            sensitivity: "base",
+          });
+    return comparison * multiplier;
+  });
+}
+
+function SortableHeader({
+  label,
+  active,
+  direction,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+}) {
+  return (
+    <th
+      aria-sort={
+        active ? (direction === "asc" ? "ascending" : "descending") : "none"
+      }
+    >
+      <button
+        className="inventory-sort-button"
+        type="button"
+        aria-label={`Sort by ${label}`}
+        onClick={onClick}
+      >
+        <span>{label}</span>
+        <span className="inventory-sort-indicator" aria-hidden="true">
+          {active ? (direction === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
 }
 
 function todayInManila(): string {
@@ -83,6 +175,10 @@ export function ProductMovementPage() {
   const [endDate, setEndDate] = useState(today);
   const [filter, setFilter] = useState<MovementFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sort, setSort] = useState<MovementSort>({
+    key: "product",
+    direction: "asc",
+  });
   const [report, setReport] = useState<ProductMovementReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -134,9 +230,18 @@ export function ProductMovementPage() {
     setEndDate(value);
   }
 
-  const products = report
+  const filteredProducts = report
     ? filterProductMovements(report.products, filter, searchQuery)
     : [];
+  const products = sortProductMovements(filteredProducts, sort);
+
+  function selectSort(key: MovementSortKey) {
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  }
 
   return (
     <section className="page-section product-movement-page">
@@ -267,15 +372,60 @@ export function ProductMovementPage() {
                 <table className="inventory-table movement-table">
                   <thead>
                     <tr>
-                      <th>Product</th>
-                      <th>Movement</th>
-                      <th>Sold</th>
-                      <th>Returned</th>
-                      <th>Net moved</th>
-                      <th>Daily average</th>
-                      <th>Transactions</th>
-                      <th>In stock</th>
-                      <th>Last sold</th>
+                      <SortableHeader
+                        label="Product"
+                        active={sort.key === "product"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("product")}
+                      />
+                      <SortableHeader
+                        label="Movement"
+                        active={sort.key === "movement"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("movement")}
+                      />
+                      <SortableHeader
+                        label="Sold"
+                        active={sort.key === "unitsSold"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("unitsSold")}
+                      />
+                      <SortableHeader
+                        label="Returned"
+                        active={sort.key === "unitsReturned"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("unitsReturned")}
+                      />
+                      <SortableHeader
+                        label="Net moved"
+                        active={sort.key === "netUnitsMoved"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("netUnitsMoved")}
+                      />
+                      <SortableHeader
+                        label="Daily average"
+                        active={sort.key === "averageUnitsMovedPerDay"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("averageUnitsMovedPerDay")}
+                      />
+                      <SortableHeader
+                        label="Transactions"
+                        active={sort.key === "transactionCount"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("transactionCount")}
+                      />
+                      <SortableHeader
+                        label="In stock"
+                        active={sort.key === "quantityOnHand"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("quantityOnHand")}
+                      />
+                      <SortableHeader
+                        label="Last sold"
+                        active={sort.key === "lastSoldAt"}
+                        direction={sort.direction}
+                        onClick={() => selectSort("lastSoldAt")}
+                      />
                     </tr>
                   </thead>
                   <tbody>
