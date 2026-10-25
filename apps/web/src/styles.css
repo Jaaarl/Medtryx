@@ -5730,6 +5730,122 @@ a {
   font-size: 11px;
   line-height: 1.5;
 }
+.dashboard-home {
+  display: grid;
+  gap: 22px;
+}
+.dashboard-home .page-heading {
+  margin-bottom: 0;
+}
+.dashboard-stock-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.dashboard-stock-card .card-heading {
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+}
+.dashboard-stock-card .card-heading h2 {
+  font-size: 16px;
+  margin: 7px 0 5px;
+}
+.dashboard-stock-card .count-chip {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.dashboard-stock-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 20px;
+}
+.dashboard-stock-list li {
+  border-top: 1px solid #edf1ef;
+}
+.dashboard-stock-item {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 8px 0;
+}
+.dashboard-stock-item:hover .dashboard-stock-product strong {
+  color: #176b5b;
+}
+.dashboard-stock-product,
+.dashboard-stock-quantity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.dashboard-stock-product strong {
+  color: #294a41;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 150ms ease;
+  white-space: nowrap;
+}
+.dashboard-stock-product small,
+.dashboard-stock-quantity small {
+  color: #83908b;
+  font-size: 10px;
+}
+.dashboard-stock-quantity {
+  flex: 0 0 auto;
+  text-align: right;
+}
+.dashboard-stock-quantity strong {
+  color: #315a4d;
+  font-size: 11px;
+}
+.dashboard-stock-more,
+.dashboard-stock-state {
+  color: #78867e;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 16px 20px;
+}
+.dashboard-stock-more {
+  border-top: 1px solid #edf1ef;
+  padding-bottom: 0;
+}
+.dashboard-stock-footer {
+  border-top: 1px solid #edf1ef;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+  padding: 12px 20px;
+}
+.dashboard-stock-footer a,
+.dashboard-section-heading > a {
+  color: #176b5b;
+  font-size: 11px;
+  font-weight: 700;
+}
+.dashboard-stock-footer a:hover,
+.dashboard-section-heading > a:hover {
+  color: #105448;
+  text-decoration: underline;
+}
+.dashboard-goals-section {
+  display: grid;
+  gap: 12px;
+}
+.dashboard-section-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.dashboard-section-heading h2 {
+  color: #24483f;
+  font-size: 17px;
+  margin: 6px 0 0;
+}
 .monthly-incentive-tier-editor {
   display: flex;
   flex-direction: column;
@@ -7013,6 +7129,9 @@ a {
   .dashboard-shortcuts {
     grid-template-columns: 1fr;
   }
+  .dashboard-stock-grid {
+    grid-template-columns: 1fr;
+  }
   .monthly-incentive-editor-heading {
     display: none;
   }
@@ -7051,6 +7170,10 @@ a {
 }
 
 @media (max-width: 520px) {
+  .dashboard-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .monthly-incentive-card {
     padding: 18px 16px;
   }
