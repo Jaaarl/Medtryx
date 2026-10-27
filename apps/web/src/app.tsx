@@ -286,6 +286,9 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [demoNoticeOpen, setDemoNoticeOpen] = useState(true);
+  const showDemoAccounts =
+    import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === "true";
   const passwordChanged =
     new URLSearchParams(location.search).get("passwordChanged") === "1" ||
     (location.state as { passwordChanged?: boolean } | null)?.passwordChanged;
@@ -367,6 +370,54 @@ function LoginPage() {
             <div className="banner banner-success login-notice" role="status">
               Password changed. Sign in with your new password.
             </div>
+          )}
+          {showDemoAccounts && demoNoticeOpen && (
+            <aside
+              className="demo-accounts-notice"
+              aria-labelledby="demo-accounts-title"
+            >
+              <div className="demo-accounts-heading">
+                <div>
+                  <span className="demo-accounts-eyebrow">PORTFOLIO DEMO</span>
+                  <h3 id="demo-accounts-title">Try a demo account</h3>
+                </div>
+                <button
+                  className="demo-accounts-dismiss"
+                  type="button"
+                  aria-label="Dismiss demo account notice"
+                  onClick={() => setDemoNoticeOpen(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="demo-accounts-list">
+                <div className="demo-account-row">
+                  <span>Owner</span>
+                  <div className="demo-account-credentials">
+                    <code>owner</code>
+                    <code>DemoOwner2026!</code>
+                  </div>
+                </div>
+                <div className="demo-account-row">
+                  <span>Manager</span>
+                  <div className="demo-account-credentials">
+                    <code>manager</code>
+                    <code>DemoManager2026!</code>
+                  </div>
+                </div>
+                <div className="demo-account-row">
+                  <span>Cashier</span>
+                  <div className="demo-account-credentials">
+                    <code>cashier</code>
+                    <code>DemoCashier2026!</code>
+                  </div>
+                </div>
+              </div>
+              <p>
+                Enter the username and password above. The manager account has
+                owner access in this demo.
+              </p>
+            </aside>
           )}
           <form
             className="form-stack login-form"

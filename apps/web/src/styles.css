@@ -1590,6 +1590,91 @@ a {
 .login-notice {
   margin: 18px 0 -9px;
 }
+.demo-accounts-notice {
+  background: linear-gradient(135deg, #f5faf7, #eef6f2);
+  border: 1px solid #d7e8df;
+  border-radius: 12px;
+  box-shadow: 0 8px 22px rgba(26, 69, 56, 0.06);
+  margin: 21px 0 -8px;
+  padding: 14px 15px 12px;
+}
+.demo-accounts-heading {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+}
+.demo-accounts-eyebrow {
+  color: #578878;
+  display: block;
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+.demo-accounts-heading h3 {
+  color: #214a3f;
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  margin: 3px 0 0;
+}
+.demo-accounts-dismiss {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #71867d;
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  margin: -4px -6px 0 0;
+  padding: 0;
+  width: 26px;
+}
+.demo-accounts-dismiss:hover {
+  background: #e1eee7;
+  color: #315d4e;
+}
+.demo-accounts-list {
+  border-top: 1px solid #dce9e2;
+  display: grid;
+  gap: 7px;
+  margin-top: 11px;
+  padding-top: 10px;
+}
+.demo-account-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+.demo-account-row > span {
+  color: #567268;
+  flex: 0 0 56px;
+  font-size: 11px;
+  font-weight: var(--weight-medium);
+}
+.demo-account-credentials {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.demo-account-credentials code {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #dce9e2;
+  border-radius: 5px;
+  color: #315c4c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 4px 5px;
+  white-space: nowrap;
+}
+.demo-accounts-notice > p {
+  color: #788b82;
+  font-size: 10px;
+  margin: 9px 0 0;
+}
 .password-label-row {
   align-items: center;
   display: flex;
