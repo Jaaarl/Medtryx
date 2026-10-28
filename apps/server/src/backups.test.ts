@@ -13,9 +13,24 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createApp } from "./app.js";
-import { createBackup, restoreBackup } from "./backup-service.js";
+import {
+  assertLiveCustomerEncryptionConfiguration,
+  automaticBackupIsDue,
+  backupStatus,
+  createAutomaticBackupIfDue,
+  createBackup,
+  restoreBackup,
+} from "./backup-service.js";
 import {
   customerEncryptionKeyHex,
   decryptCustomerField,
@@ -1004,5 +1019,80 @@ describe("owner-only verified backup and restore", () => {
       cleanInstallDb.close();
       rmSync(cleanInstallDirectory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("optional production backup paths and automatic schedule", () => {
+  it("allows live startup without backup roots while reporting backups unavailable", async () => {
+    const keyFile = join(dataDirectory, "live-customer-data.key");
+    writeFileSync(keyFile, `${"f6".repeat(32)}\n`, { mode: 0o600 });
+    const previousEnvironment = process.env.APP_ENV;
+    const previousKeyFile = process.env.CUSTOMER_ID_ENCRYPTION_KEY_FILE;
+    const previousPrimary = process.env.MEDTRYX_BACKUP_PRIMARY_DIR;
+    const previousSecondary = process.env.MEDTRYX_BACKUP_SECONDARY_DIR;
+    process.env.APP_ENV = "live";
+    process.env.CUSTOMER_ID_ENCRYPTION_KEY_FILE = keyFile;
+    delete process.env.MEDTRYX_BACKUP_PRIMARY_DIR;
+    delete process.env.MEDTRYX_BACKUP_SECONDARY_DIR;
+    try {
+      expect(assertLiveCustomerEncryptionConfiguration).not.toThrow();
+      expect(backupStatus(db)).toMatchObject({
+        environment: "live",
+        primaryDirectoryReady: false,
+        secondaryDirectoryReady: false,
+        ready: false,
+      });
+      const owner = db
+        .prepare("SELECT id FROM users WHERE role = 'owner'")
+        .get() as { id: string };
+      db.prepare(
+        `INSERT INTO settings (key, value_json, updated_at, updated_by)
+         VALUES ('store_profile', ?, ?, ?)`,
+      ).run(
+        JSON.stringify({ id: randomUUID(), name: "Optional Backup Test" }),
+        new Date().toISOString(),
+        owner.id,
+      );
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-10-29T00:00:00.000Z"));
+        await expect(createAutomaticBackupIfDue(db)).resolves.toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+      await expect(createBackup(db, "manual", null)).rejects.toMatchObject({
+        code: "backup_paths_not_configured",
+      });
+    } finally {
+      if (previousEnvironment === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = previousEnvironment;
+      if (previousKeyFile === undefined)
+        delete process.env.CUSTOMER_ID_ENCRYPTION_KEY_FILE;
+      else process.env.CUSTOMER_ID_ENCRYPTION_KEY_FILE = previousKeyFile;
+      if (previousPrimary === undefined)
+        delete process.env.MEDTRYX_BACKUP_PRIMARY_DIR;
+      else process.env.MEDTRYX_BACKUP_PRIMARY_DIR = previousPrimary;
+      if (previousSecondary === undefined)
+        delete process.env.MEDTRYX_BACKUP_SECONDARY_DIR;
+      else process.env.MEDTRYX_BACKUP_SECONDARY_DIR = previousSecondary;
+    }
+  });
+
+  it("uses a 31-day interval for automatic backups", () => {
+    const lastBackupAt = new Date("2026-10-29T00:00:00.000Z");
+    const dayMs = 24 * 60 * 60 * 1000;
+    expect(
+      automaticBackupIsDue(
+        new Date(lastBackupAt.getTime() + 30 * dayMs),
+        lastBackupAt,
+      ),
+    ).toBe(false);
+    expect(
+      automaticBackupIsDue(
+        new Date(lastBackupAt.getTime() + 31 * dayMs),
+        lastBackupAt,
+      ),
+    ).toBe(true);
+    expect(automaticBackupIsDue(lastBackupAt, null)).toBe(true);
   });
 });

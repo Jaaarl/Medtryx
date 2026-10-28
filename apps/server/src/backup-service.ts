@@ -35,6 +35,7 @@ import {
 } from "./currency.js";
 
 const backupPurposeSchema = z.enum(["manual", "automatic", "safety"]);
+const automaticBackupIntervalMs = 31 * 24 * 60 * 60 * 1000;
 const storeProfileSchema = z
   .object({ id: z.uuid(), name: z.string().trim().min(1).max(160) })
   .strict();
@@ -215,10 +216,20 @@ export function backupStatus(db: Database.Database) {
   };
 }
 
-export function assertLiveBackupConfiguration(): void {
+export function assertLiveCustomerEncryptionConfiguration(): void {
   if (selectedEnvironment() !== "live") return;
   validEncryptionKeyFileForLive();
-  secureRoots(true);
+}
+
+export function automaticBackupIsDue(
+  now: Date,
+  latestAutomaticBackupAt: Date | null,
+): boolean {
+  return (
+    latestAutomaticBackupAt === null ||
+    now.getTime() - latestAutomaticBackupAt.getTime() >=
+      automaticBackupIntervalMs
+  );
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -1061,21 +1072,76 @@ export async function createAutomaticBackupIfDue(
     parts.map(({ type, value }) => [type, value]),
   );
   if (`${values.hour}:${values.minute}` < "02:00") return;
-  const day = manilaDate(now);
-  const { primary, secondary } = backupRoots();
-  for (const root of [primary, secondary]) {
+  let roots: ReturnType<typeof backupRoots>;
+  try {
+    roots = backupRoots();
+  } catch (error) {
+    if (
+      error instanceof BackupError &&
+      error.code === "backup_paths_not_configured"
+    )
+      return;
+    throw error;
+  }
+  const automaticBackups = new Map<
+    string,
+    Partial<Record<BackupLocation, BackupManifest>>
+  >();
+  const { primary, secondary } = roots;
+  for (const [location, root] of [
+    ["primary", primary],
+    ["secondary", secondary],
+  ] as const) {
     if (!existsSync(root)) continue;
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !z.uuid().safeParse(entry.name).success)
         continue;
       try {
         const manifest = readManifest(resolve(root, entry.name));
-        if (manifest.purpose === "automatic" && manifest.businessDate === day)
-          return;
+        if (
+          manifest.purpose === "automatic" &&
+          manifest.backupId === entry.name &&
+          manifest.environment === selectedEnvironment()
+        ) {
+          const copies = automaticBackups.get(entry.name) ?? {};
+          copies[location] = manifest;
+          automaticBackups.set(entry.name, copies);
+        }
       } catch {
-        // Damaged packages do not count as a completed daily backup.
+        // Damaged packages do not count as a completed automatic backup.
       }
     }
   }
+  let latestAutomaticBackupAt = Number.NEGATIVE_INFINITY;
+  for (const copies of automaticBackups.values()) {
+    const { primary: primaryManifest, secondary: secondaryManifest } = copies;
+    if (
+      primaryManifest &&
+      secondaryManifest &&
+      primaryManifest.createdAt === secondaryManifest.createdAt &&
+      primaryManifest.businessDate === secondaryManifest.businessDate &&
+      primaryManifest.databaseSha256 === secondaryManifest.databaseSha256 &&
+      primaryManifest.customerKeySha256 ===
+        secondaryManifest.customerKeySha256 &&
+      primaryManifest.store.id === secondaryManifest.store.id &&
+      primaryManifest.store.name === secondaryManifest.store.name &&
+      JSON.stringify(primaryManifest.migrations) ===
+        JSON.stringify(secondaryManifest.migrations)
+    ) {
+      latestAutomaticBackupAt = Math.max(
+        latestAutomaticBackupAt,
+        Date.parse(primaryManifest.createdAt),
+      );
+    }
+  }
+  if (
+    !automaticBackupIsDue(
+      now,
+      Number.isFinite(latestAutomaticBackupAt)
+        ? new Date(latestAutomaticBackupAt)
+        : null,
+    )
+  )
+    return;
   await createBackup(db, "automatic", null);
 }

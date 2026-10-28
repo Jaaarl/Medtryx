@@ -3,13 +3,13 @@ import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { openDatabase, selectedEnvironment } from "./db.js";
 import {
-  assertLiveBackupConfiguration,
+  assertLiveCustomerEncryptionConfiguration,
   createAutomaticBackupIfDue,
 } from "./backup-service.js";
 
 const db = openDatabase();
 if (selectedEnvironment() === "live") {
-  assertLiveBackupConfiguration();
+  assertLiveCustomerEncryptionConfiguration();
   if (
     !(["127.0.0.1", "::1"] as string[]).includes(
       process.env.HOST ?? "127.0.0.1",
