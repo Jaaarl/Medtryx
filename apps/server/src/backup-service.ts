@@ -4,6 +4,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -724,6 +725,74 @@ export async function listBackups(): Promise<BackupSummary[]> {
   return [...byId.values()].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
   );
+}
+
+function backupManifestTimestamps(
+  roots: ReturnType<typeof backupRoots>,
+): Array<{ backupId: string; createdAt: number }> {
+  const manifests: Array<{ backupId: string; createdAt: number }> = [];
+  for (const location of ["primary", "secondary"] as const) {
+    const root = roots[location];
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !z.uuid().safeParse(entry.name).success)
+        continue;
+      try {
+        const manifest = readManifest(resolve(root, entry.name));
+        const createdAt = Date.parse(manifest.createdAt);
+        if (manifest.backupId !== entry.name || !Number.isFinite(createdAt))
+          throw new Error("backup_order_unavailable");
+        manifests.push({ backupId: entry.name, createdAt });
+      } catch {
+        throw new BackupError("backup_order_unavailable");
+      }
+    }
+  }
+  return manifests;
+}
+
+export function deleteBackup(
+  db: Database.Database,
+  backupId: string,
+  actorUserId: string,
+): { backupId: string; deletedLocations: BackupLocation[] } {
+  if (!z.uuid().safeParse(backupId).success)
+    throw new BackupError("backup_not_found");
+  const roots = backupRoots();
+  const locations = (["primary", "secondary"] as const).filter((location) => {
+    const root = roots[location];
+    const packagePath = resolve(root, backupId);
+    return (
+      inside(root, packagePath) &&
+      packagePath !== root &&
+      existsSync(packagePath) &&
+      lstatSync(packagePath).isDirectory()
+    );
+  });
+  if (!locations.length) throw new BackupError("backup_not_found");
+
+  const manifestTimestamps = backupManifestTimestamps(roots);
+  const latestCreatedAt = Math.max(
+    ...manifestTimestamps.map(({ createdAt }) => createdAt),
+  );
+  const targetTimestamps = manifestTimestamps
+    .filter((entry) => entry.backupId === backupId)
+    .map((entry) => entry.createdAt);
+  if (!targetTimestamps.length)
+    throw new BackupError("backup_order_unavailable");
+  if (targetTimestamps.includes(latestCreatedAt))
+    throw new BackupError("latest_backup_cannot_be_deleted");
+
+  for (const location of locations)
+    safeUnlinkTree(resolve(roots[location], backupId));
+  writeAuditEvent(db, {
+    actorUserId,
+    action: "backup.deleted",
+    entityType: "backup",
+    entityId: backupId,
+    details: { locations },
+  });
+  return { backupId, deletedLocations: locations };
 }
 
 export async function createBackup(

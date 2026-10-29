@@ -5,6 +5,7 @@ import {
   RefreshCw,
   RotateCcw,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import { api, ApiError } from "./api";
 
@@ -58,6 +59,10 @@ function errorMessage(error: unknown): string {
   const messages: Record<string, string> = {
     backup_paths_not_configured:
       "The server backup locations are not configured.",
+    latest_backup_cannot_be_deleted:
+      "The latest backup is protected and cannot be deleted.",
+    backup_order_unavailable:
+      "A backup date could not be verified, so deletion is blocked.",
     store_profile_required: "Set the store name before creating a backup.",
     customer_encryption_key_not_configured:
       "The customer data encryption key is unavailable.",
@@ -91,6 +96,12 @@ export function BackupsPage() {
   const selectedBackup = useMemo(
     () => backups.find((backup) => backup.backupId === selectedId) ?? null,
     [backups, selectedId],
+  );
+  const latestBackup = backups[0] ?? null;
+  const selectedBackupIsLatest = Boolean(
+    selectedBackup &&
+    latestBackup &&
+    selectedBackup.createdAt === latestBackup.createdAt,
   );
   const restorableCopies =
     selectedBackup?.copies.filter((copy) => copy.valid) ?? [];
@@ -154,6 +165,29 @@ export function BackupsPage() {
       setNotice(
         `Backup ${result.backup.backupId} was created and verified in both locations.`,
       );
+      await load();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelectedBackup() {
+    if (!selectedBackup || selectedBackupIsLatest) return;
+    const confirmed = window.confirm(
+      `Delete the backup from ${formatTime(selectedBackup.createdAt)} in every configured location? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.delete(`/backups/${selectedBackup.backupId}`);
+      setSelectedId("");
+      setConfirmName("");
+      setOwnerPassword("");
+      setNotice("Backup deleted from its configured locations.");
       await load();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -370,47 +404,72 @@ export function BackupsPage() {
               <span className="count-chip">{backups.length} packages</span>
             </div>
             {backups.length ? (
-              <div className="backup-list">
-                {backups.map((backup) => (
-                  <label
-                    className={`backup-row ${selectedId === backup.backupId ? "backup-row-selected" : ""}`}
-                    key={backup.backupId}
-                  >
-                    <input
-                      type="radio"
-                      name="restore-backup"
-                      checked={selectedId === backup.backupId}
-                      onChange={() => {
-                        setSelectedId(backup.backupId);
-                        setConfirmName("");
-                      }}
-                    />
-                    <span className="backup-row-main">
-                      <strong>
-                        {backup.store.name} · {purposeLabel(backup.purpose)}
-                      </strong>
-                      <small>
-                        {formatTime(backup.createdAt)} · Business date{" "}
-                        {backup.businessDate} · {backup.environment}
-                      </small>
-                    </span>
-                    <span className="backup-copy-badges">
-                      {backup.copies.map((copy) => (
-                        <span
-                          className={
-                            copy.valid
-                              ? "backup-copy-valid"
-                              : "backup-copy-invalid"
-                          }
-                          key={copy.location}
-                        >
-                          {copy.location} {copy.valid ? "verified" : "failed"}
-                        </span>
-                      ))}
-                    </span>
-                  </label>
-                ))}
-              </div>
+              <>
+                <div className="backup-list">
+                  {backups.map((backup) => (
+                    <label
+                      className={`backup-row ${selectedId === backup.backupId ? "backup-row-selected" : ""}`}
+                      key={backup.backupId}
+                    >
+                      <input
+                        type="radio"
+                        name="restore-backup"
+                        checked={selectedId === backup.backupId}
+                        onChange={() => {
+                          setSelectedId(backup.backupId);
+                          setConfirmName("");
+                        }}
+                      />
+                      <span className="backup-row-main">
+                        <strong>
+                          {backup.store.name} · {purposeLabel(backup.purpose)}
+                        </strong>
+                        <small>
+                          {formatTime(backup.createdAt)} · Business date{" "}
+                          {backup.businessDate} · {backup.environment}
+                        </small>
+                      </span>
+                      <span className="backup-copy-badges">
+                        {backup.createdAt === latestBackup?.createdAt && (
+                          <span className="backup-copy-protected">
+                            Latest · protected
+                          </span>
+                        )}
+                        {backup.copies.map((copy) => (
+                          <span
+                            className={
+                              copy.valid
+                                ? "backup-copy-valid"
+                                : "backup-copy-invalid"
+                            }
+                            key={copy.location}
+                          >
+                            {copy.location} {copy.valid ? "verified" : "failed"}
+                          </span>
+                        ))}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {selectedBackup && (
+                  <div className="backup-list-actions">
+                    {selectedBackupIsLatest ? (
+                      <p className="field-hint" role="status">
+                        The latest backup is protected and cannot be deleted.
+                      </p>
+                    ) : (
+                      <button
+                        className="button button-danger"
+                        disabled={busy}
+                        onClick={() => void deleteSelectedBackup()}
+                        type="button"
+                      >
+                        <Trash2 size={16} /> Delete selected backup
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
             ) : (
               <div className="table-loading">
                 No backup packages are available.

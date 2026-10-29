@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -84,6 +85,30 @@ async function postWithCsrf(
 ) {
   const csrf = (await agent.get("/api/auth/csrf")).body.token as string;
   return agent.post(`/api${path}`).set("x-csrf-token", csrf).send(body);
+}
+
+function writeTestBackupManifest(backupId: string, createdAt: string): void {
+  const manifest = {
+    formatVersion: 1,
+    backupId,
+    environment: "test",
+    purpose: "manual",
+    createdAt,
+    businessDate: createdAt.slice(0, 10),
+    store: { id: randomUUID(), name: "Synthetic Backup Test" },
+    databaseSha256: "a".repeat(64),
+    customerKeySha256: "b".repeat(64),
+    migrations: [],
+  };
+  for (const location of [primaryDirectory, secondaryDirectory]) {
+    const packagePath = join(location, "test", backupId);
+    mkdirSync(packagePath, { recursive: true });
+    writeFileSync(
+      join(packagePath, "manifest.json"),
+      `${JSON.stringify(manifest)}\n`,
+      { mode: 0o600 },
+    );
+  }
 }
 
 function manilaDayAfter(days: number): string {
@@ -1094,5 +1119,68 @@ describe("optional production backup paths and automatic schedule", () => {
       ),
     ).toBe(true);
     expect(automaticBackupIsDue(lastBackupAt, null)).toBe(true);
+  });
+});
+
+describe("backup deletion", () => {
+  it("allows an owner to delete an older backup and protects the latest", async () => {
+    const olderBackupId = randomUUID();
+    const latestBackupId = randomUUID();
+    writeTestBackupManifest(olderBackupId, "2026-10-28T02:00:00.000Z");
+    writeTestBackupManifest(latestBackupId, "2026-10-29T02:00:00.000Z");
+
+    const owner = await signIn("owner.backups@example.test", ownerPassword);
+    const cashier = await signIn(
+      "cashier.backups@example.test",
+      cashierPassword,
+    );
+    const ownerCsrf = (await owner.get("/api/auth/csrf")).body.token as string;
+    const cashierCsrf = (await cashier.get("/api/auth/csrf")).body
+      .token as string;
+
+    const cashierDelete = await cashier
+      .delete(`/api/backups/${olderBackupId}`)
+      .set("x-csrf-token", cashierCsrf);
+    expect(cashierDelete.status).toBe(403);
+
+    const latestDelete = await owner
+      .delete(`/api/backups/${latestBackupId}`)
+      .set("x-csrf-token", ownerCsrf);
+    expect(latestDelete.status).toBe(409);
+    expect(latestDelete.body).toEqual({
+      error: "latest_backup_cannot_be_deleted",
+    });
+
+    const olderDelete = await owner
+      .delete(`/api/backups/${olderBackupId}`)
+      .set("x-csrf-token", ownerCsrf);
+    expect(olderDelete.status, JSON.stringify(olderDelete.body)).toBe(200);
+    expect(olderDelete.body).toEqual({
+      backupId: olderBackupId,
+      deletedLocations: ["primary", "secondary"],
+    });
+    expect(existsSync(join(primaryDirectory, "test", olderBackupId))).toBe(
+      false,
+    );
+    expect(existsSync(join(secondaryDirectory, "test", olderBackupId))).toBe(
+      false,
+    );
+    expect(existsSync(join(primaryDirectory, "test", latestBackupId))).toBe(
+      true,
+    );
+    expect(existsSync(join(secondaryDirectory, "test", latestBackupId))).toBe(
+      true,
+    );
+    expect(
+      db
+        .prepare(
+          "SELECT action, entity_type, entity_id FROM audit_events WHERE action = 'backup.deleted'",
+        )
+        .get(),
+    ).toEqual({
+      action: "backup.deleted",
+      entity_type: "backup",
+      entity_id: olderBackupId,
+    });
   });
 });

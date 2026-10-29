@@ -15,6 +15,7 @@ import {
   backupStatus,
   BackupError,
   createBackup,
+  deleteBackup,
   listBackups,
   restoreBackup,
   storeProfile,
@@ -38,13 +39,16 @@ function fail(res: Response, error: unknown): void {
     const status =
       error.code === "backup_not_found"
         ? 404
-        : error.code.includes("not_configured") ||
-            error.code.includes("required") ||
-            error.code.includes("separate_storage")
+        : error.code === "latest_backup_cannot_be_deleted" ||
+            error.code === "backup_order_unavailable"
           ? 409
-          : error.code.includes("failed") || error.code.includes("invalid")
-            ? 422
-            : 400;
+          : error.code.includes("not_configured") ||
+              error.code.includes("required") ||
+              error.code.includes("separate_storage")
+            ? 409
+            : error.code.includes("failed") || error.code.includes("invalid")
+              ? 422
+              : 400;
     res.status(status).json({ error: error.code });
     return;
   }
@@ -133,6 +137,25 @@ export function registerBackupRoutes(
       fail(res, error);
     }
   });
+
+  router.delete(
+    "/backups/:backupId",
+    requireAuth,
+    requireOwner,
+    csrf,
+    (req, res) => {
+      const parsedId = z.uuid().safeParse(req.params.backupId);
+      if (!parsedId.success || !req.user) {
+        res.status(400).json({ error: "invalid_request" });
+        return;
+      }
+      try {
+        res.json(deleteBackup(db, parsedId.data, req.user.id));
+      } catch (error) {
+        fail(res, error);
+      }
+    },
+  );
 
   router.post("/backups", requireAuth, requireOwner, csrf, async (req, res) => {
     if (!req.user || (req.body && Object.keys(req.body).length > 0)) {

@@ -5361,6 +5361,17 @@ a {
   display: grid;
   padding: 0 18px 8px;
 }
+.backup-list-actions {
+  align-items: center;
+  border-top: 1px solid #edf1ef;
+  display: flex;
+  justify-content: flex-end;
+  min-height: 58px;
+  padding: 8px 18px 15px;
+}
+.backup-list-actions .field-hint {
+  margin: 0;
+}
 .backup-row {
   align-items: center;
   border-top: 1px solid #edf1ef;
@@ -5409,6 +5420,10 @@ a {
 .backup-copy-invalid {
   background: #fff0ed;
   color: #a44234;
+}
+.backup-copy-protected {
+  background: #fff4df;
+  color: #795620;
 }
 .restore-confirmation-card {
   background: #f2f7f4;
