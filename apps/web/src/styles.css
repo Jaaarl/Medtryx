@@ -196,14 +196,6 @@ a {
   color: #155b4e;
   font-weight: var(--weight-medium);
 }
-.nav-shortcut {
-  border: 1px solid #d9e5e1;
-  border-radius: 4px;
-  color: #82918c;
-  font-size: var(--type-caption);
-  margin-left: auto;
-  padding: 2px 5px;
-}
 .sidebar-bottom {
   flex: 0 0 auto;
   margin-top: auto;

@@ -217,7 +217,6 @@ function Layout() {
               >
                 <Icon size={18} strokeWidth={1.8} />
                 <span>{label}</span>
-                {to === "/checkout" && <span className="nav-shortcut">F1</span>}
               </Link>
             ))}
         </nav>
