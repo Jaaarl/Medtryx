@@ -24,7 +24,7 @@ import {
   ShoppingCart,
   X,
 } from "lucide-react";
-import { api, ApiError } from "./api";
+import { api, ApiError, apiUrl } from "./api";
 import { RecentTransactions } from "./recent-transactions";
 import {
   addMoney,
@@ -893,7 +893,7 @@ function ProductCsvImportPanel({
           <div className="csv-template-actions">
             <a
               className="text-action csv-template-download"
-              href="/api/products/import-csv/template"
+              href={apiUrl("/products/import-csv/template")}
               download
             >
               <ArrowDownToLine size={14} />
@@ -901,7 +901,7 @@ function ProductCsvImportPanel({
             </a>
             <a
               className="text-action csv-template-download"
-              href="/api/products/export-csv"
+              href={apiUrl("/products/export-csv")}
               download="products.csv"
             >
               <ArrowDownToLine size={14} />
@@ -1148,7 +1148,7 @@ function StockCsvImportPanel({
           <div className="csv-template-actions">
             <a
               className="text-action csv-template-download"
-              href="/api/stock/receipts/import-csv/template"
+              href={apiUrl("/stock/receipts/import-csv/template")}
               download
             >
               <ArrowDownToLine size={14} />

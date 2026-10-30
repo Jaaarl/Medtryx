@@ -221,10 +221,6 @@ function Layout() {
             ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="network-status">
-            <span className="status-dot" />
-            <span>Local network ready</span>
-          </div>
           <div className="profile-row">
             <div className="avatar">{user.email.slice(0, 1).toUpperCase()}</div>
             <div className="profile-copy">

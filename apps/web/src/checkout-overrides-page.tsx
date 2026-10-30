@@ -2,7 +2,7 @@ import { formatCents as formatCurrencyFromCents } from "./currency";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { ArrowDownToLine, Check, Search } from "lucide-react";
-import { api } from "./api";
+import { api, apiUrl } from "./api";
 
 type OverrideRecord = {
   id: string;
@@ -154,7 +154,9 @@ export function CheckoutOverridesPanel() {
     }
   }
 
-  const exportHref = `/api/checkout-stock-overrides.csv${filterQuery().size ? `?${filterQuery()}` : ""}`;
+  const exportHref = apiUrl(
+    `/checkout-stock-overrides.csv${filterQuery().size ? `?${filterQuery()}` : ""}`,
+  );
 
   return (
     <section

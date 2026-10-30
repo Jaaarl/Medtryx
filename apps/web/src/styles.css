@@ -200,17 +200,6 @@ a {
   flex: 0 0 auto;
   margin-top: auto;
 }
-.network-status {
-  align-items: center;
-  background: #f4f8f6;
-  border-radius: 7px;
-  color: #73817c;
-  display: flex;
-  font-size: var(--type-caption);
-  gap: 8px;
-  margin: 0 0 16px;
-  padding: 10px;
-}
 .status-dot {
   background: #36a37e;
   border-radius: 50%;
@@ -1902,13 +1891,6 @@ a {
   .app-shell.sidebar-collapsed .nav-link svg {
     flex: 0 0 auto;
   }
-  .app-shell.sidebar-collapsed .network-status {
-    background: transparent;
-    justify-content: center;
-    padding-left: 0;
-    padding-right: 0;
-  }
-  .app-shell.sidebar-collapsed .network-status > span:not(.status-dot),
   .app-shell.sidebar-collapsed .profile-copy {
     display: none;
   }
@@ -5930,9 +5912,6 @@ a {
   }
   .checkout-app-shell .workspace-label {
     font-size: var(--type-caption);
-  }
-  .checkout-app-shell .network-status {
-    font-size: var(--type-body);
   }
 }
 

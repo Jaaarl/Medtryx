@@ -1,7 +1,7 @@
 import { formatCurrency, usesPhpRegionalPolicies } from "./currency";
 import { useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
-import { api } from "./api";
+import { api, apiUrl } from "./api";
 import type { ExpenseEntry } from "@medtryx/shared";
 import { ExpenseHistory } from "./expense-history";
 
@@ -300,7 +300,9 @@ export function ReportsPage() {
 
   function downloadCsv() {
     window.location.assign(
-      `/api/reports/range.csv?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+      apiUrl(
+        `/reports/range.csv?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+      ),
     );
   }
 

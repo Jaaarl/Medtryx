@@ -36,6 +36,83 @@ const accounts = [
   },
 ];
 
+// The demo history below refers to these SKUs. They are seeded on demand so a
+// fresh development database can reproduce the portfolio demo end to end.
+const demoProducts = [
+  {
+    sku: "MTX-000001",
+    name: "Paracetamol 500 mg Tablet",
+    unit: "tablet",
+    sellingPriceCentavos: 500,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000002",
+    name: "Multivitamins + Iron Capsule",
+    unit: "capsule",
+    sellingPriceCentavos: 1200,
+    productType: "BRANDED" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000003",
+    name: "Cetirizine 10 mg Tablet",
+    unit: "tablet",
+    sellingPriceCentavos: 800,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000005",
+    name: "Amoxicillin 500 mg Capsule",
+    unit: "capsule",
+    sellingPriceCentavos: 1500,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000006",
+    name: "Ethyl Alcohol 70% 500 mL",
+    unit: "bottle",
+    sellingPriceCentavos: 12000,
+    productType: null,
+    tracksLots: false,
+    productTypeApplicable: false,
+  },
+  {
+    sku: "MTX-000007",
+    name: "Mefenamic Acid 500 mg Capsule",
+    unit: "capsule",
+    sellingPriceCentavos: 900,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000008",
+    name: "Ascorbic Acid 500 mg Tablet",
+    unit: "tablet",
+    sellingPriceCentavos: 400,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+  {
+    sku: "MTX-000010",
+    name: "Oral Rehydration Salts Sachet",
+    unit: "sachet",
+    sellingPriceCentavos: 2000,
+    productType: "GENERIC" as const,
+    tracksLots: true,
+    productTypeApplicable: true,
+  },
+];
+
 type Product = {
   id: string;
   sku: string;
@@ -434,6 +511,36 @@ async function ensureDemoAccounts(
   return ids;
 }
 
+function ensureDemoProducts(db: Database.Database, anchorDate: string): void {
+  const now = atManilaTime(anchorDate, "00:10");
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO products
+       (id, sku, name, barcode, unit, selling_price_centavos, tax_class,
+        sc_pwd_eligible, sc_eligible, pwd_eligible, product_type,
+        product_type_applicable, bnpc_eligible, bnpc_category, tracks_lots,
+        quantity_on_hand, inventory_value_centavos, reorder_level, is_active,
+        created_at, updated_at)
+     VALUES (?, ?, ?, NULL, ?, ?, 'VATABLE', 0, 0, 0, ?, ?, 0, NULL, ?, 0, 0,
+       NULL, 1, ?, ?)`,
+  );
+  db.transaction(() => {
+    for (const product of demoProducts) {
+      insert.run(
+        stableId(`product:${product.sku}`),
+        product.sku,
+        product.name,
+        product.unit,
+        product.sellingPriceCentavos,
+        product.productType,
+        product.productTypeApplicable ? 1 : 0,
+        product.tracksLots ? 1 : 0,
+        now,
+        now,
+      );
+    }
+  })();
+}
+
 function insertReceipts(
   db: Database.Database,
   anchorDate: string,
@@ -500,10 +607,15 @@ function insertReceipts(
         throw new Error(
           `Receipt product ${line.sku} must track inventory lots.`,
         );
-      const unitCost = Math.max(
-        1,
-        Math.round(product.inventory_value_centavos / product.quantity_on_hand),
-      );
+      const unitCost =
+        product.quantity_on_hand > 0
+          ? Math.max(
+              1,
+              Math.round(
+                product.inventory_value_centavos / product.quantity_on_hand,
+              ),
+            )
+          : Math.max(1, Math.round(product.selling_price_centavos * 0.6));
       const value = unitCost * line.quantity;
       const eventId = stableId(`${receipt.key}:event:${index + 1}`);
       const lotId = stableId(`${receipt.key}:lot:${index + 1}`);
@@ -581,7 +693,7 @@ function insertBundles(
       name: "Everyday Care Pair",
       reductionType: "PERCENT",
       reductionValue: 1000,
-      promotionalPriceCentavos: 3600,
+      promotionalPriceCentavos: 2880,
       components: [
         { sku: "MTX-000002", quantity: 1 },
         { sku: "MTX-000010", quantity: 1 },
@@ -593,7 +705,7 @@ function insertBundles(
       name: "Family Wellness Set",
       reductionType: "PERCENT",
       reductionValue: 800,
-      promotionalPriceCentavos: 59000,
+      promotionalPriceCentavos: 1196,
       components: [
         { sku: "MTX-000008", quantity: 1 },
         { sku: "MTX-000007", quantity: 1 },
@@ -605,7 +717,7 @@ function insertBundles(
       name: "Daily Essentials Pair",
       reductionType: "AMOUNT",
       reductionValue: 500,
-      promotionalPriceCentavos: 2500,
+      promotionalPriceCentavos: 1800,
       components: [
         { sku: "MTX-000003", quantity: 1 },
         { sku: "MTX-000005", quantity: 1 },
@@ -1798,6 +1910,7 @@ async function main(): Promise<void> {
     const priorAnchor = existingAnchorDate(db);
     const anchorDate = priorAnchor ?? manilaCalendarDate();
     const ids = await ensureDemoAccounts(db, anchorDate);
+    ensureDemoProducts(db, anchorDate);
     const ownerId = ids.get("owner")!;
     const managerId = ids.get("manager")!;
     const cashierId = ids.get("cashier")!;

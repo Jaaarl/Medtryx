@@ -1,5 +1,11 @@
 import type { User } from "@medtryx/shared";
 
+const apiBase = `${import.meta.env.BASE_URL.replace(/\/+$/u, "")}/api`;
+
+export function apiUrl(path: string): string {
+  return `${apiBase}${path}`;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -23,7 +29,7 @@ export function onAuthExpired(handler: (() => void) | undefined): void {
 }
 
 export async function refreshCsrf(): Promise<void> {
-  const response = await fetch("/api/auth/csrf", {
+  const response = await fetch(apiUrl("/auth/csrf"), {
     credentials: "same-origin",
   });
   if (!response.ok) throw new ApiError(response.status, "csrf_unavailable");
@@ -40,7 +46,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!csrfToken) await refreshCsrf();
     headers.set("x-csrf-token", csrfToken ?? "");
   }
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     method,
     headers,
@@ -65,7 +71,7 @@ async function postEventStream<T>(
   onProgress: (step: number) => void,
 ): Promise<T> {
   if (!csrfToken) await refreshCsrf();
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     headers: {
       "content-type": "application/json",
