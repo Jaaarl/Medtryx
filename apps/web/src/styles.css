@@ -3092,6 +3092,20 @@ a {
   margin: 0;
   padding: 16px 2px;
 }
+.inventory-untracked-stock {
+  display: grid;
+  gap: 10px;
+}
+.inventory-untracked-stock-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+.inventory-untracked-stock-heading .inventory-product-empty-state {
+  padding: 10px 2px;
+}
 .stock-history-card {
   margin-top: 16px;
   overflow: hidden;
@@ -7673,7 +7687,8 @@ a {
     grid-column: auto;
   }
   .inventory-batch-summary .button,
-  .inventory-batch-editor-actions .button {
+  .inventory-batch-editor-actions .button,
+  .inventory-untracked-stock-heading > .button {
     justify-content: center;
     width: 100%;
   }

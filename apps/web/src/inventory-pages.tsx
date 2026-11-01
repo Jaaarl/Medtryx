@@ -4705,6 +4705,9 @@ export function InventoryPage() {
   const [lots, setLots] = useState<InventoryLot[]>([]);
   const [query, setQuery] = useState("");
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
+  const [editingUntrackedProductId, setEditingUntrackedProductId] = useState<
+    string | null
+  >(null);
   const [lotForm, setLotForm] = useState({
     lotCode: "",
     quantity: "",
@@ -4712,6 +4715,12 @@ export function InventoryPage() {
     unitCost: "",
     sellingPrice: "",
     reason: "",
+  });
+  const [untrackedStockForm, setUntrackedStockForm] = useState({
+    quantity: "",
+    unitCost: "",
+    reason: "",
+    zeroCostReason: "",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -4778,6 +4787,7 @@ export function InventoryPage() {
   }
 
   function beginBatchEdit(lot: InventoryLot) {
+    setEditingUntrackedProductId(null);
     setEditingLotId(lot.id);
     setLotForm({
       lotCode: lot.lotCode,
@@ -4789,6 +4799,55 @@ export function InventoryPage() {
     });
     setError("");
     setNotice("");
+  }
+
+  function beginUntrackedStockEdit(product: Product) {
+    setEditingLotId(null);
+    setEditingUntrackedProductId(product.id);
+    setUntrackedStockForm({
+      quantity: String(product.quantityOnHand),
+      unitCost: adjustmentUnitCost(product),
+      reason: "",
+      zeroCostReason: "",
+    });
+    setError("");
+    setNotice("");
+  }
+
+  async function saveUntrackedStockEdit(
+    event: FormEvent<HTMLFormElement>,
+    product: Product,
+  ) {
+    event.preventDefault();
+    const nextQuantity = Number(untrackedStockForm.quantity);
+    const quantityDelta = nextQuantity - product.quantityOnHand;
+    if (!Number.isSafeInteger(nextQuantity) || quantityDelta === 0) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post("/stock/adjustments", {
+        productId: product.id,
+        quantityDelta,
+        reasonType: "COUNT_CORRECTION",
+        reason: untrackedStockForm.reason.trim(),
+        ...(quantityDelta > 0
+          ? {
+              unitCost: untrackedStockForm.unitCost,
+              ...(Number(untrackedStockForm.unitCost) === 0
+                ? { zeroCostReason: untrackedStockForm.zeroCostReason.trim() }
+                : {}),
+            }
+          : {}),
+      });
+      await refreshInventory();
+      setEditingUntrackedProductId(null);
+      setNotice(`Stock count corrected for ${product.name}.`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveBatchEdit(
@@ -4830,7 +4889,7 @@ export function InventoryPage() {
       <PageHeading
         eyebrow="OWNER INVENTORY"
         title="Inventory"
-        description="Browse every product, expand its batches, and correct batch details in one place."
+        description="Browse every product, expand its batches, and correct stock details in one place."
       />
       {(error || notice) && (
         <div
@@ -5121,10 +5180,143 @@ export function InventoryPage() {
                         </p>
                       )
                     ) : (
-                      <p className="inventory-product-empty-state">
-                        Lot tracking is off. Current stock is{" "}
-                        {product.quantityOnHand} {product.unit}.
-                      </p>
+                      <div className="inventory-untracked-stock">
+                        <div className="inventory-untracked-stock-heading">
+                          <p className="inventory-product-empty-state">
+                            Lot tracking is off. Current stock is{" "}
+                            {product.quantityOnHand} {product.unit}.
+                          </p>
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            aria-label={`Edit stock quantity for ${product.name}`}
+                            disabled={saving}
+                            onClick={() => beginUntrackedStockEdit(product)}
+                          >
+                            Edit stock quantity
+                          </button>
+                        </div>
+                        {editingUntrackedProductId === product.id && (
+                          <form
+                            className="inventory-batch-editor inventory-untracked-editor"
+                            onSubmit={(event) =>
+                              void saveUntrackedStockEdit(event, product)
+                            }
+                          >
+                            <Field
+                              id={`inventory-untracked-quantity-${product.id}`}
+                              label={`Counted physical quantity (${product.unit})`}
+                            >
+                              <input
+                                id={`inventory-untracked-quantity-${product.id}`}
+                                className="text-input"
+                                type="number"
+                                min="0"
+                                max="1000000"
+                                step="1"
+                                value={untrackedStockForm.quantity}
+                                onChange={(event) =>
+                                  setUntrackedStockForm((current) => ({
+                                    ...current,
+                                    quantity: event.target.value,
+                                  }))
+                                }
+                                required
+                              />
+                            </Field>
+                            {Number(untrackedStockForm.quantity) >
+                              product.quantityOnHand && (
+                              <Field
+                                id={`inventory-untracked-cost-${product.id}`}
+                                label="Unit acquisition cost for added stock (₱)"
+                              >
+                                <input
+                                  id={`inventory-untracked-cost-${product.id}`}
+                                  className="text-input"
+                                  inputMode="decimal"
+                                  value={untrackedStockForm.unitCost}
+                                  onChange={(event) =>
+                                    setUntrackedStockForm((current) => ({
+                                      ...current,
+                                      unitCost: event.target.value,
+                                    }))
+                                  }
+                                  pattern="[0-9]+(\.[0-9]{1,2})?"
+                                  required
+                                />
+                              </Field>
+                            )}
+                            {Number(untrackedStockForm.quantity) >
+                              product.quantityOnHand &&
+                              Number(untrackedStockForm.unitCost) === 0 && (
+                                <Field
+                                  id={`inventory-untracked-zero-cost-reason-${product.id}`}
+                                  label="Reason for zero acquisition cost"
+                                >
+                                  <input
+                                    id={`inventory-untracked-zero-cost-reason-${product.id}`}
+                                    className="text-input"
+                                    value={untrackedStockForm.zeroCostReason}
+                                    onChange={(event) =>
+                                      setUntrackedStockForm((current) => ({
+                                        ...current,
+                                        zeroCostReason: event.target.value,
+                                      }))
+                                    }
+                                    minLength={3}
+                                    maxLength={500}
+                                    required
+                                  />
+                                </Field>
+                              )}
+                            <Field
+                              id={`inventory-untracked-reason-${product.id}`}
+                              label="Reason for count correction"
+                            >
+                              <input
+                                id={`inventory-untracked-reason-${product.id}`}
+                                className="text-input"
+                                value={untrackedStockForm.reason}
+                                onChange={(event) =>
+                                  setUntrackedStockForm((current) => ({
+                                    ...current,
+                                    reason: event.target.value,
+                                  }))
+                                }
+                                minLength={3}
+                                maxLength={500}
+                                required
+                              />
+                            </Field>
+                            <div className="inventory-batch-editor-actions">
+                              <button
+                                className="button button-primary"
+                                type="submit"
+                                disabled={
+                                  saving ||
+                                  !Number.isSafeInteger(
+                                    Number(untrackedStockForm.quantity),
+                                  ) ||
+                                  Number(untrackedStockForm.quantity) ===
+                                    product.quantityOnHand
+                                }
+                              >
+                                {saving ? "Saving…" : "Save stock count"}
+                              </button>
+                              <button
+                                className="button button-quiet"
+                                type="button"
+                                disabled={saving}
+                                onClick={() =>
+                                  setEditingUntrackedProductId(null)
+                                }
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
                     )}
                   </div>
                 </details>
