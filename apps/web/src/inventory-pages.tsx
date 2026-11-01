@@ -2616,6 +2616,7 @@ export function StockPage() {
   const [showQuarantinedLots, setShowQuarantinedLots] = useState(false);
   const [lotPage, setLotPage] = useState(1);
   const [editingLotId, setEditingLotId] = useState<string | null>(null);
+  const [lotCodeInput, setLotCodeInput] = useState("");
   const [lotQuantityInput, setLotQuantityInput] = useState("");
   const [lotSellingPriceInput, setLotSellingPriceInput] = useState("");
   const [lotUnitCostInput, setLotUnitCostInput] = useState("");
@@ -2687,6 +2688,9 @@ export function StockPage() {
   const selectedLots = lots.filter(
     (lot) => lot.productId === selectedId && lot.quantity > 0,
   );
+  const selectedProductLots = lots.filter(
+    (lot) => lot.productId === selectedId,
+  );
   const lotSearchTerms = normalizeLotSearch(lotQuery)
     .trim()
     .split(/\s+/)
@@ -2748,6 +2752,8 @@ export function StockPage() {
 
   function selectStockProduct(product: Product) {
     setSelectedId(product.id);
+    setEditingLotId(null);
+    setLotEditReason("");
     setAdjustCost(
       reasonTypeRef.current === "COUNT_CORRECTION"
         ? adjustmentUnitCost(product)
@@ -3063,6 +3069,7 @@ export function StockPage() {
     setNotice("");
     try {
       await api.patch(`/stock/lots/${lot.id}`, {
+        lotCode: lotCodeInput.trim(),
         quantity: Number(lotQuantityInput),
         sellingPrice: lotSellingPriceInput,
         unitCost: lotUnitCostInput,
@@ -3071,6 +3078,7 @@ export function StockPage() {
       });
       await Promise.all([refreshLots(), refreshProducts(), refreshEvents()]);
       setEditingLotId(null);
+      setLotCodeInput("");
       setLotEditReason("");
       setNotice("Lot details updated.");
     } catch (caught) {
@@ -3078,6 +3086,29 @@ export function StockPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function beginLotEdit(lot: InventoryLot) {
+    const product = products.find((entry) => entry.id === lot.productId);
+    if (product) selectStockProduct(product);
+    setEditingLotId(lot.id);
+    setLotCodeInput(lot.lotCode);
+    setLotQuantityInput(String(lot.quantity));
+    setLotSellingPriceInput(lot.sellingPrice);
+    setLotUnitCostInput(lot.unitCost ?? "0.00");
+    setExpiryDateInput(lot.expiryDate);
+    setLotEditReason("");
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("stock-product-details")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function focusProductStockDetails() {
+    document
+      .getElementById("stock-product-details")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
@@ -3130,7 +3161,8 @@ export function StockPage() {
             <div>
               <h2>Current stock</h2>
               <p>
-                Correct acquisition cost or edit product details from any row.
+                Select a product to review its batch quantities and edit stock
+                details.
               </p>
             </div>
             <label className="inventory-checkbox compact-checkbox">
@@ -3209,12 +3241,24 @@ export function StockPage() {
                       onClick={() => selectStockProduct(product)}
                     >
                       <td>
-                        <strong className="product-description">
-                          {product.name}
-                        </strong>
-                        <small>
-                          {product.sku} · {product.unit}
-                        </small>
+                        <button
+                          className="stock-product-detail-trigger"
+                          type="button"
+                          aria-label={`View stock details for ${product.name}`}
+                          aria-expanded={selectedId === product.id}
+                          aria-controls="stock-product-details"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectStockProduct(product);
+                          }}
+                        >
+                          <strong className="product-description">
+                            {product.name}
+                          </strong>
+                          <small>
+                            {product.sku} · {product.unit}
+                          </small>
+                        </button>
                       </td>
                       <td>
                         {product.quantityOnHand}
@@ -3744,6 +3788,229 @@ export function StockPage() {
           </div>
         </aside>
       </div>
+      {selected && (
+        <section
+          className="activity-card stock-product-details-card"
+          id="stock-product-details"
+          aria-labelledby="stock-product-details-title"
+        >
+          <div className="card-heading">
+            <div>
+              <h2 id="stock-product-details-title">Product stock details</h2>
+              <p>
+                {selected.name} · {selected.quantityOnHand} {selected.unit} on
+                hand
+                {selected.tracksLots
+                  ? ` across ${selectedProductLots.length} ${selectedProductLots.length === 1 ? "batch" : "batches"}.`
+                  : ". Lot tracking is off for this product."}
+              </p>
+            </div>
+            <Link
+              className="button button-quiet"
+              to={`/products?edit=${encodeURIComponent(selected.id)}`}
+            >
+              Edit product details
+            </Link>
+          </div>
+          {selected.tracksLots ? (
+            <>
+              {selected.unallocatedQuantity > 0 && (
+                <p className="stock-unallocated-note">
+                  {selected.unallocatedQuantity} {selected.unit} are not
+                  assigned to a batch yet. Assign them after a physical count in
+                  the lot reconciliation section below.
+                </p>
+              )}
+              <div className="stock-product-lot-list">
+                {selectedProductLots.length ? (
+                  selectedProductLots.map((lot) => (
+                    <article className="stock-product-lot-card" key={lot.id}>
+                      <div className="stock-product-lot-summary">
+                        <div>
+                          <strong>{lot.lotCode}</strong>
+                          <small>
+                            {lot.sku} · Expires {lot.expiryDate}
+                          </small>
+                        </div>
+                        <div className="stock-product-lot-quantities">
+                          <span>
+                            <strong>{lot.quantity}</strong> physical{" "}
+                            {selected.unit}
+                          </span>
+                          <span>
+                            <strong>{lot.saleableQuantity}</strong> saleable
+                          </span>
+                        </div>
+                        <div className="stock-product-lot-prices">
+                          <span>
+                            Cost{" "}
+                            {lot.unitCost === null ? "—" : `₱${lot.unitCost}`}
+                          </span>
+                          <span>Selling ₱{lot.sellingPrice}</span>
+                        </div>
+                        <span
+                          className={`stock-lot-status ${lotStatusPresentation(lot).className}`}
+                        >
+                          {lotStatusPresentation(lot).label}
+                        </span>
+                        <button
+                          className="button button-secondary"
+                          type="button"
+                          aria-label={`Edit batch ${lot.lotCode}`}
+                          disabled={saving || editingLotId === lot.id}
+                          onClick={() => beginLotEdit(lot)}
+                        >
+                          {editingLotId === lot.id
+                            ? "Editing batch"
+                            : "Edit batch"}
+                        </button>
+                      </div>
+                      {editingLotId === lot.id && (
+                        <form
+                          className="stock-lot-editor stock-product-lot-editor"
+                          onSubmit={(event) => void saveLotEdit(event, lot)}
+                        >
+                          <Field
+                            id={`lot-code-${lot.id}`}
+                            label="Batch / lot ID"
+                          >
+                            <input
+                              id={`lot-code-${lot.id}`}
+                              className="text-input"
+                              value={lotCodeInput}
+                              onChange={(event) =>
+                                setLotCodeInput(event.target.value)
+                              }
+                              maxLength={100}
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-quantity-${lot.id}`}
+                            label={`Physical quantity (${selected.unit})`}
+                          >
+                            <input
+                              id={`lot-quantity-${lot.id}`}
+                              className="text-input"
+                              type="number"
+                              min="0"
+                              max="1000000"
+                              step="1"
+                              value={lotQuantityInput}
+                              onChange={(event) =>
+                                setLotQuantityInput(event.target.value)
+                              }
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-expiry-date-${lot.id}`}
+                            label="Expiry date"
+                          >
+                            <input
+                              id={`lot-expiry-date-${lot.id}`}
+                              className="text-input"
+                              type="date"
+                              value={expiryDateInput}
+                              onChange={(event) =>
+                                setExpiryDateInput(event.target.value)
+                              }
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-unit-cost-${lot.id}`}
+                            label="Unit acquisition cost (₱)"
+                          >
+                            <input
+                              id={`lot-unit-cost-${lot.id}`}
+                              className="text-input"
+                              inputMode="decimal"
+                              value={lotUnitCostInput}
+                              onChange={(event) =>
+                                setLotUnitCostInput(event.target.value)
+                              }
+                              pattern="[0-9]+(\.[0-9]{1,2})?"
+                              required
+                            />
+                          </Field>
+                          <Field
+                            id={`lot-price-${lot.id}`}
+                            label="Product selling price (₱)"
+                          >
+                            <input
+                              id={`lot-price-${lot.id}`}
+                              className="text-input"
+                              inputMode="decimal"
+                              value={lotSellingPriceInput}
+                              onChange={(event) =>
+                                setLotSellingPriceInput(event.target.value)
+                              }
+                              pattern="[0-9]+(\.[0-9]{1,2})?"
+                              required
+                            />
+                            <small className="field-hint">
+                              Updates this product’s selling price for every
+                              batch.
+                            </small>
+                          </Field>
+                          <Field
+                            id={`lot-expiry-reason-${lot.id}`}
+                            label="Reason for batch correction"
+                          >
+                            <input
+                              id={`lot-expiry-reason-${lot.id}`}
+                              className="text-input"
+                              value={lotEditReason}
+                              onChange={(event) =>
+                                setLotEditReason(event.target.value)
+                              }
+                              minLength={3}
+                              maxLength={500}
+                              required
+                            />
+                          </Field>
+                          <div className="stock-product-lot-editor-actions">
+                            <button
+                              className="button button-primary"
+                              type="submit"
+                              disabled={saving}
+                            >
+                              {saving ? "Saving…" : "Save batch details"}
+                            </button>
+                            <button
+                              className="button button-quiet"
+                              type="button"
+                              disabled={saving}
+                              onClick={() => {
+                                setEditingLotId(null);
+                                setLotCodeInput("");
+                                setLotEditReason("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </article>
+                  ))
+                ) : (
+                  <p className="stock-product-empty-lots">
+                    No batches recorded for this product. Record a receipt to
+                    add the first batch.
+                  </p>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="stock-product-empty-lots">
+              Current stock: {selected.quantityOnHand} {selected.unit}. Use the
+              stock adjustment controls to correct its count.
+            </p>
+          )}
+        </section>
+      )}
       <section className="activity-card stock-history-card stock-events-card">
         <div className="card-heading">
           <div>
@@ -3990,124 +4257,17 @@ export function StockPage() {
                           className="button button-secondary stock-quarantine-action"
                           type="button"
                           disabled={saving}
-                          onClick={() => {
-                            if (editingLotId === lot.id) {
-                              setEditingLotId(null);
-                              setLotEditReason("");
-                              return;
-                            }
-                            setEditingLotId(lot.id);
-                            setLotQuantityInput(String(lot.quantity));
-                            setLotSellingPriceInput(lot.sellingPrice);
-                            setLotUnitCostInput(lot.unitCost ?? "0.00");
-                            setExpiryDateInput(lot.expiryDate);
-                            setLotEditReason("");
-                          }}
+                          onClick={() =>
+                            editingLotId === lot.id
+                              ? focusProductStockDetails()
+                              : beginLotEdit(lot)
+                          }
                         >
-                          {editingLotId === lot.id ? "Cancel edit" : "Edit lot"}
+                          {editingLotId === lot.id
+                            ? "Editing above"
+                            : "Edit lot"}
                         </button>
                       </div>
-                      {editingLotId === lot.id && (
-                        <form
-                          className="stock-lot-editor"
-                          onSubmit={(event) => void saveLotEdit(event, lot)}
-                        >
-                          <Field
-                            id={`lot-quantity-${lot.id}`}
-                            label="Physical quantity"
-                          >
-                            <input
-                              id={`lot-quantity-${lot.id}`}
-                              className="text-input"
-                              type="number"
-                              min="0"
-                              max="1000000"
-                              step="1"
-                              value={lotQuantityInput}
-                              onChange={(event) =>
-                                setLotQuantityInput(event.target.value)
-                              }
-                              required
-                            />
-                          </Field>
-                          <Field
-                            id={`lot-unit-cost-${lot.id}`}
-                            label="Unit acquisition cost (₱)"
-                          >
-                            <input
-                              id={`lot-unit-cost-${lot.id}`}
-                              className="text-input"
-                              inputMode="decimal"
-                              value={lotUnitCostInput}
-                              onChange={(event) =>
-                                setLotUnitCostInput(event.target.value)
-                              }
-                              pattern="[0-9]+(\.[0-9]{1,2})?"
-                              required
-                            />
-                            <small className="field-hint">
-                              Revalues this lot's remaining stock only.
-                            </small>
-                          </Field>
-                          <Field
-                            id={`lot-price-${lot.id}`}
-                            label="Product selling price (₱)"
-                          >
-                            <input
-                              id={`lot-price-${lot.id}`}
-                              className="text-input"
-                              inputMode="decimal"
-                              value={lotSellingPriceInput}
-                              onChange={(event) =>
-                                setLotSellingPriceInput(event.target.value)
-                              }
-                              pattern="[0-9]+(\.[0-9]{1,2})?"
-                              required
-                            />
-                            <small className="field-hint">
-                              Applies to every batch of this product.
-                            </small>
-                          </Field>
-                          <Field
-                            id={`lot-expiry-date-${lot.id}`}
-                            label="Expiry date"
-                          >
-                            <input
-                              id={`lot-expiry-date-${lot.id}`}
-                              className="text-input"
-                              type="date"
-                              value={expiryDateInput}
-                              onChange={(event) =>
-                                setExpiryDateInput(event.target.value)
-                              }
-                              required
-                            />
-                          </Field>
-                          <Field
-                            id={`lot-expiry-reason-${lot.id}`}
-                            label="Reason for lot correction"
-                          >
-                            <input
-                              id={`lot-expiry-reason-${lot.id}`}
-                              className="text-input"
-                              value={lotEditReason}
-                              onChange={(event) =>
-                                setLotEditReason(event.target.value)
-                              }
-                              minLength={3}
-                              maxLength={500}
-                              required
-                            />
-                          </Field>
-                          <button
-                            className="button button-primary"
-                            type="submit"
-                            disabled={saving}
-                          >
-                            {saving ? "Saving…" : "Save lot details"}
-                          </button>
-                        </form>
-                      )}
                     </td>
                   </tr>
                 ))

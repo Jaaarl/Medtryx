@@ -48,7 +48,7 @@ describe("single payments migration from the committed 0026 schema", () => {
           .all();
         const originalOtherSchema = db
           .prepare(
-            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
+            "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name NOT IN ('sale_lines_no_deleted_product', 'inventory_lots_identity_immutable') ORDER BY type, name",
           )
           .all();
         db.close();
@@ -65,7 +65,7 @@ describe("single payments migration from the committed 0026 schema", () => {
         expect(
           db
             .prepare(
-              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name <> 'sale_lines_no_deleted_product' ORDER BY type, name",
+              "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE tbl_name NOT IN ('shifts', 'expenses', 'products', 'expense_cancellations', 'monthly_incentive_months') AND name NOT IN ('sale_lines_no_deleted_product', 'inventory_lots_identity_immutable') ORDER BY type, name",
             )
             .all(),
         ).toEqual(originalOtherSchema);
@@ -73,7 +73,10 @@ describe("single payments migration from the committed 0026 schema", () => {
           db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
         ).toEqual({ count: 0 });
         const applied = appliedRows(db);
-        expect(applied).toHaveLength(31);
+        expect(applied).toHaveLength(32);
+        expect(applied[31]).toMatchObject({
+          name: "0032_editable_inventory_lot_code.sql",
+        });
         expect(applied[30]).toMatchObject({
           name: "0031_expense_cancellations.sql",
         });

@@ -939,6 +939,7 @@ describe("owner catalog and stock operations", () => {
     const allLots = (await owner.get("/api/stock/lots")).body.lots as Array<{
       id: string;
       lotCode: string;
+      expiryDate: string;
       quantity: number;
       unitCost: string | null;
       sellingPrice: string;
@@ -973,10 +974,26 @@ describe("owner catalog and stock operations", () => {
     expect(denied.status).toBe(403);
 
     const ownerToken = await csrfFor(owner);
+    const conflictingEdit = await owner
+      .patch(`/api/stock/lots/${lot.id}`)
+      .set("x-csrf-token", ownerToken)
+      .send({
+        lotCode: secondLot.lotCode,
+        quantity: 10,
+        sellingPrice: "70.00",
+        unitCost: "40.00",
+        expiryDate: secondLot.expiryDate,
+        reason: "Synthetic duplicate batch identity",
+      });
+    expect(conflictingEdit.status).toBe(409);
+    expect(conflictingEdit.body.error).toBe("lot_expiry_conflict");
+
+    const correctedLotCode = "SYN-LOT-DETAIL-BATCH-CORRECTED";
     const reduced = await owner
       .patch(`/api/stock/lots/${lot.id}`)
       .set("x-csrf-token", ownerToken)
       .send({
+        lotCode: correctedLotCode,
         quantity: 7,
         sellingPrice: "75.00",
         unitCost: "45.00",
@@ -986,6 +1003,7 @@ describe("owner catalog and stock operations", () => {
     expect(reduced.status, JSON.stringify(reduced.body)).toBe(200);
     expect(reduced.body).toEqual({
       lotId: lot.id,
+      lotCode: correctedLotCode,
       expiryDate: updatedExpiry,
       quantity: 7,
       sellingPrice: "75.00",
@@ -1025,6 +1043,7 @@ describe("owner catalog and stock operations", () => {
     }>;
     expect(updatedLots.find((entry) => entry.id === lot.id)).toMatchObject({
       id: lot.id,
+      lotCode: correctedLotCode,
       quantity: 9,
       unitCost: "45.00",
       expiryDate: updatedExpiry,
@@ -1068,11 +1087,13 @@ describe("owner catalog and stock operations", () => {
       details: {
         reason: "Verified two additional units on the shelf",
         old: expect.objectContaining({
+          lotCode: correctedLotCode,
           quantity: 7,
           sellingPrice: "75.00",
           unitCost: "45.00",
         }),
         new: expect.objectContaining({
+          lotCode: correctedLotCode,
           quantity: 9,
           sellingPrice: "75.00",
           unitCost: "45.00",

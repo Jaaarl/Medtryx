@@ -7,7 +7,7 @@ async function signInOwner(page: import("@playwright/test").Page) {
     .getByLabel("Password", { exact: true })
     .fill("SyntheticOwnerPassword-48!");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/checkout$/);
+  await expect(page).toHaveURL(/\/(?:checkout|dashboard)$/);
 }
 
 test("product and stock headers sort their rows in both directions", async ({
@@ -497,6 +497,17 @@ test("owners can search a batch and edit its quantity, unit cost, and product pr
   expect(secondLotResponse.status()).toBe(201);
 
   await page.goto("/stock");
+  await page.getByLabel("Search current stock").fill("SYN-LOT-SEARCH");
+  await page
+    .getByRole("button", {
+      name: "View stock details for Synthetic Searchable Lot Product",
+    })
+    .click();
+  const productStockDetails = page.locator("#stock-product-details");
+  await expect(productStockDetails).toContainText("SYN-SEARCH-BATCH-31");
+  await expect(productStockDetails).toContainText("2031-12-31");
+  await expect(productStockDetails).toContainText("4 physical piece");
+
   const lotSearch = page.getByLabel(
     "Search lots by product name, SKU, or batch ID",
   );
@@ -514,26 +525,39 @@ test("owners can search a batch and edit its quantity, unit cost, and product pr
     page.getByRole("status").filter({ hasText: "Showing 1 of 2 lots" }),
   ).toBeVisible();
   await lotRow.getByRole("button", { name: "Edit lot" }).click();
-  await expect(page.getByLabel("Physical quantity")).toHaveValue("4");
-  await expect(page.getByLabel("Product selling price (₱)")).toHaveValue(
+  const batchEditor = productStockDetails.locator(".stock-product-lot-editor");
+  await expect(batchEditor.getByLabel("Batch / lot ID")).toHaveValue(
+    "SYN-SEARCH-BATCH-31",
+  );
+  await expect(batchEditor.getByLabel(/Physical quantity/)).toHaveValue("4");
+  await expect(batchEditor.getByLabel(/Product selling price/)).toHaveValue(
     "10.00",
   );
-  await expect(lotRow.getByLabel("Unit acquisition cost (₱)")).toHaveValue(
+  await expect(batchEditor.getByLabel(/Unit acquisition cost/)).toHaveValue(
     "5.00",
   );
-  await page.getByLabel("Physical quantity").fill("5");
-  await lotRow.getByLabel("Unit acquisition cost (₱)").fill("5.50");
-  await page.getByLabel("Product selling price (₱)").fill("12.50");
-  await page.getByLabel("Expiry date", { exact: true }).fill("2032-12-31");
-  await page
-    .getByLabel("Reason for lot correction")
+  await batchEditor
+    .getByLabel("Batch / lot ID")
+    .fill("SYN-SEARCH-BATCH-31-EDITED");
+  await batchEditor.getByLabel(/Physical quantity/).fill("5");
+  await batchEditor.getByLabel(/Unit acquisition cost/).fill("5.50");
+  await batchEditor.getByLabel(/Product selling price/).fill("12.50");
+  await batchEditor
+    .getByLabel("Expiry date", { exact: true })
+    .fill("2032-12-31");
+  await batchEditor
+    .getByLabel("Reason for batch correction")
     .fill("Synthetic browser lot count and price edit");
-  await page.getByRole("button", { name: "Save lot details" }).click();
+  await batchEditor.getByRole("button", { name: "Save batch details" }).click();
   await expect(page.getByText("Lot details updated.")).toBeVisible();
-  await expect(lotRow).toContainText("2032-12-31");
-  await expect(lotRow).toContainText("12.50");
-  await expect(lotRow).toContainText("5.50");
-  await expect(lotRow).toContainText("5");
+  await lotSearch.fill("SYN-SEARCH-BATCH-31-EDITED");
+  const updatedLotRow = page
+    .locator(".stock-lots-card .inventory-table tbody tr")
+    .filter({ hasText: "SYN-SEARCH-BATCH-31-EDITED" });
+  await expect(updatedLotRow).toContainText("2032-12-31");
+  await expect(updatedLotRow).toContainText("12.50");
+  await expect(updatedLotRow).toContainText("5.50");
+  await expect(updatedLotRow).toContainText("5");
 
   const catalogResponse = await page.request.get("/api/products");
   const catalog = (await catalogResponse.json()) as {

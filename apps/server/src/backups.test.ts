@@ -173,7 +173,10 @@ describe("owner-only verified backup and restore", () => {
     async () => {
       const repositoryDrive = parse(repositoryRoot).root.toUpperCase();
       const backupDrive = repositoryDrive.startsWith("C:") ? "Z:\\" : "C:\\";
-      const uniqueRoot = join(backupDrive, `medtryx-path-check-${randomUUID()}`);
+      const uniqueRoot = join(
+        backupDrive,
+        `medtryx-path-check-${randomUUID()}`,
+      );
       process.env.MEDTRYX_BACKUP_PRIMARY_DIR = join(uniqueRoot, "primary");
       process.env.MEDTRYX_BACKUP_SECONDARY_DIR = join(uniqueRoot, "secondary");
       try {
@@ -256,7 +259,7 @@ describe("owner-only verified backup and restore", () => {
       );
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get(),
-      ).toEqual({ count: 31 });
+      ).toEqual({ count: 32 });
       expect(
         db
           .prepare("SELECT name FROM schema_migrations WHERE name = ?")
@@ -267,6 +270,11 @@ describe("owner-only verified backup and restore", () => {
           .prepare("SELECT name FROM schema_migrations WHERE name = ?")
           .get("0031_expense_cancellations.sql"),
       ).toEqual({ name: "0031_expense_cancellations.sql" });
+      expect(
+        db
+          .prepare("SELECT name FROM schema_migrations WHERE name = ?")
+          .get("0032_editable_inventory_lot_code.sql"),
+      ).toEqual({ name: "0032_editable_inventory_lot_code.sql" });
       expect(
         db.prepare("SELECT COUNT(*) AS count FROM expenses").get(),
       ).toEqual({ count: 0 });

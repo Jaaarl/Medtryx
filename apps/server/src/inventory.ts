@@ -477,6 +477,7 @@ const adjustmentSchema = z
 
 const lotEditSchema = z
   .object({
+    lotCode: lotCodeSchema.optional(),
     quantity: z.number().int().min(0).max(MAX_QUANTITY),
     sellingPrice: moneySchema,
     unitCost: moneySchema.optional(),
@@ -2565,6 +2566,7 @@ export function registerInventoryRoutes(
           if (!balance) throw new InventoryError(404, "lot_not_found");
 
           const priceCents = parseMoney(parsed.data.sellingPrice);
+          const nextLotCode = parsed.data.lotCode ?? lot.lot_code;
           const requestedUnitCostCents =
             parsed.data.unitCost === undefined
               ? null
@@ -2585,7 +2587,7 @@ export function registerInventoryRoutes(
               `SELECT 1 FROM inventory_lots
                WHERE product_id = ? AND lot_code = ? AND expiry_date = ? AND id <> ?`,
             )
-            .get(lot.product_id, lot.lot_code, parsed.data.expiryDate, lot.id);
+            .get(lot.product_id, nextLotCode, parsed.data.expiryDate, lot.id);
           if (conflictingLot)
             throw new InventoryError(409, "lot_expiry_conflict");
 
@@ -2721,11 +2723,13 @@ export function registerInventoryRoutes(
 
           const priceChanged = priceCents !== lot.selling_price_centavos;
           const expiryChanged = parsed.data.expiryDate !== lot.expiry_date;
+          const lotCodeChanged = nextLotCode !== lot.lot_code;
           if (
             quantityDelta !== 0 ||
             costCorrectionDelta !== 0 ||
             priceChanged ||
-            expiryChanged
+            expiryChanged ||
+            lotCodeChanged
           ) {
             db.prepare(
               `UPDATE products
@@ -2733,10 +2737,10 @@ export function registerInventoryRoutes(
                    selling_price_centavos = ?, updated_at = ?
                WHERE id = ?`,
             ).run(nextQuantity, nextValue, priceCents, now, lot.product_id);
-            if (expiryChanged) {
+            if (expiryChanged || lotCodeChanged) {
               db.prepare(
-                "UPDATE inventory_lots SET expiry_date = ? WHERE id = ?",
-              ).run(parsed.data.expiryDate, lot.id);
+                "UPDATE inventory_lots SET lot_code = ?, expiry_date = ? WHERE id = ?",
+              ).run(nextLotCode, parsed.data.expiryDate, lot.id);
             }
             writeAuditEvent(db, {
               actorUserId: req.user!.id,
@@ -2748,6 +2752,7 @@ export function registerInventoryRoutes(
                 lotCode: lot.lot_code,
                 reason: parsed.data.reason,
                 old: {
+                  lotCode: lot.lot_code,
                   expiryDate: lot.expiry_date,
                   quantity: balance.quantity,
                   sellingPrice: money(lot.selling_price_centavos),
@@ -2763,6 +2768,7 @@ export function registerInventoryRoutes(
                         ),
                 },
                 new: {
+                  lotCode: nextLotCode,
                   expiryDate: parsed.data.expiryDate,
                   quantity: parsed.data.quantity,
                   sellingPrice: money(priceCents),
@@ -2784,6 +2790,7 @@ export function registerInventoryRoutes(
           }
           return {
             lotId: lot.id,
+            lotCode: nextLotCode,
             expiryDate: parsed.data.expiryDate,
             quantity: parsed.data.quantity,
             sellingPrice: money(priceCents),
