@@ -2963,7 +2963,9 @@ a {
   cursor: pointer;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(220px, 2fr) auto minmax(130px, 1fr) auto;
+  grid-template-columns:
+    minmax(220px, 2fr) minmax(75px, auto) auto minmax(130px, 1fr)
+    auto;
   list-style: none;
   min-height: 70px;
   padding: 12px 16px;
@@ -2989,9 +2991,13 @@ a {
   overflow-wrap: anywhere;
 }
 .inventory-product-identity small,
+.inventory-product-quantity,
 .inventory-product-batch-count {
   color: #71817a;
   font-size: 11px;
+}
+.inventory-product-quantity {
+  white-space: nowrap;
 }
 .inventory-product-chevron {
   color: #71817a;
@@ -7615,6 +7621,9 @@ a {
     gap: 10px;
     grid-template-columns: minmax(150px, 1fr) auto auto auto;
   }
+  .inventory-product-quantity {
+    grid-column: 2;
+  }
   .inventory-product-batch-count {
     grid-column: 1;
   }
@@ -7655,6 +7664,9 @@ a {
   .inventory-product-accordion > summary {
     grid-template-columns: minmax(0, 1fr) auto;
     padding: 12px;
+  }
+  .inventory-product-quantity {
+    grid-column: 1;
   }
   .inventory-product-accordion > summary > .product-state,
   .inventory-product-batch-count {

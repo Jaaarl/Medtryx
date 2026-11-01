@@ -4953,6 +4953,9 @@ export function InventoryPage() {
                         {product.sku} · {product.unit}
                       </small>
                     </span>
+                    <span className="inventory-product-quantity">
+                      {product.quantityOnHand} {product.unit}
+                    </span>
                     <span
                       className={`product-state ${product.active ? "product-state-active" : ""}`}
                     >
