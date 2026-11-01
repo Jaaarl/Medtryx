@@ -2691,6 +2691,8 @@ export function StockPage() {
   const [receiptLotCode, setReceiptLotCode] = useState("");
   const [receiptExpiryDate, setReceiptExpiryDate] = useState("");
   const [adjustQty, setAdjustQty] = useState("");
+  const [adjustMode, setAdjustMode] = useState<"change" | "total">("change");
+  const [adjustTotal, setAdjustTotal] = useState("");
   const [reasonType, setReasonType] = useState("COUNT_CORRECTION");
   const reasonTypeRef = useRef(reasonType);
   const [reason, setReason] = useState("");
@@ -2718,6 +2720,18 @@ export function StockPage() {
   const [expiryDateInput, setExpiryDateInput] = useState("");
   const [lotEditReason, setLotEditReason] = useState("");
   const selected = products.find((product) => product.id === selectedId);
+  const parsedAdjustTotal =
+    adjustTotal !== "" && Number.isSafeInteger(Number(adjustTotal))
+      ? Number(adjustTotal)
+      : null;
+  const adjustmentDelta =
+    adjustMode === "total"
+      ? parsedAdjustTotal === null
+        ? 0
+        : parsedAdjustTotal - (selected?.quantityOnHand ?? 0)
+      : Number(adjustQty);
+  const hasAdjustmentInput =
+    adjustMode === "total" ? parsedAdjustTotal !== null : adjustQty !== "";
   useEffect(() => {
     if (window.location.hash !== "#checkout-count-overrides") return;
     const frame = window.requestAnimationFrame(() => {
@@ -3056,11 +3070,21 @@ export function StockPage() {
   async function adjust(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
+    const quantityDelta =
+      adjustMode === "total"
+        ? (parsedAdjustTotal ?? Number.NaN) - selected.quantityOnHand
+        : Number(adjustQty);
+    if (!Number.isSafeInteger(quantityDelta) || quantityDelta === 0) {
+      setNotice("");
+      setError(
+        "Enter a quantity change that is different from the current stock.",
+      );
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
     try {
-      const quantityDelta = Number(adjustQty);
       const quantityBefore = selected.quantityOnHand;
       const reasonLabel =
         reasonType === "COUNT_CORRECTION"
@@ -3141,6 +3165,7 @@ export function StockPage() {
         ],
       });
       setAdjustQty("");
+      setAdjustTotal("");
       setReason("");
       setAdjustZeroCostReason("");
       setAdjustLotId("");
@@ -3802,39 +3827,92 @@ export function StockPage() {
                   </strong>
                   <span>Selected for adjustment</span>
                 </div>
-                <Field
-                  id="adjust-quantity"
-                  label="Quantity change (use minus to remove)"
-                >
-                  <input
+                <fieldset className="inventory-radio-group">
+                  <legend className="field-label">Entry type</legend>
+                  <div className="inventory-radio-options">
+                    <label className="inventory-radio-option">
+                      <input
+                        type="radio"
+                        name="adjust-entry-mode"
+                        value="change"
+                        checked={adjustMode === "change"}
+                        onChange={() => setAdjustMode("change")}
+                      />
+                      <span>Change amount</span>
+                    </label>
+                    <label className="inventory-radio-option">
+                      <input
+                        type="radio"
+                        name="adjust-entry-mode"
+                        value="total"
+                        checked={adjustMode === "total"}
+                        onChange={() => setAdjustMode("total")}
+                      />
+                      <span>Correct total</span>
+                    </label>
+                  </div>
+                </fieldset>
+                {adjustMode === "change" ? (
+                  <Field
                     id="adjust-quantity"
-                    className="text-input"
-                    type="text"
-                    pattern="-?[0-9]+"
-                    value={adjustQty}
-                    onChange={(event) => setAdjustQty(event.target.value)}
-                    required
-                  />
-                </Field>
-                {adjustQty !== "" &&
-                  Number.isSafeInteger(Number(adjustQty)) && (
+                    label="Quantity change (use minus to remove)"
+                  >
+                    <input
+                      id="adjust-quantity"
+                      className="text-input"
+                      type="text"
+                      pattern="-?[0-9]+"
+                      value={adjustQty}
+                      onChange={(event) => setAdjustQty(event.target.value)}
+                      required
+                    />
+                  </Field>
+                ) : (
+                  <Field
+                    id="adjust-total"
+                    label="Correct total quantity on hand"
+                  >
+                    <input
+                      id="adjust-total"
+                      className="text-input"
+                      type="text"
+                      pattern="[0-9]+"
+                      value={adjustTotal}
+                      onChange={(event) => setAdjustTotal(event.target.value)}
+                      required
+                    />
+                    <small className="field-hint">
+                      Currently {selected.quantityOnHand} {selected.unit} on
+                      hand.
+                    </small>
+                  </Field>
+                )}
+                {hasAdjustmentInput &&
+                  Number.isSafeInteger(adjustmentDelta) &&
+                  adjustmentDelta !== 0 && (
                     <small
                       className={`field-hint stock-adjustment-preview${
-                        Number(adjustQty) > 0
+                        adjustmentDelta > 0
                           ? " stock-adjustment-preview-add"
-                          : Number(adjustQty) < 0
-                            ? " stock-adjustment-preview-remove"
-                            : ""
+                          : " stock-adjustment-preview-remove"
                       }`}
                       role="status"
                       aria-live="polite"
                     >
                       Total quantity after adjustment:{" "}
-                      {selected.quantityOnHand + Number(adjustQty)}{" "}
+                      {selected.quantityOnHand + adjustmentDelta}{" "}
                       {selected.unit}
                     </small>
                   )}
-                {selected.tracksLots && Number(adjustQty) < 0 && (
+                {adjustMode === "total" &&
+                  parsedAdjustTotal !== null &&
+                  adjustmentDelta === 0 && (
+                    <small className="field-hint">
+                      Enter a total different from the current stock to record
+                      an adjustment.
+                    </small>
+                  )}
+                {selected.tracksLots && adjustmentDelta < 0 && (
                   <Field id="adjust-lot" label="Exact lot being removed">
                     <select
                       id="adjust-lot"
@@ -3853,7 +3931,7 @@ export function StockPage() {
                     </select>
                   </Field>
                 )}
-                {selected.tracksLots && Number(adjustQty) > 0 && (
+                {selected.tracksLots && adjustmentDelta > 0 && (
                   <>
                     <Field
                       id="adjust-existing-lot"
@@ -3909,7 +3987,7 @@ export function StockPage() {
                     )}
                   </>
                 )}
-                {Number(adjustQty) > 0 && (
+                {adjustmentDelta > 0 && (
                   <Field id="adjust-cost" label="Unit acquisition cost (₱)">
                     <input
                       id="adjust-cost"
@@ -3922,7 +4000,7 @@ export function StockPage() {
                     />
                   </Field>
                 )}
-                {Number(adjustQty) > 0 &&
+                {adjustmentDelta > 0 &&
                 adjustCost !== "" &&
                 /^0+(?:\.0{1,2})?$/.test(adjustCost) ? (
                   <Field
@@ -3982,8 +4060,9 @@ export function StockPage() {
                   disabled={
                     saving ||
                     (selected.tracksLots &&
-                      Number(adjustQty) < 0 &&
-                      !adjustLotId)
+                      adjustmentDelta < 0 &&
+                      !adjustLotId) ||
+                    (adjustMode === "total" && adjustmentDelta === 0)
                   }
                 >
                   {saving ? "Saving…" : "Record adjustment"}
