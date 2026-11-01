@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CirclePlus,
@@ -4696,6 +4697,449 @@ function ShiftElapsed({ openedAt }: { openedAt: string }) {
     <span className="checkout-shift-elapsed">
       Open for {hours}h {minutes}m
     </span>
+  );
+}
+
+export function InventoryPage() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [lots, setLots] = useState<InventoryLot[]>([]);
+  const [query, setQuery] = useState("");
+  const [editingLotId, setEditingLotId] = useState<string | null>(null);
+  const [lotForm, setLotForm] = useState({
+    lotCode: "",
+    quantity: "",
+    expiryDate: "",
+    unitCost: "",
+    sellingPrice: "",
+    reason: "",
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      api.get<{ products: Product[] }>("/products"),
+      api.get<{ lots: InventoryLot[] }>("/stock/lots"),
+    ])
+      .then(([productData, lotData]) => {
+        if (!active) return;
+        setProducts(productData.products);
+        setLots(lotData.lots);
+      })
+      .catch(() => {
+        if (active) setError("Unable to load inventory records.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const lotsByProduct = useMemo(() => {
+    const grouped = new Map<string, InventoryLot[]>();
+    for (const lot of lots) {
+      const productLots = grouped.get(lot.productId) ?? [];
+      productLots.push(lot);
+      grouped.set(lot.productId, productLots);
+    }
+    for (const productLots of grouped.values()) {
+      productLots.sort(
+        (left, right) =>
+          left.expiryDate.localeCompare(right.expiryDate) ||
+          left.lotCode.localeCompare(right.lotCode),
+      );
+    }
+    return grouped;
+  }, [lots]);
+
+  const visibleProducts = useMemo(() => {
+    const normalizedQuery = normalizeLotSearch(query.trim());
+    return products
+      .filter((product) =>
+        normalizeLotSearch(
+          `${product.name} ${product.sku} ${product.barcode ?? ""}`,
+        ).includes(normalizedQuery),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [products, query]);
+
+  async function refreshInventory() {
+    const [productData, lotData] = await Promise.all([
+      api.get<{ products: Product[] }>("/products"),
+      api.get<{ lots: InventoryLot[] }>("/stock/lots"),
+    ]);
+    setProducts(productData.products);
+    setLots(lotData.lots);
+  }
+
+  function beginBatchEdit(lot: InventoryLot) {
+    setEditingLotId(lot.id);
+    setLotForm({
+      lotCode: lot.lotCode,
+      quantity: String(lot.quantity),
+      expiryDate: lot.expiryDate,
+      unitCost: lot.unitCost ?? "0.00",
+      sellingPrice: lot.sellingPrice,
+      reason: "",
+    });
+    setError("");
+    setNotice("");
+  }
+
+  async function saveBatchEdit(
+    event: FormEvent<HTMLFormElement>,
+    lot: InventoryLot,
+  ) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.patch(`/stock/lots/${lot.id}`, {
+        lotCode: lotForm.lotCode.trim(),
+        quantity: Number(lotForm.quantity),
+        expiryDate: lotForm.expiryDate,
+        unitCost: lotForm.unitCost,
+        sellingPrice: lotForm.sellingPrice,
+        reason: lotForm.reason.trim(),
+      });
+      await refreshInventory();
+      setEditingLotId(null);
+      setNotice("Batch details updated.");
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const batchCount = lots.filter((lot) => lot.quantity > 0).length;
+  const lowStockCount = products.filter(
+    (product) =>
+      product.reorderLevel !== null &&
+      product.quantityOnHand <= product.reorderLevel,
+  ).length;
+
+  return (
+    <section className="page-section inventory-page inventory-management-page">
+      <PageHeading
+        eyebrow="OWNER INVENTORY"
+        title="Inventory"
+        description="Browse every product, expand its batches, and correct batch details in one place."
+      />
+      {(error || notice) && (
+        <div
+          className={`banner ${error ? "banner-error" : "banner-success"}`}
+          role={error ? "alert" : "status"}
+        >
+          {error || notice}
+        </div>
+      )}
+      <div className="inventory-summary-grid">
+        <div className="inventory-summary-card">
+          <span>PRODUCTS</span>
+          <strong>{products.length}</strong>
+        </div>
+        <div className="inventory-summary-card">
+          <span>BATCHES WITH STOCK</span>
+          <strong>{batchCount}</strong>
+        </div>
+        <div className="inventory-summary-card">
+          <span>LOW STOCK</span>
+          <strong>{lowStockCount}</strong>
+        </div>
+      </div>
+      <section className="settings-main-card inventory-product-list-card">
+        <div className="inventory-product-list-heading">
+          <div>
+            <h2>All products</h2>
+            <p>Expand a product to review and edit its individual batches.</p>
+          </div>
+          <div className="inventory-search-row">
+            <Search size={16} />
+            <input
+              className="text-input"
+              aria-label="Search inventory products"
+              placeholder="Search product name, SKU, or barcode"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+        </div>
+        <p className="inventory-product-result-count" role="status">
+          Showing {visibleProducts.length} of {products.length} products
+        </p>
+        {loading ? (
+          <p className="table-loading inventory-product-empty-state">
+            Loading inventory…
+          </p>
+        ) : visibleProducts.length ? (
+          <div className="inventory-product-accordion-list">
+            {visibleProducts.map((product) => {
+              const productLots = lotsByProduct.get(product.id) ?? [];
+              return (
+                <details
+                  className="inventory-product-accordion"
+                  key={product.id}
+                >
+                  <summary>
+                    <span className="inventory-product-identity">
+                      <strong>{product.name}</strong>
+                      <small>
+                        {product.sku} · {product.unit}
+                      </small>
+                    </span>
+                    <span className="inventory-product-on-hand">
+                      {product.quantityOnHand} {product.unit} on hand
+                    </span>
+                    <span
+                      className={`product-state ${product.active ? "product-state-active" : ""}`}
+                    >
+                      {product.active ? "Active" : "Inactive"}
+                    </span>
+                    <span className="inventory-product-batch-count">
+                      {product.tracksLots
+                        ? `${productLots.length} ${productLots.length === 1 ? "batch" : "batches"}`
+                        : "No batch tracking"}
+                    </span>
+                    <ChevronDown
+                      className="inventory-product-chevron"
+                      size={18}
+                      aria-hidden="true"
+                    />
+                  </summary>
+                  <div className="inventory-product-accordion-content">
+                    <div className="inventory-product-details-strip">
+                      <span>
+                        Average cost ₱{product.weightedAverageUnitCost}
+                      </span>
+                      <span>Stock value ₱{product.inventoryValue}</span>
+                      <Link
+                        className="text-action"
+                        to={`/products?edit=${encodeURIComponent(product.id)}`}
+                      >
+                        Edit product details
+                      </Link>
+                    </div>
+                    {product.tracksLots ? (
+                      productLots.length ? (
+                        <div className="inventory-batch-list">
+                          {productLots.map((lot) => (
+                            <article
+                              className="inventory-batch-card"
+                              key={lot.id}
+                            >
+                              <div className="inventory-batch-summary">
+                                <div className="inventory-batch-identity">
+                                  <strong>{lot.lotCode}</strong>
+                                  <small>Expires {lot.expiryDate}</small>
+                                </div>
+                                <span>
+                                  <strong>{lot.quantity}</strong> physical
+                                </span>
+                                <span>
+                                  <strong>{lot.saleableQuantity}</strong>{" "}
+                                  saleable
+                                </span>
+                                <span>
+                                  Cost{" "}
+                                  {lot.unitCost === null
+                                    ? "—"
+                                    : `₱${lot.unitCost}`}
+                                </span>
+                                <span>Selling ₱{lot.sellingPrice}</span>
+                                <span
+                                  className={`stock-lot-status ${lotStatusPresentation(lot).className}`}
+                                >
+                                  {lotStatusPresentation(lot).label}
+                                </span>
+                                <button
+                                  className="button button-secondary"
+                                  type="button"
+                                  aria-label={`Edit batch ${lot.lotCode}`}
+                                  disabled={saving || editingLotId === lot.id}
+                                  onClick={() => beginBatchEdit(lot)}
+                                >
+                                  {editingLotId === lot.id
+                                    ? "Editing batch"
+                                    : "Edit batch"}
+                                </button>
+                              </div>
+                              {editingLotId === lot.id && (
+                                <form
+                                  className="inventory-batch-editor"
+                                  onSubmit={(event) =>
+                                    void saveBatchEdit(event, lot)
+                                  }
+                                >
+                                  <Field
+                                    id={`inventory-batch-code-${lot.id}`}
+                                    label="Batch / lot ID"
+                                  >
+                                    <input
+                                      id={`inventory-batch-code-${lot.id}`}
+                                      className="text-input"
+                                      value={lotForm.lotCode}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          lotCode: event.target.value,
+                                        }))
+                                      }
+                                      maxLength={100}
+                                      required
+                                    />
+                                  </Field>
+                                  <Field
+                                    id={`inventory-batch-quantity-${lot.id}`}
+                                    label={`Physical quantity (${product.unit})`}
+                                  >
+                                    <input
+                                      id={`inventory-batch-quantity-${lot.id}`}
+                                      className="text-input"
+                                      type="number"
+                                      min="0"
+                                      max="1000000"
+                                      step="1"
+                                      value={lotForm.quantity}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          quantity: event.target.value,
+                                        }))
+                                      }
+                                      required
+                                    />
+                                  </Field>
+                                  <Field
+                                    id={`inventory-batch-expiry-${lot.id}`}
+                                    label="Expiry date"
+                                  >
+                                    <input
+                                      id={`inventory-batch-expiry-${lot.id}`}
+                                      className="text-input"
+                                      type="date"
+                                      value={lotForm.expiryDate}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          expiryDate: event.target.value,
+                                        }))
+                                      }
+                                      required
+                                    />
+                                  </Field>
+                                  <Field
+                                    id={`inventory-batch-cost-${lot.id}`}
+                                    label="Unit acquisition cost (₱)"
+                                  >
+                                    <input
+                                      id={`inventory-batch-cost-${lot.id}`}
+                                      className="text-input"
+                                      inputMode="decimal"
+                                      value={lotForm.unitCost}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          unitCost: event.target.value,
+                                        }))
+                                      }
+                                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                                      required
+                                    />
+                                  </Field>
+                                  <Field
+                                    id={`inventory-batch-price-${lot.id}`}
+                                    label="Product selling price (₱)"
+                                  >
+                                    <input
+                                      id={`inventory-batch-price-${lot.id}`}
+                                      className="text-input"
+                                      inputMode="decimal"
+                                      value={lotForm.sellingPrice}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          sellingPrice: event.target.value,
+                                        }))
+                                      }
+                                      pattern="[0-9]+(\.[0-9]{1,2})?"
+                                      required
+                                    />
+                                  </Field>
+                                  <Field
+                                    id={`inventory-batch-reason-${lot.id}`}
+                                    label="Reason for batch correction"
+                                  >
+                                    <input
+                                      id={`inventory-batch-reason-${lot.id}`}
+                                      className="text-input"
+                                      value={lotForm.reason}
+                                      onChange={(event) =>
+                                        setLotForm((current) => ({
+                                          ...current,
+                                          reason: event.target.value,
+                                        }))
+                                      }
+                                      minLength={3}
+                                      maxLength={500}
+                                      required
+                                    />
+                                  </Field>
+                                  <div className="inventory-batch-editor-actions">
+                                    <button
+                                      className="button button-primary"
+                                      type="submit"
+                                      disabled={saving}
+                                    >
+                                      {saving
+                                        ? "Saving…"
+                                        : "Save batch details"}
+                                    </button>
+                                    <button
+                                      className="button button-quiet"
+                                      type="button"
+                                      disabled={saving}
+                                      onClick={() => setEditingLotId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </form>
+                              )}
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="inventory-product-empty-state">
+                          No batches are recorded for this product.
+                        </p>
+                      )
+                    ) : (
+                      <p className="inventory-product-empty-state">
+                        Lot tracking is off. Current stock is{" "}
+                        {product.quantityOnHand} {product.unit}.
+                      </p>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="inventory-product-empty-state">
+            {query.trim()
+              ? "No products match this search."
+              : "No products are in the catalog yet."}
+          </p>
+        )}
+      </section>
+    </section>
   );
 }
 

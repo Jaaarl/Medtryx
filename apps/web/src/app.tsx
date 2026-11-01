@@ -26,6 +26,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   PackageSearch,
@@ -40,7 +41,12 @@ import {
 import type { User } from "@medtryx/shared";
 import { api, ApiError } from "./api";
 import { useAuth } from "./auth-context";
-import { CheckoutPage, ProductsPage, StockPage } from "./inventory-pages";
+import {
+  CheckoutPage,
+  InventoryPage,
+  ProductsPage,
+  StockPage,
+} from "./inventory-pages";
 import { SalesHistoryPage } from "./sales-history";
 import { ReportsPage } from "./reports-page";
 import { ShiftHistoryPage } from "./shift-history-page";
@@ -93,6 +99,7 @@ const navigation = [
   },
   { to: "/account", label: "My account", icon: KeyRound, ownerOnly: false },
   { to: "/products", label: "Products", icon: PackageSearch, ownerOnly: true },
+  { to: "/inventory", label: "Inventory", icon: Package, ownerOnly: true },
   { to: "/stock", label: "Stock", icon: Boxes, ownerOnly: true },
   {
     to: "/receipt-receiving",
@@ -1050,6 +1057,7 @@ export function App() {
             <Route element={<Guard ownerOnly />}>
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="products" element={<ProductsPage />} />
+              <Route path="inventory" element={<InventoryPage />} />
               <Route path="stock" element={<StockPage />} />
               <Route
                 path="receipt-receiving"
