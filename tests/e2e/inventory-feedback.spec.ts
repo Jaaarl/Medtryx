@@ -305,6 +305,89 @@ test("owner can click a possible product match to receive stock into it", async 
   });
 });
 
+test("inactive product matches stay behind a collapsible disclosure", async ({
+  page,
+}) => {
+  await signInOwner(page);
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrf = (await csrfResponse.json()) as { token: string };
+  const headers = { "x-csrf-token": csrf.token };
+  const activeName = "Synthetic Split Match Zoloft 50mg tablet";
+  const inactiveName = "Synthetic Split Match Zolof 50 mg tablet";
+
+  const activeResponse = await page.request.post("/api/products", {
+    headers,
+    data: {
+      sku: "SYN-MATCH-SPLIT-ACTIVE",
+      name: activeName,
+      unit: "tablet",
+      sellingPrice: "20.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 1,
+      openingUnitCost: "6.00",
+    },
+  });
+  expect(activeResponse.status()).toBe(201);
+
+  const inactiveResponse = await page.request.post("/api/products", {
+    headers,
+    data: {
+      sku: "SYN-MATCH-SPLIT-INACTIVE",
+      name: inactiveName,
+      unit: "box",
+      sellingPrice: "24.00",
+      taxClass: "VATABLE",
+      productType: "GENERIC",
+      isScEligible: false,
+      isPwdEligible: false,
+      openingQuantity: 1,
+      openingUnitCost: "8.00",
+    },
+  });
+  expect(inactiveResponse.status()).toBe(201);
+  const inactiveProduct = (await inactiveResponse.json()) as {
+    product: { id: string };
+  };
+  const deactivateResponse = await page.request.patch(
+    `/api/products/${inactiveProduct.product.id}`,
+    { headers, data: { active: false } },
+  );
+  expect(deactivateResponse.status()).toBe(200);
+
+  await page.goto("/products");
+  await page
+    .getByLabel("Product name")
+    .fill("Synthetic Split Match Zoloft 50 mg tablet");
+
+  const activeMatches = page.getByRole("group", {
+    name: "Possible matching products",
+  });
+  await expect(
+    activeMatches
+      .locator(".duplicate-product-option")
+      .filter({ hasText: activeName }),
+  ).toBeVisible();
+  await expect(
+    activeMatches
+      .locator(".duplicate-product-option")
+      .filter({ hasText: inactiveName }),
+  ).toHaveCount(0);
+
+  const inactiveMatches = page.getByRole("group", {
+    name: "Inactive matching products",
+  });
+  await expect(inactiveMatches).toHaveCount(0);
+  await page.getByText(/Show inactive matches/).click();
+  await expect(
+    inactiveMatches
+      .locator(".duplicate-product-option")
+      .filter({ hasText: inactiveName }),
+  ).toBeVisible();
+});
+
 test("imported product matches remain visible across stock units and successive imports", async ({
   page,
 }) => {

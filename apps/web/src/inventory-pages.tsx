@@ -58,6 +58,8 @@ type Product = {
   grossProfitEstimateApproved: boolean;
 };
 
+type ProductMatchOption = { product: Product; exact: boolean };
+
 function adjustmentUnitCost(product: Product) {
   return product.quantityOnHand > 0
     ? product.weightedAverageUnitCost
@@ -1440,8 +1442,13 @@ export function ProductsPage() {
             normalizeProductIdentity(product.unit) === normalizedFormUnit,
         )
       : [];
-  const productMatchOptions = useMemo(() => {
-    if (editing || !normalizedFormName) return [];
+  const { activeMatchOptions, inactiveMatchOptions } = useMemo<{
+    activeMatchOptions: ProductMatchOption[];
+    inactiveMatchOptions: ProductMatchOption[];
+  }>(() => {
+    if (editing || !normalizedFormName) {
+      return { activeMatchOptions: [], inactiveMatchOptions: [] };
+    }
     const exactMatches = products.filter(
       (product) =>
         normalizeProductIdentity(product.name) === normalizedFormName &&
@@ -1454,16 +1461,29 @@ export function ProductsPage() {
         const score = productNameMatchScore(form.name, product.name);
         return score === null ? [] : [{ product, score }];
       })
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 5);
-    return [
-      ...exactMatches.map((product) => ({ product, exact: true })),
-      ...possibleMatches.map(({ product }) => ({ product, exact: false })),
-    ];
+      .sort((left, right) => right.score - left.score);
+    const toOption = (product: Product): ProductMatchOption => ({
+      product,
+      exact: exactIds.has(product.id),
+    });
+    const possibleOptions = possibleMatches.map(({ product }) =>
+      toOption(product),
+    );
+    return {
+      activeMatchOptions: [
+        ...exactMatches.filter((product) => product.active).map(toOption),
+        ...possibleOptions.filter(({ product }) => product.active).slice(0, 5),
+      ],
+      inactiveMatchOptions: [
+        ...exactMatches.filter((product) => !product.active).map(toOption),
+        ...possibleOptions.filter(({ product }) => !product.active).slice(0, 5),
+      ],
+    };
   }, [editing, form.name, normalizedFormName, normalizedFormUnit, products]);
   const duplicateProduct =
-    productMatchOptions.find(({ product }) => product.id === duplicateProductId)
-      ?.product ??
+    [...activeMatchOptions, ...inactiveMatchOptions].find(
+      ({ product }) => product.id === duplicateProductId,
+    )?.product ??
     (duplicateCandidates.length === 1 ? duplicateCandidates[0] : null) ??
     null;
   const duplicateSellingPrice =
@@ -1860,6 +1880,44 @@ export function ProductsPage() {
     });
   }
 
+  function renderMatchOption({ product, exact }: ProductMatchOption) {
+    const selected = duplicateProduct?.id === product.id;
+    return (
+      <button
+        className={`duplicate-product-option${selected ? " is-selected" : ""}${product.active ? "" : " is-inactive"}`}
+        key={product.id}
+        type="button"
+        aria-pressed={selected}
+        onClick={() => {
+          setDuplicateProductId(
+            selected && duplicateCandidates.length === 0 ? "" : product.id,
+          );
+          setDuplicatePrice(null);
+          setError("");
+        }}
+      >
+        <span className="duplicate-product-option-copy">
+          <strong>{product.name}</strong>
+          <small>
+            {product.sku} · {product.unit} · {product.quantityOnHand} on hand
+            {!product.active && (
+              <span className="duplicate-product-inactive-label">
+                · INACTIVE
+              </span>
+            )}
+          </small>
+        </span>
+        <span className="duplicate-product-option-action">
+          {selected
+            ? "Selected"
+            : exact
+              ? "Use this product"
+              : "Possible match"}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <section className="page-section inventory-page">
       <PageHeading
@@ -2093,7 +2151,7 @@ export function ProductsPage() {
                 maxLength={160}
               />
             </Field>
-            {productMatchOptions.length > 0 && (
+            {activeMatchOptions.length + inactiveMatchOptions.length > 0 && (
               <div className="duplicate-product-notice" role="note">
                 <strong>
                   {duplicateCandidates.length > 0
@@ -2105,52 +2163,29 @@ export function ProductsPage() {
                     ? "Receive stock for the existing product and review its selling price below."
                     : "Select a match to add stock in its existing stock unit, or create a new product if none is the same item."}
                 </p>
-                <div
-                  className="duplicate-product-options"
-                  role="group"
-                  aria-label="Possible matching products"
-                >
-                  {productMatchOptions.map(({ product, exact }) => {
-                    const selected = duplicateProduct?.id === product.id;
-                    return (
-                      <button
-                        className={`duplicate-product-option${selected ? " is-selected" : ""}${product.active ? "" : " is-inactive"}`}
-                        key={product.id}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => {
-                          setDuplicateProductId(
-                            selected && duplicateCandidates.length === 0
-                              ? ""
-                              : product.id,
-                          );
-                          setDuplicatePrice(null);
-                          setError("");
-                        }}
-                      >
-                        <span className="duplicate-product-option-copy">
-                          <strong>{product.name}</strong>
-                          <small>
-                            {product.sku} · {product.unit} ·{" "}
-                            {product.quantityOnHand} on hand
-                            {!product.active && (
-                              <span className="duplicate-product-inactive-label">
-                                · INACTIVE
-                              </span>
-                            )}
-                          </small>
-                        </span>
-                        <span className="duplicate-product-option-action">
-                          {selected
-                            ? "Selected"
-                            : exact
-                              ? "Use this product"
-                              : "Possible match"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {activeMatchOptions.length > 0 && (
+                  <div
+                    className="duplicate-product-options"
+                    role="group"
+                    aria-label="Possible matching products"
+                  >
+                    {activeMatchOptions.map(renderMatchOption)}
+                  </div>
+                )}
+                {inactiveMatchOptions.length > 0 && (
+                  <details className="duplicate-product-inactive-matches">
+                    <summary>
+                      Show inactive matches ({inactiveMatchOptions.length})
+                    </summary>
+                    <div
+                      className="duplicate-product-options"
+                      role="group"
+                      aria-label="Inactive matching products"
+                    >
+                      {inactiveMatchOptions.map(renderMatchOption)}
+                    </div>
+                  </details>
+                )}
                 {duplicateProduct && Number(form.openingQuantity) < 1 && (
                   <p>Enter a quantity of at least 1 to receive stock.</p>
                 )}
