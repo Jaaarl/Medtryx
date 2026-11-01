@@ -57,7 +57,8 @@ test("inventory allows count edits for products without batch tracking", async (
   await expect(
     page.getByText(`Stock count corrected for ${name}.`),
   ).toBeVisible();
-  await expect(productRow.locator("summary")).toContainText("5 piece on hand");
+  await expect(productRow.locator("summary")).not.toContainText("on hand");
+  await expect(productRow).toContainText("Current stock is 5 piece.");
   const productResponse = await page.request.get(
     `/api/products?q=${encodeURIComponent(sku)}`,
   );
@@ -91,7 +92,8 @@ test("inventory allows count edits for products without batch tracking", async (
     .getByLabel("Reason for count correction")
     .fill("Removed one unit after the physical recount");
   await productRow.getByRole("button", { name: "Save stock count" }).click();
-  await expect(productRow.locator("summary")).toContainText("4 piece on hand");
+  await expect(productRow.locator("summary")).not.toContainText("on hand");
+  await expect(productRow).toContainText("Current stock is 4 piece.");
   const reducedProductResponse = await page.request.get(
     `/api/products?q=${encodeURIComponent(sku)}`,
   );
