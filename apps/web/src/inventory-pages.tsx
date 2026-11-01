@@ -3809,8 +3809,8 @@ export function StockPage() {
                   <input
                     id="adjust-quantity"
                     className="text-input"
-                    type="number"
-                    step="1"
+                    type="text"
+                    pattern="-?[0-9]+"
                     value={adjustQty}
                     onChange={(event) => setAdjustQty(event.target.value)}
                     required
