@@ -5689,6 +5689,127 @@ a {
   margin-top: 24px;
 }
 
+.stock-action-dialog {
+  width: min(460px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 26px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  color: inherit;
+  box-shadow: 0 24px 72px rgb(15 23 42 / 24%);
+}
+.stock-action-dialog::backdrop {
+  background: rgb(15 23 42 / 48%);
+}
+.stock-action-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.stock-action-heading h2 {
+  margin: 2px 0 0;
+  font-size: 21px;
+}
+.stock-action-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #e8f5ee;
+  color: #227a53;
+}
+.stock-action-dialog > p {
+  margin: 14px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.stock-action-quantity {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px solid #dce9e2;
+  border-radius: 14px;
+  background: #f6fbf8;
+}
+.stock-action-quantity-label {
+  color: #72817b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stock-action-quantity-flow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.stock-action-quantity-flow > strong {
+  color: #133b2b;
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+.stock-action-quantity-flow > span:nth-child(2) {
+  color: #7a8f86;
+  font-size: 18px;
+}
+.stock-action-unit {
+  color: #4d655b;
+  font-size: 13px;
+  font-weight: 600;
+}
+.stock-action-change {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e3f3e9;
+  color: #1d7a4f;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stock-action-change.is-negative {
+  background: #fdeceb;
+  color: #a44234;
+}
+.stock-action-details {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+}
+.stock-action-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef3f0;
+}
+.stock-action-details > div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.stock-action-details dt {
+  color: #72817b;
+  font-size: 12px;
+}
+.stock-action-details dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.stock-action-dialog .product-delete-actions {
+  margin-top: 22px;
+}
+
 .visually-hidden {
   clip: rect(0, 0, 0, 0);
   clip-path: inset(50%);

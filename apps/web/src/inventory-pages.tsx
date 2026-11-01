@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -1291,6 +1292,96 @@ function ProductDeleteDialog({
           </button>
         </div>
       </form>
+    </dialog>
+  );
+}
+
+type StockActionSummary = {
+  title: string;
+  message: string;
+  quantity?: { before: number; after: number; unit: string };
+  details: Array<{ label: string; value: string }>;
+};
+
+function StockActionDialog({
+  summary,
+  onClose,
+}: {
+  summary: StockActionSummary;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const doneRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    doneRef.current?.focus();
+    return () => dialog?.close();
+  }, []);
+
+  const change = summary.quantity
+    ? summary.quantity.after - summary.quantity.before
+    : 0;
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="stock-action-dialog"
+      aria-labelledby="stock-action-title"
+      aria-describedby="stock-action-message"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="stock-action-heading">
+        <span className="stock-action-icon">
+          <Check size={18} />
+        </span>
+        <div>
+          <span className="eyebrow">SUCCESS</span>
+          <h2 id="stock-action-title">{summary.title}</h2>
+        </div>
+      </div>
+      <p id="stock-action-message">{summary.message}</p>
+      {summary.quantity && (
+        <div className="stock-action-quantity">
+          <span className="stock-action-quantity-label">Stock on hand</span>
+          <div className="stock-action-quantity-flow">
+            <strong>{summary.quantity.before.toLocaleString("en-PH")}</strong>
+            <span aria-hidden="true">→</span>
+            <strong>{summary.quantity.after.toLocaleString("en-PH")}</strong>
+            <span className="stock-action-unit">{summary.quantity.unit}</span>
+            <span
+              className={`stock-action-change ${change < 0 ? "is-negative" : ""}`}
+            >
+              {change > 0 ? "+" : ""}
+              {change.toLocaleString("en-PH")}
+            </span>
+          </div>
+        </div>
+      )}
+      {summary.details.length > 0 && (
+        <dl className="stock-action-details">
+          {summary.details.map((detail) => (
+            <div key={detail.label}>
+              <dt>{detail.label}</dt>
+              <dd>{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <div className="product-delete-actions">
+        <button
+          ref={doneRef}
+          className="button button-primary"
+          type="button"
+          onClick={onClose}
+        >
+          Done
+        </button>
+      </div>
     </dialog>
   );
 }
@@ -2586,6 +2677,9 @@ export function StockPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [actionSummary, setActionSummary] = useState<StockActionSummary | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [stockQuery, setStockQuery] = useState("");
   const [receiptQty, setReceiptQty] = useState("1");
@@ -2779,6 +2873,7 @@ export function StockPage() {
       );
     else if (!selectedId && result.products[0])
       selectStockProduct(result.products[0]);
+    return result.products;
   }
   async function refreshEvents(id = selectedId) {
     const path = stockEventsPath(id, stockHistoryLimit, stockHistoryEventType);
@@ -2877,14 +2972,16 @@ export function StockPage() {
     setError("");
     setNotice("");
     try {
+      const quantityReceived = Number(receiptQty);
+      const quantityBefore = selected.quantityOnHand;
+      const sellingPriceChanged =
+        centsFromMoney(receiptSellingPrice) !==
+        centsFromMoney(selected.sellingPrice);
       await api.post("/stock/receipts", {
         productId: selected.id,
-        quantity: Number(receiptQty),
+        quantity: quantityReceived,
         unitCost: receiptCost,
-        ...(centsFromMoney(receiptSellingPrice) !==
-        centsFromMoney(selected.sellingPrice)
-          ? { sellingPrice: receiptSellingPrice }
-          : {}),
+        ...(sellingPriceChanged ? { sellingPrice: receiptSellingPrice } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
         ...(selected.tracksLots
@@ -2894,14 +2991,55 @@ export function StockPage() {
           ? { zeroCostReason: zeroCostReason.trim() }
           : {}),
       });
-      await Promise.all([
+      const [updatedProducts] = await Promise.all([
         refreshProducts(),
         refreshEvents(selected.id),
         refreshLots(),
       ]);
-      setNotice(
-        `Received ${receiptQty} ${selected.unit} for ${selected.name}.`,
-      );
+      const quantityAfter =
+        updatedProducts.find((product) => product.id === selected.id)
+          ?.quantityOnHand ?? quantityBefore + quantityReceived;
+      setActionSummary({
+        title: "Stock received",
+        message: `Received ${receiptQty} ${selected.unit} for ${selected.name}.`,
+        quantity: {
+          before: quantityBefore,
+          after: quantityAfter,
+          unit: selected.unit,
+        },
+        details: [
+          {
+            label: "Quantity received",
+            value: `+${quantityReceived.toLocaleString("en-PH")} ${selected.unit}`,
+          },
+          {
+            label: "Unit acquisition cost",
+            value: formatCents(centsFromMoney(receiptCost)),
+          },
+          ...(sellingPriceChanged
+            ? [
+                {
+                  label: "New selling price",
+                  value: formatCents(centsFromMoney(receiptSellingPrice)),
+                },
+              ]
+            : []),
+          ...(selected.tracksLots
+            ? [
+                {
+                  label: "Batch",
+                  value: `${receiptLotCode.trim()} · expires ${receiptExpiryDate}`,
+                },
+              ]
+            : []),
+          ...(supplier.trim()
+            ? [{ label: "Supplier", value: supplier.trim() }]
+            : []),
+          ...(reference.trim()
+            ? [{ label: "Reference", value: reference.trim() }]
+            : []),
+        ],
+      });
       setReceiptQty("1");
       setReceiptCost("");
       setReference("");
@@ -2923,6 +3061,15 @@ export function StockPage() {
     setNotice("");
     try {
       const quantityDelta = Number(adjustQty);
+      const quantityBefore = selected.quantityOnHand;
+      const reasonLabel =
+        reasonType === "COUNT_CORRECTION"
+          ? "Count correction"
+          : reasonType === "DAMAGE"
+            ? "Damage write-off"
+            : reasonType === "EXPIRY"
+              ? "Expiry write-off"
+              : "Disposal write-off";
       await api.post("/stock/adjustments", {
         productId: selected.id,
         quantityDelta,
@@ -2948,12 +3095,51 @@ export function StockPage() {
           ? { zeroCostReason: adjustZeroCostReason.trim() }
           : {}),
       });
-      await Promise.all([
+      const [updatedProducts] = await Promise.all([
         refreshProducts(true),
         refreshEvents(selected.id),
         refreshLots(),
       ]);
-      setNotice(`Stock adjustment recorded for ${selected.name}.`);
+      const quantityAfter =
+        updatedProducts.find((product) => product.id === selected.id)
+          ?.quantityOnHand ?? quantityBefore + quantityDelta;
+      const selectedLot = lots.find((lot) => lot.id === adjustLotId);
+      const batch = selectedLot
+        ? `${selectedLot.lotCode} · expires ${selectedLot.expiryDate}`
+        : adjustLotCode.trim()
+          ? `${adjustLotCode.trim()} · expires ${adjustExpiryDate}`
+          : null;
+      setActionSummary({
+        title:
+          quantityDelta < 0 && reasonType !== "COUNT_CORRECTION"
+            ? "Write-off recorded"
+            : "Stock adjustment recorded",
+        message: `Stock adjustment recorded for ${selected.name}.`,
+        quantity: {
+          before: quantityBefore,
+          after: quantityAfter,
+          unit: selected.unit,
+        },
+        details: [
+          {
+            label: "Change",
+            value: `${quantityDelta > 0 ? "+" : ""}${quantityDelta.toLocaleString("en-PH")} ${selected.unit}`,
+          },
+          { label: "Reason type", value: reasonLabel },
+          { label: "Reason", value: reason.trim() },
+          ...(quantityDelta > 0
+            ? [
+                {
+                  label: "Unit acquisition cost",
+                  value: formatCents(centsFromMoney(adjustCost)),
+                },
+              ]
+            : []),
+          ...(selected.tracksLots && batch
+            ? [{ label: "Batch", value: batch }]
+            : []),
+        ],
+      });
       setAdjustQty("");
       setReason("");
       setAdjustZeroCostReason("");
@@ -2974,15 +3160,38 @@ export function StockPage() {
     setError("");
     setNotice("");
     try {
+      const costBefore = selected.weightedAverageUnitCost;
+      const valueBefore = selected.inventoryValue;
       await api.post("/stock/cost-corrections", {
         productId: selected.id,
         unitCost: costCorrectionInput,
         reason: costCorrectionReason.trim(),
       });
-      await Promise.all([refreshProducts(), refreshEvents(selected.id)]);
-      setNotice(
-        `Average acquisition cost corrected for ${selected.name}. Past sales and receipt records were left unchanged.`,
+      const [updatedProducts] = await Promise.all([
+        refreshProducts(),
+        refreshEvents(selected.id),
+      ]);
+      const updatedProduct = updatedProducts.find(
+        (product) => product.id === selected.id,
       );
+      const costAfter =
+        updatedProduct?.weightedAverageUnitCost ?? costCorrectionInput;
+      const valueAfter = updatedProduct?.inventoryValue ?? valueBefore;
+      setActionSummary({
+        title: "Acquisition cost corrected",
+        message: `Average acquisition cost corrected for ${selected.name}. Past sales and receipt records were left unchanged.`,
+        details: [
+          {
+            label: "Average unit cost",
+            value: `${formatCents(centsFromMoney(costBefore))} → ${formatCents(centsFromMoney(costAfter))}`,
+          },
+          {
+            label: "Inventory value",
+            value: `${formatCents(centsFromMoney(valueBefore))} → ${formatCents(centsFromMoney(valueAfter))}`,
+          },
+          { label: "Reason", value: costCorrectionReason.trim() },
+        ],
+      });
       setCostCorrectionInput("");
       setCostCorrectionReason("");
     } catch (caught) {
@@ -4417,6 +4626,12 @@ export function StockPage() {
         </div>
       </section>
       <CheckoutOverridesPanel />
+      {actionSummary && (
+        <StockActionDialog
+          summary={actionSummary}
+          onClose={() => setActionSummary(null)}
+        />
+      )}
     </section>
   );
 }
