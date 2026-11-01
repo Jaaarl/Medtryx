@@ -3186,13 +3186,14 @@ export function StockPage() {
                     direction={stockSort.direction}
                     onClick={() => selectStockSort("stockValue")}
                   />
+                  <th>STATUS</th>
                   <th>ACTION</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="table-loading">
+                    <td colSpan={6} className="table-loading">
                       Loading stock…
                     </td>
                   </tr>
@@ -3227,6 +3228,13 @@ export function StockPage() {
                       <td>₱{product.weightedAverageUnitCost}</td>
                       <td>₱{product.inventoryValue}</td>
                       <td>
+                        <span
+                          className={`product-state ${product.active ? "product-state-active" : ""}`}
+                        >
+                          {product.active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td>
                         <div className="stock-product-actions">
                           <button
                             className="text-action"
@@ -3253,7 +3261,7 @@ export function StockPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="table-loading">
+                    <td colSpan={6} className="table-loading">
                       {stockQuery.trim()
                         ? "No matching products."
                         : lowOnly

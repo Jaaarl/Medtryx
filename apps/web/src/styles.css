@@ -2719,7 +2719,7 @@ a {
   flex-direction: column;
 }
 .stock-list-card .inventory-table {
-  min-width: 700px;
+  min-width: 760px;
 }
 .stock-product-actions {
   display: grid;

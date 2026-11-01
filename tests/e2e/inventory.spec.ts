@@ -109,6 +109,17 @@ test("owner maintains catalog and receipts, cashier searches products into a pri
   await productRow.getByRole("button", { name: "Edit" }).click();
   await ownerPage.getByRole("button", { name: "Deactivate product" }).click();
   await expect(productRow).toContainText("Inactive");
+  await ownerPage.goto("/stock");
+  await ownerPage.getByLabel("Search current stock").fill(productSku);
+  const inactiveStockRow = ownerPage
+    .locator(".stock-list-card .inventory-table tbody tr")
+    .filter({ hasText: productName });
+  await expect(inactiveStockRow.locator(".product-state")).toHaveText(
+    "Inactive",
+  );
+  await ownerPage.goto("/products");
+  await ownerPage.getByLabel("Search products").fill(productSku);
+  await productRow.getByRole("button", { name: "Edit" }).click();
   await ownerPage.getByRole("button", { name: "Reactivate product" }).click();
   await expect(productRow).toContainText("Active");
 
